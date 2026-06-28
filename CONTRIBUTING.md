@@ -53,6 +53,25 @@ Each utility should be self-documenting:
 - Add usage examples in comments or README
 - Describe what problem it solves
 
+### Adding Skills for Agent Discovery
+
+**For pi:**
+1. Create `skills/utility-name/SKILL.md` in this repo
+2. Symlink to pi: `ln -sf ~/Documents/code/github/globalprofessionalsearch/stacias-utils/skills/utility-name ~/.pi/agent/skills/utility-name`
+
+**For Claude Code:**
+1. Create `~/.claude/skills/utility-name.md` with YAML frontmatter:
+   ```markdown
+   ---
+   name: utility-name
+   description: Brief description
+   ---
+   
+   # Usage details here
+   ```
+
+Skills help AI agents discover and use your utilities automatically.
+
 ## What Belongs Here
 
 ✅ Personal tools used across projects
