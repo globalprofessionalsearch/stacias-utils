@@ -3,6 +3,18 @@
 # Thin entrypoint. Execs the compiled binary (build with `make build`).
 set -euo pipefail
 
+case "${1:-}" in
+  -h|--help)
+    cat <<'EOF'
+whoneedsme - check whether your attention is needed across Slack and Jira
+
+Usage: whoneedsme [options]
+Reports Slack mentions/threads and Jira items awaiting your response.
+EOF
+    exit 0
+    ;;
+esac
+
 # Resolve through the bin/ symlink to the real script directory.
 SOURCE="${BASH_SOURCE[0]}"
 while [[ -h "$SOURCE" ]]; do

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Conventional Commits validator (delegates to the shared commit-lint script).
+# Validate the commit message against Conventional Commits.
 set -e
 root="$(git rev-parse --show-toplevel)"
-exec "$root/commit-lint" "$1"
+exec "$root/summon/main" commit-lint "$1"

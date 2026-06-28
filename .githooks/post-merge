@@ -1,9 +1,0 @@
-#!/usr/bin/env bash
-# After pulling/merging: propagate skills to pi/Claude (external dirs) and
-# verify the README is in sync — but never mutate the working tree here.
-# pre-commit is the only tree-mutating hook.
-set -e
-root="$(git rev-parse --show-toplevel)"
-"$root/sync-skills"
-"$root/gen-readme" --check \
-  || echo "⚠️  README utilities section is stale — run ./gen-readme and commit." >&2

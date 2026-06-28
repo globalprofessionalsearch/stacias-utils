@@ -7,6 +7,18 @@ cmd="${1:-}"
 shift || true
 
 case "$cmd" in
+  -h|--help|help|"")
+    cat <<'EOF'
+gcp-db-proxy - connect to / verify private Cloud SQL instances via bastion + IAP tunnel
+
+Usage: gcp-db-proxy <command> <config-name>
+
+Commands:
+  connect   Open an SSH tunnel to a Cloud SQL instance via bastion + IAP
+  verify    Check prerequisites for connecting to a Cloud SQL instance
+EOF
+    exit 0
+    ;;
   connect) exec "$DIR/connect_to_database" "$@" ;;
   verify)  exec "$DIR/verify_database_requirements" "$@" ;;
   *)
