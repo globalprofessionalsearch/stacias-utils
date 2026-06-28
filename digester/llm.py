@@ -4,17 +4,23 @@ llm — local LLM server lifecycle.
 Detects whether the configured Qwen/MLX server is reachable and, if not,
 offers to start it from launch config in .env.
 
-Launch config (all optional; autostart is disabled if bin/model are unset):
-  QWEN_SERVER_BIN          path to the mlx_lm.server binary
+Launch config (all optional; autostart is disabled if no command/model is set):
+  QWEN_SERVER_CMD          launch command, e.g. "/path/to/venv/bin/python -m mlx_lm server"
+  QWEN_SERVER_BIN          fallback: path to a single server binary (legacy)
   QWEN_LAUNCH_MODEL        model id passed to `--model` at launch
   QWEN_CHAT_TEMPLATE_ARGS  JSON for `--chat-template-args` (default disables thinking)
   QWEN_STARTUP_TIMEOUT     seconds to wait for the server to become ready (default 180)
   QWEN_SERVER_LOG          where to tee server stdout/stderr
 
+QWEN_SERVER_CMD is preferred over QWEN_SERVER_BIN: invoking the venv's Python
+with `-m mlx_lm server` is resilient to the venv being moved (console-script
+shebangs bake in an absolute interpreter path and break on relocation).
+
 The request URL/port come from QWEN_URL.
 """
 
 import os
+import shlex
 import subprocess
 import sys
 import time
@@ -23,6 +29,7 @@ from urllib.parse import urlparse
 import requests
 
 QWEN_URL = os.getenv("QWEN_URL", "http://localhost:8099/v1/chat/completions")
+SERVER_CMD = os.getenv("QWEN_SERVER_CMD", "")
 SERVER_BIN = os.getenv("QWEN_SERVER_BIN", "")
 LAUNCH_MODEL = os.getenv("QWEN_LAUNCH_MODEL", "")
 CHAT_TEMPLATE_ARGS = os.getenv("QWEN_CHAT_TEMPLATE_ARGS", '{"enable_thinking":false}')
@@ -53,8 +60,30 @@ def is_running(timeout: float = 2.0) -> bool:
         return False
 
 
+def _base_argv() -> list[str]:
+    """The launch command without the standard flags we append.
+
+    ADR: prefer a full launch command (QWEN_SERVER_CMD) invoking the venv's
+    Python via `-m mlx_lm server` over pointing at the `mlx_lm.server` console
+    script (QWEN_SERVER_BIN). Console scripts hard-code an absolute interpreter
+    path in their shebang at install time; relocating the venv (as happened when
+    ollama moved from code/sandbox to code/experiments) leaves the shebang
+    dangling and exec fails with ENOENT against a path that *looks* present. A
+    venv's `python` symlink, by contrast, resolves to the system interpreter and
+    survives the move, so module invocation is robust to relocation. SERVER_BIN
+    is retained only as a legacy fallback.
+    """
+    if SERVER_CMD:
+        parts = shlex.split(SERVER_CMD)
+    elif SERVER_BIN:
+        parts = [SERVER_BIN]
+    else:
+        return []
+    return [os.path.expanduser(p) if p.startswith("~") else p for p in parts]
+
+
 def can_autostart() -> bool:
-    return bool(SERVER_BIN and LAUNCH_MODEL)
+    return bool(_base_argv() and LAUNCH_MODEL)
 
 
 def _msg(text: str):
@@ -63,11 +92,16 @@ def _msg(text: str):
 
 def start_server() -> subprocess.Popen:
     """Spawn the MLX server detached. Raises RuntimeError on bad config."""
-    bin_path = os.path.expanduser(SERVER_BIN)
-    if not os.path.exists(bin_path):
-        raise RuntimeError(f"server binary not found: {bin_path}")
+    argv = _base_argv()
+    if not argv:
+        raise RuntimeError(
+            "no launch command configured (set QWEN_SERVER_CMD or QWEN_SERVER_BIN)"
+        )
+    exe = argv[0]
+    if "/" in exe and not os.path.exists(exe):
+        raise RuntimeError(f"server executable not found: {exe}")
 
-    cmd = [bin_path, "--model", LAUNCH_MODEL, "--port", str(_port())]
+    cmd = argv + ["--model", LAUNCH_MODEL, "--port", str(_port())]
     if CHAT_TEMPLATE_ARGS:
         cmd += ["--chat-template-args", CHAT_TEMPLATE_ARGS]
 
@@ -95,7 +129,7 @@ def ensure_running(interactive: bool = True) -> bool:
     if not can_autostart():
         _msg(
             f"[digester] LLM server not reachable at {QWEN_URL} and autostart is "
-            "not configured (set QWEN_SERVER_BIN and QWEN_LAUNCH_MODEL in .env)."
+            "not configured (set QWEN_SERVER_CMD and QWEN_LAUNCH_MODEL in .env)."
         )
         return False
 

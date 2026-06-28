@@ -212,7 +212,8 @@ All criteria are injected verbatim into LLM prompts as the system message. Examp
 | `QWEN_MODEL` | `/Users/joe/models/qwen3.6-35b` | Model id/path sent in scoring requests |
 | `QWEN_TEMPERATURE` | `0.0` | LLM temperature (deterministic by default) |
 | `MAX_SCORE_RETRIES` | `3` | Retry attempts on malformed LLM output |
-| `QWEN_SERVER_BIN` | — | Path to the model server binary; enables autostart when set |
+| `QWEN_SERVER_CMD` | — | Launch command (e.g. `…/venv/bin/python -m mlx_lm server`); enables autostart when set |
+| `QWEN_SERVER_BIN` | — | Legacy fallback: path to a single server binary (prefer `QWEN_SERVER_CMD`) |
 | `QWEN_LAUNCH_MODEL` | — | Model id passed when launching the server; enables autostart when set |
 | `QWEN_CHAT_TEMPLATE_ARGS` | `{"enable_thinking":false}` | Launch args that suppress the model's reasoning preamble |
 | `QWEN_STARTUP_TIMEOUT` | `180` | Seconds to wait for a launched server to become ready |
@@ -230,8 +231,11 @@ operations never contact the LLM and run regardless of server state.
 
 The launch model is configured separately from the request-time model id because
 the two need not be identical (e.g. a registry id at launch vs. a local path at
-request time). Setup details for the reference model server live in
-`docs/MLX_QWEN_SETUP.md`.
+request time). The launch command invokes the server venv's Python via
+`-m mlx_lm server` rather than the installed console script: console-script
+shebangs hard-code an absolute interpreter path and break if the venv is moved,
+whereas a venv's `python` symlink survives relocation. Setup details for the
+reference model server live in `docs/MLX_QWEN_SETUP.md`.
 
 ### Calibrating `criteria.yaml` with `/digester-calibrate`
 
