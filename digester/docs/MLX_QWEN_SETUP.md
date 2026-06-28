@@ -9,11 +9,17 @@ Qwen 3.6 has built-in extended thinking/reasoning capabilities. By default, it o
 Disable thinking mode when starting the MLX server using `--chat-template-args`:
 
 ```bash
-~/Documents/code/sandbox/ollama/.venv/bin/mlx_lm.server \
+~/Documents/code/experiments/ollama/.venv/bin/python -m mlx_lm server \
   --model mlx-community/Qwen3.6-35B-A3B-4bit \
   --port 8099 \
   --chat-template-args '{"enable_thinking":false}'
 ```
+
+> Invoke the server via the venv's `python -m mlx_lm server`, not the
+> `mlx_lm.server` console script. Console-script shebangs bake in an absolute
+> interpreter path at install time and break if the venv is relocated (as
+> happened moving ollama from `code/sandbox` to `code/experiments`). This is the
+> same command digester's autostart (`QWEN_SERVER_CMD`) runs.
 
 This tells Qwen to skip the reasoning phase and output the answer directly.
 

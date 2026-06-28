@@ -32,9 +32,9 @@ Tasks are displayed in a ranked list. Rank is **not stored** — it is computed 
 
 ---
 
-## The Pipeline (`digester run`)
+## The Pipeline
 
-`run` executes a five-stage pipeline:
+Processing a run executes the pipeline:
 
 ```
 Fetch → Filter → Group → Prioritize → Label → Deliver
@@ -80,21 +80,31 @@ Label operations are batched by label type to minimize IMAP round-trips.
 
 ### 6. Deliver
 
-Prints the ranked task list to the terminal. New-this-run tasks are marked with ★. Tasks carried forward from prior runs appear without a marker. The output is the same format as `digester show --detail`.
+Prints the ranked task list to the terminal. New-this-run tasks are marked with ★; tasks carried forward from prior runs appear without a marker. The output uses the same detailed format as the digest view.
 
 ---
 
 ## Commands
 
-### `digester run [--limit N]`
+The CLI is organized around a handful of intents. Exact keywords and flags may
+evolve — run the tool with `-h` for current syntax. The operations below are the
+stable surface.
 
-Runs the full pipeline. `--limit N` caps the number of new emails fetched, useful for testing. If no new emails are found but outstanding tasks exist, the current task list is displayed without running the pipeline.
+### View the digest
 
-### `digester show [--detail] [--max-done N]`
+The primary operation renders the current ranked task list without fetching
+anything, so it is safe to run at any time. It offers a concise mode (one line
+per task) and a detail mode (adds sender and per-message links, as OSC 8
+clickable hyperlinks in supporting terminals). Options control how many `done`
+tasks are shown and whether the view is restricted to tasks from the most recent
+run. A machine-readable mode emits JSON instead of the rendered view.
 
-Displays the current task list without fetching email. Safe to run at any time.
+The header count shows only active + pending tasks. `done` tasks beyond the
+display cap are hidden with a hint showing how to reveal them; their rank numbers
+remain valid for status changes. `[N]` after a subject means N messages are
+grouped under that task.
 
-**Default (concise) view** — one line per task:
+**Concise view** — one line per task:
 ```
 ╔══════════════════════════════════════════════════════╗
 ║  DIGESTER  ·  3 tasks                                ║
@@ -113,43 +123,42 @@ Displays the current task list without fetching email. Safe to run at any time.
   ... 12 more done  ·  --max-done=16 to show all
 ```
 
-`[N]` after a subject means N emails are grouped under that task.
+### Inspect a single task
 
-**`--detail`** — shows sender and per-email links (OSC 8 clickable hyperlinks in supporting terminals).
+Selecting a task by its rank number shows full detail for that task: every
+constituent message, senders, links, age, and originating source.
 
-**`--max-done N`** — controls how many done tasks appear at the bottom. Default: 5. Done tasks beyond the cap are hidden with a hint showing the exact flag to see all. Rank numbers for hidden done tasks are still valid for `set`.
+### Change task status
 
-The header count shows only active + pending tasks (not done).
+One or more tasks — addressed by rank — can be set to `active`, `done`, or
+`pending`. The rank selector accepts a single value, a comma-separated list, a
+range, or a mix (e.g. `5`, `1,3,5`, `2-8`, `1,3-5,8`).
 
-### `digester set RANKS STATUS`
+The change is written to local state and then reflected back to each originating
+source's labels. The two are kept consistent: if the source sync fails, the
+local state change is reverted and the failure reported, so the digest view and
+the source never disagree. Invalid ranks are reported individually; tasks
+already at the requested status are noted separately.
 
-Sets the status of one or more tasks. Immediately syncs the corresponding Gmail labels.
+`pending` is the absence of a status label — applying it removes whichever status
+label was present. Source-specific details of how status maps to labels live in
+the source, not the pipeline.
 
-**RANKS** accepts:
-- Single: `5`
-- List: `1,3,5`
-- Range: `2-8`
-- Mixed: `1,3-5,8`
+### Process new messages
 
-**STATUS**: `active`, `done`, or `pending`
+The processing run executes the full pipeline (see above). Options cap the
+number of messages (useful for testing) and restrict fetching to a single
+source. If nothing new is found but outstanding tasks exist, the current list is
+shown without reprocessing.
 
-**Behavior:**
-1. Writes the new status to `state.json`
-2. Connects to Gmail, resolves current IMAP sequence numbers for all affected messages
-3. Removes the old status label (e.g. `digest/active`) and applies the new one (e.g. `digest/done`) in batched IMAP calls grouped by operation type
-4. If Gmail update fails, reverts `state.json` and reports failure — the user's view and Gmail remain consistent
-5. Confirmation is printed only after Gmail confirms success
+This is the only operation that contacts the LLM. If the local model server is
+not reachable, the run offers to start it (see *Local model server* under
+Configuration).
 
-Invalid ranks are reported individually. Tasks already at the requested status are noted separately. The command exits with a non-zero status if any rank was invalid.
+### Authenticate a source
 
-**Gmail label mapping:**
-- `active` → `digest/active`
-- `done` → `digest/done`
-- `pending` → no label (removes whichever status label was present)
-
-### `digester auth slack`
-
-Authenticate with Slack using OAuth. This is a one-time setup step.
+Sources that require OAuth (currently Slack) have a one-time browser-based
+authentication step.
 
 **Requirements:**
 - A Slack app with user token scopes (see below)
@@ -163,14 +172,14 @@ Authenticate with Slack using OAuth. This is a one-time setup step.
 - `mpim:read`, `mpim:history` — read group DMs
 - `users:read` — resolve user IDs to display names
 
-**Token refresh:** Slack access tokens automatically refresh when they expire (typically after 12 hours). The refresh token is stored securely in `~/.config/digester/tokens.yaml` and used to obtain new access tokens without requiring re-authentication. If token refresh fails or the refresh token is revoked, you'll see a friendly error message asking you to re-run `digester auth slack`.
+**Token refresh:** Slack access tokens automatically refresh when they expire (typically after 12 hours). The refresh token is stored securely in `~/.config/digester/tokens.yaml` and used to obtain new access tokens without requiring re-authentication. If token refresh fails or the refresh token is revoked, you'll see a friendly error message asking you to re-authenticate the source.
 
 **First-time setup:**
 1. Create a Slack app at https://api.slack.com/apps
 2. Add the user scopes listed above under "OAuth & Permissions"
 3. Add `http://localhost:9119/callback` as a redirect URL
 4. Copy the Client ID to `SLACK_CLIENT_ID` in `.env`
-5. Run `digester auth slack` and authorize in your browser
+5. Run the source authentication command and authorize in your browser
 
 ---
 
@@ -192,17 +201,41 @@ All criteria are injected verbatim into LLM prompts as the system message. Examp
 | `EMAIL` | — | Gmail address |
 | `APP_PASSWORD` | — | Gmail app password |
 | `SLACK_CLIENT_ID` | — | Slack app client ID (required for Slack auth + token refresh) |
-| `DAYS_BACK` | `30` | Lookback window for email fetch |
+| `DAYS_BACK` | `30` | Lookback window for message fetch |
 | `SLACK_DAYS_BACK` | `DAYS_BACK` | Lookback window for Slack messages (overrides DAYS_BACK for Slack) |
-| `FILTER_THRESHOLD` | `0.5` | Min score to include an email |
+| `FILTER_THRESHOLD` | `0.5` | Min score to include a message |
 | `GROUP_THRESHOLD` | `0.7` | Min score to join an existing task |
 | `GROUP_BODY_LIMIT` | `500` | Body chars used during grouping |
 | `PRIORITIZE_BODY_LIMIT` | `300` | Body chars used during prioritization |
-| `DIGEST_SUBJECT_LIMIT` | `60` | Max subject chars in detail/deliver view |
-| `QWEN_URL` | `http://localhost:8099/v1/chat/completions` | Local LLM endpoint |
-| `QWEN_MODEL` | `/Users/joe/models/qwen3.6-35b` | Model path |
+| `DIGEST_SUBJECT_LIMIT` | `60` | Max subject chars in the rendered digest |
+| `QWEN_URL` | `http://localhost:8099/v1/chat/completions` | Local LLM endpoint (host/port also used for autostart + health checks) |
+| `QWEN_MODEL` | `/Users/joe/models/qwen3.6-35b` | Model id/path sent in scoring requests |
 | `QWEN_TEMPERATURE` | `0.0` | LLM temperature (deterministic by default) |
 | `MAX_SCORE_RETRIES` | `3` | Retry attempts on malformed LLM output |
+| `QWEN_SERVER_CMD` | — | Launch command (e.g. `…/venv/bin/python -m mlx_lm server`); enables autostart when set |
+| `QWEN_SERVER_BIN` | — | Legacy fallback: path to a single server binary (prefer `QWEN_SERVER_CMD`) |
+| `QWEN_LAUNCH_MODEL` | — | Model id passed when launching the server; enables autostart when set |
+| `QWEN_CHAT_TEMPLATE_ARGS` | `{"enable_thinking":false}` | Launch args that suppress the model's reasoning preamble |
+| `QWEN_STARTUP_TIMEOUT` | `180` | Seconds to wait for a launched server to become ready |
+| `QWEN_SERVER_LOG` | `~/.cache/digester/mlx_server.log` | Where a launched server's output is written |
+
+### Local model server
+
+All scoring runs against a local LLM server; nothing is sent to a cloud API.
+A processing run first health-checks the configured endpoint. If the server is
+not reachable and autostart is configured (`QWEN_SERVER_BIN` and
+`QWEN_LAUNCH_MODEL` set), the run offers to launch it, then waits until it is
+ready before continuing. In non-interactive (JSON) mode it does not prompt and
+instead reports that the server is unavailable. The view/inspect/status
+operations never contact the LLM and run regardless of server state.
+
+The launch model is configured separately from the request-time model id because
+the two need not be identical (e.g. a registry id at launch vs. a local path at
+request time). The launch command invokes the server venv's Python via
+`-m mlx_lm server` rather than the installed console script: console-script
+shebangs hard-code an absolute interpreter path and break if the venv is moved,
+whereas a venv's `python` symlink survives relocation. Setup details for the
+reference model server live in `docs/MLX_QWEN_SETUP.md`.
 
 ### Calibrating `criteria.yaml` with `/digester-calibrate`
 
