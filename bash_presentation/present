@@ -1,4 +1,5 @@
 #!/bin/bash
+# desc: Terminal-based slide presentation tool
 
 # Constants for height (lines) and width (columns)
 HEIGHT=20

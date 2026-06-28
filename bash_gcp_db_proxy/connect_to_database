@@ -1,4 +1,5 @@
 #!/bin/bash
+# desc: Connect to a private Cloud SQL instance via bastion + IAP tunnel
 
 # Load configuration
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

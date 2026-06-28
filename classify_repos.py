@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# desc: Interactively classify and move repos into experiments or utilities
 import os
 import subprocess
 import sys

@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# desc: Summarize GitHub pull requests
 
 import argparse
 import json

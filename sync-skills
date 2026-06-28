@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# desc: Sync skills from this repo to pi and Claude Code (pi is the leader)
 # sync-skills - Deterministically sync skills from this repo (the leader)
 # to pi and Claude Code.
 #

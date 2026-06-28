@@ -1,4 +1,5 @@
 #!/bin/bash
+# desc: Check prerequisites for connecting to a Cloud SQL instance
 
 # Load configuration
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
