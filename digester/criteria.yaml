@@ -1,0 +1,174 @@
+# Criteria configuration for digester
+# Edit these as your needs change — they are injected into LLM prompts at runtime.
+# All fields under examples/counter_examples/dimensions are optional; removing them
+# reverts to the bare description+signals behavior.
+#
+# Ordering note: the criteria become Qwen's system message; the email is the user message.
+# This means list order has a mild but real effect:
+#
+#   examples:         put the most representative / clearest include-cases FIRST.
+#                     The first entry anchors what the category means; later entries
+#                     refine with diminishing influence (primacy bias).
+#
+#   counter_examples: put the clearest exclusions FIRST, and the most common
+#                     false-positive patterns LAST. Counter-examples appear closest
+#                     to the query in the prompt, so the last entries get a slight
+#                     recency boost — use that for your trickiest edge cases.
+
+filter:
+  categories:
+    pull_request:
+      description: "Messages about a pull request that specifically mention me (Stacia)"
+      signals:
+        - "Stacia"
+        - "pull request"
+        - "PR #"
+        - "review requested"
+        - "changes requested"
+      examples:
+        - "[teammate] requested your review on globalprofessionalsearch/analysis-protos — proto contract change"
+        - "changes requested on your PR by [teammate] — please address comments before merging"
+        - "[teammate], could you look at this PR when you get a chance?"
+        - "[teammate] requested your review on globalprofessionalsearch/analysis-mono — new compute service"
+        - "review requested on a PR in a monitored repo — [teammate] directly named as reviewer"
+      counter_examples:
+        - text: "PR merged by devbot — no action needed"
+          reason: "merged by bot, no one is waiting on Stacia"
+        - text: "review requested on PR — assignee: [other person]"
+          reason: "Stacia is not the assignee or reviewer"
+        - text: "weekly digest: N PRs closed this sprint"
+          reason: "aggregate summary, not an action request"
+        - text: "weekly deploy PR in ops-tng — review requested from @globalprofessionalsearch/jeenie-admin team as code owner"
+          reason: "team-level code owner request on a deploy/infra repo I don't maintain"
+        - text: "routine preprod deploy PR — code owner review, merged within seconds"
+          reason: "rubber-stamp deploy on unmonitored repo"
+        - text: "GitHub activity on a PR I authored — push or merge notification"
+          reason: "own-action notification, no call to action"
+        - text: "Gemini meeting notes — 'Notes: [meeting name]'"
+          reason: "just notes, no action needed"
+        - text: "Jira mention by [teammate] on a ticket — not a GitHub PR"
+          reason: "Jira mentions can be important but belong in topic_sensitive or opinion_request, not pull_request"
+
+    opinion_request:
+      description: "Messages where someone is asking for my architectural opinion or technical input"
+      signals:
+        - "what do you think"
+        - "your thoughts"
+        - "opinion"
+        - "advice"
+        - "recommend"
+      examples:
+        - "what's your take on switching the pipeline to async workers?"
+        - "before we finalize the ADR, wanted your thoughts on the proposed schema"
+        - "can you recommend a library for the proto serialization layer?"
+        - "Jira mention on a ticket — 'do double check if the contracts are correct and as wished'"
+      counter_examples:
+        - text: "FYI — we went with Kafka, just keeping you in the loop"
+          reason: "informational only, no input requested"
+        - text: "the team decided to use Postgres — let me know if you have concerns"
+          reason: "decision already made, no genuine opinion requested"
+        - text: "Gemini meeting notes — 'Notes: [meeting name]'"
+          reason: "just notes, no action needed"
+        - text: "calendar invitation or update for a meeting"
+          reason: "visible in calendar already, redundant"
+        - text: "weekly deploy PR event — ops-tng or similar automated deploy"
+          reason: "automated deploy notification, no action needed"
+
+    topic_sensitive:
+      description: "PRs or mentions about topics I care about deeply — security, auth, data contracts — regardless of which repo they're in"
+      signals:
+        - "SAML"
+        - "SSO"
+        - "data contract"
+        - "security"
+        - "authentication"
+        - "authorization"
+        - "YEL-"
+        - "safety"
+      examples:
+        - "code owner review request on a PR implementing SAML SSO user blocking — security-sensitive topic"
+        - "PR review request for a data contract change in an unmonitored repo"
+        - "Jira mention by [teammate] on [TICKET-ID] about hardening data contracts — direct tag on a YEL team + data contract topic"
+        - "automated scan comment on a SAML SSO PR — topic sensitivity overrides bot-source rule"
+        - "push/commit notification on a PR titled 'safety improvements' — safety keyword warrants attention"
+      counter_examples:
+        - text: "security label added to issue by [teammate]"
+          reason: "housekeeping action, no input requested from me"
+        - text: "automated security scan found N warnings — sonarqube bot comment on a non-sensitive PR"
+          reason: "bot-generated scan result, no human waiting on a decision — but if the PR is about SAML/SSO/security/safety, topic sensitivity overrides this rule"
+        - text: "GitHub integration permission request from a third-party tool"
+          reason: "integration permission requests are not something I handle"
+        - text: "automated Gemini meeting notes — 'Notes: [meeting name] Jun [date]'"
+          reason: "auto-generated notes delivery, no action needed"
+
+    repo_notification:
+      description: "Notifications from specific repositories I care about"
+      signals:
+        - "globalprofessionalsearch/adrs"
+        - "globalprofessionalsearch/jeenius-bmad"
+        - "globalprofessionalsearch/dagster-pipeline"
+        - "globalprofessionalsearch/analysis-mono"
+        - "globalprofessionalsearch/analysis-protos"
+        # Add repos you want to monitor
+      examples:
+        - "new issue opened in globalprofessionalsearch/dagster-pipeline: backfill job timing out"
+        - "[globalprofessionalsearch/analysis-mono] PR #55 needs review"
+      counter_examples:
+        - text: "new issue in globalprofessionalsearch/frontend-app: button misaligned"
+          reason: "repo is not in the monitored list"
+        - text: "GitHub Actions run failed in some-other-org/infra"
+          reason: "wrong organization entirely"
+
+group:
+  description: "Two messages are about the same task if they reference the same PR, issue, or topic thread"
+  dimensions:
+    - name: "shared_identifier"
+      description: "Both mention the same PR number, issue number, or thread subject"
+    - name: "shared_actor"
+      description: "Both involve the same person waiting on or requesting something from Stacia"
+    - name: "shared_topic"
+      description: "Both are about the same architectural decision or design question"
+  examples:
+    - a: "review requested on PR #412 in jeenius-bmad"
+      b: "changes requested on PR #412 — please address before merge"
+      reason: "same PR number, same repo"
+    - a: "Stacia, thoughts on the ADR for service mesh?"
+      b: "following up — did you get a chance to review the service mesh ADR?"
+      reason: "same architectural question, same thread"
+  counter_examples:
+    - a: "PR #412 review requested"
+      b: "PR #88 changes requested"
+      reason: "different PR numbers — separate tasks even though same category"
+    - a: "what's your take on Kafka vs Kinesis?"
+      b: "should we use Postgres or DynamoDB for the audit log?"
+      reason: "both opinion requests but about completely different topics"
+
+prioritize:
+  description: >
+    A task is more urgent if someone is blocked waiting on me, particularly with respect to shipping code.
+  dimensions:
+    - name: "blocked_human"
+      description: "A real person (not a bot) cannot proceed until Stacia responds"
+    - name: "shipping_impact"
+      description: "Delay affects a code merge, deployment, or release"
+    - name: "recency"
+      description: "More recent follow-ups or explicit deadline signals increase urgency"
+    - name: "explicit_ask"
+      description: "Direct question or request versus passive FYI"
+  examples:
+    - a: "changes requested on your PR — can't merge until addressed"
+      b: "FYI: the dagster pipeline job ran successfully overnight"
+      reason: "A blocks a merge, B requires no action"
+    - a: "Stacia, we need your sign-off on the ADR before EOD to unblock the sprint"
+      b: "new issue opened in analysis-mono: improve test coverage"
+      reason: "A has an explicit deadline and blocks the team, B has no urgency"
+    - a: "Jira mention by [teammate] on a YEL- data contract ticket"
+      b: "PR review activity on a topic-sensitive SAML SSO PR"
+      reason: "direct personal mention on a high-value topic outranks passive keyword match"
+    - a: "review requested on PR in a monitored repo (analysis-mono)"
+      b: "borderline inclusion — safety keyword on a PR in an unmonitored repo"
+      reason: "direct involvement in a monitored repo outranks borderline keyword match"
+  counter_examples:
+    - a: "automated security scan found 3 warnings in analysis-protos"
+      b: "[teammate] is asking for your review on the data model PR"
+      reason: "A looks urgent but is automated with no human blocked; B has a real person waiting"

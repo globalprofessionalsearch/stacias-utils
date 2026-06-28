@@ -1,0 +1,57 @@
+
+
+
+                                 JEENIE
+                   -----------------------------------
+                          Platform Observability
+
+__NEW_SLIDE__
+
+ - Observability
+ - Error standardization
+ - Context 
+
+__NEW_SLIDE__
+
+Landscape:
+ - metrics
+   - Obserability: Prometheus -> Graphana
+   - Security compliance: DataDog
+
+ - Logs
+   - GCP Logs
+   - PG Tables
+     - User Events (misnomer for auditting events)
+     - Forensic events (technical session connection info)
+
+__NEW_SLIDE__
+
+Error standardization
+---------------------
+Don't really have it
+Product does, to some small extent, track some well defined errors
+I do have designs on how to standardize this
+
+__NEW_SLIDE__
+
+Observability Dimensions
+
+  - Service Dimension
+    - Edge
+    - Internal
+    - External
+
+  - Metrics Dimension
+    - Availability
+    - Reliability
+    - Performance
+
+__NEW_SLIDE__
+
+Context Parameterss
+
+Tie call hierarchy together with Context
+ - Can be specific to backend
+ - Can be injected from frontend
+
+__NEW_SLIDE__

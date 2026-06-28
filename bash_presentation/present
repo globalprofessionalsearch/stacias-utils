@@ -1,0 +1,128 @@
+#!/bin/bash
+
+# Constants for height (lines) and width (columns)
+HEIGHT=20
+WIDTH=80
+
+# Constants for file types
+DECK_FILE_NAME=deck.txt
+TITLE_FILE_NAME=title.txt
+
+# Constants for ANSI color codes
+BLUE='\033[0;34m'
+GREEN='\033[0;32m'
+NC='\033[0m' # No Color
+
+# Constants for tokens
+NEW_SLIDE_TOKEN=__NEW_SLIDE__
+
+# Check if the slides directory is provided as an argument
+if [ -z "$1" ]; then
+    echo "Usage: $0 <slides_directory>"
+    exit 1
+fi
+
+# Get the slides directory
+SLIDES_DIR="$1"
+
+# Check for title
+TITLE_FILE="$SLIDES_DIR/$TITLE_FILE_NAME"
+if [ -f "$TITLE_FILE" ]; then
+    # Read the first line of the presentation_name file
+    presentation_title=$(head -n 1 "$TITLE_FILE")
+else
+    echo "Error: $TITLE_FILE_NAME file is required in the slides directory."
+    exit 1
+fi
+
+# Check for deck
+DECK_FILE="$SLIDES_DIR/$DECK_FILE_NAME"
+if [ ! -f "$DECK_FILE" ]; then
+    echo "Error: $DECK_FILE_NAME file is required in the slides directory."
+    exit 1
+fi
+
+# Initialize an empty array to hold the slides
+slides=()
+
+# Initialize an empty variable to hold the current slide's content
+current_slide=""
+
+# Read the file line by line
+while IFS= read -r line; do
+    if [[ "$line" == "$NEW_SLIDE_TOKEN" ]]; then
+        # If we encounter the delimiter, add the current slide to the array
+        slides+=("$current_slide")
+        # Reset the current slide content
+        current_slide=""
+    else
+        # Append the line to the current slide's content
+        current_slide+="$line"$'\n'
+    fi
+done < "$DECK_FILE"
+
+# Add the last slide content if the file doesn't end with the delimiter
+slides+=("$current_slide")
+
+# Initialize slide index
+index=0
+total_slides=${#slides[@]}
+
+# Function to draw a border and display the slide content within it
+display_slide() {
+    clear
+
+    # Calculate title padding for centering within the border
+    title_length=${#presentation_title}
+    border_padding=$(( (WIDTH - title_length - 2) / 2 ))  # Subtract 2 for the border characters
+
+    # Draw top border with title
+    printf "${BLUE}┌%s%s%s┐${NC}\n" \
+           "$(printf '─%.0s' $(seq 1 $border_padding))" \
+           "$presentation_title" \
+           "$(printf '─%.0s' $(seq 1 $((WIDTH - border_padding - title_length))))"
+
+    # Draw side borders and display slide content within the border
+    while IFS= read -r line || [ -n "$line" ]; do
+        # Ensure line fits within the width, accounting for border characters
+        printf "${BLUE}│ ${GREEN}%-*s ${BLUE}│${NC}\n" $((WIDTH - 2)) "$line"
+    done <<< "${slides[$index]}"
+    
+    # Fill remaining lines with empty borders if slide content is less than HEIGHT - 2 lines
+    for ((i=$(echo "${slides[$index]}" | wc -l); i<HEIGHT-2; i++)); do
+        printf "${BLUE}│ ${GREEN}%-*s ${BLUE}│${NC}\n" $((WIDTH - 2)) ""
+    done
+
+    # Draw bottom border
+    printf "${BLUE}└%s┘${NC}\n" "$(printf '─%.0s' $(seq 1 $WIDTH))"
+    
+    # Prepare slide number and total slides
+    slide_info=$(printf "Slide %d of %d" $((index + 1)) "$total_slides")
+    
+    # Calculate padding for centering
+    padding=$(( (WIDTH - ${#slide_info}) / 2 ))
+    
+    # Print centered slide number and total slides in blue
+    printf "${BLUE}%${padding}s%s${NC}\n" "" "$slide_info"
+}
+
+# Display the first slide
+display_slide
+
+# Infinite loop to handle navigation
+while true; do
+    read -rsn1 key
+    if [[ "$key" == "d" ]]; then # forward
+        if [ $index -lt $((${#slides[@]} - 1)) ]; then 
+            ((index++))
+            display_slide
+        fi
+    elif [[ "$key" == "a" ]]; then # back
+        if [ $index -gt 0 ]; then 
+            ((index--))
+            display_slide
+        fi
+    elif [[ "$key" == "q" ]]; then # quit
+        exit 0
+    fi
+done

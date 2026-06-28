@@ -1,0 +1,5 @@
+digester.db
+state.json
+.env
+__pycache__/
+*.pyc
