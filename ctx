@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+# Usage: ctx [dev|staging|prod|eng|status]
+# No args: shows current context and toggles between dev and staging.
+# eng: dev cluster (jeenie-development) with the next-engineering gcloud project.
+
+DEV_KUBE="gke_jeenie-development_us-east1-b_jeenie-development-gke"
+STAGING_KUBE="gke_jeenie-staging_us-east1-b_jeenie-staging-gke"
+PROD_KUBE="gke_jeenie-production_us-east1-b_jeenie-production-gke"
+DEV_PROJECT="jeenie-development"
+STAGING_PROJECT="jeenie-staging"
+PROD_PROJECT="jeenie-production"
+ENG_PROJECT="next-engineering"
+
+current_kube=$(kubectl config current-context 2>/dev/null)
+
+_switch() {
+  local target="$1" kube project
+  case "$target" in
+    dev)     kube="$DEV_KUBE";     project="$DEV_PROJECT" ;;
+    staging) kube="$STAGING_KUBE"; project="$STAGING_PROJECT" ;;
+    prod)    kube="$PROD_KUBE";    project="$PROD_PROJECT" ;;
+    eng)     kube="$DEV_KUBE";     project="$ENG_PROJECT" ;;
+  esac
+  kubectl config use-context "$kube" > /dev/null
+  gcloud config set project "$project" --quiet
+  echo "→ $target  (kubectl: $kube, gcloud: $(gcloud config get-value project 2>/dev/null))"
+}
+
+case "${1:-}" in
+  dev|staging|prod|eng)
+    _switch "$1"
+    ;;
+  "")
+    if [[ "$current_kube" == "$DEV_KUBE" ]]; then
+      _switch staging
+    else
+      _switch dev
+    fi
+    ;;
+  status)
+    echo "kubectl: $current_kube"
+    echo "gcloud:  $(gcloud config get-value project 2>/dev/null)"
+    ;;
+  *)
+    echo "Usage: ctx [dev|staging|prod|eng|status]"
+    exit 1
+    ;;
+esac

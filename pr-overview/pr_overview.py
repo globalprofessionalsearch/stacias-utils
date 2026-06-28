@@ -1,0 +1,185 @@
+#!/usr/bin/env python3
+
+import argparse
+import json
+import re
+import subprocess
+import sys
+from collections import defaultdict
+from datetime import datetime
+
+
+ORG = "globalprofessionalsearch"
+
+# ── ANSI styling ──────────────────────────────────────────────────────────────
+
+USE_COLOR = sys.stdout.isatty()
+ANSI_RE = re.compile(r"\033\[[0-9;]*m")
+
+
+def s(*codes):
+    def apply(text):
+        if not USE_COLOR:
+            return text
+        return f"\033[{';'.join(str(c) for c in codes)}m{text}\033[0m"
+    return apply
+
+
+def visible_len(text):
+    return len(ANSI_RE.sub("", text))
+
+
+bold      = s(1)
+dim       = s(2)
+italic    = s(3)
+cyan      = s(1, 36)   # bold cyan  — section headers, approved
+yellow    = s(1, 33)   # bold yellow — draft, changes requested, warnings
+magenta   = s(1, 35)   # bold magenta — PR numbers
+blue      = s(34)      # plain blue  — repo names
+
+
+# ── Review state display ──────────────────────────────────────────────────────
+
+def review_style(state):
+    return {
+        "APPROVED":          (cyan,   "Approved"),
+        "CHANGES_REQUESTED": (yellow, "Changes requested"),
+        "COMMENTED":         (dim,    "Commented"),
+        "DISMISSED":         (dim,    "Dismissed"),
+    }.get(state, (dim, state.title()))
+
+
+# ── Data fetching ─────────────────────────────────────────────────────────────
+
+def fetch_prs(org, repo):
+    result = subprocess.run(
+        [
+            "gh", "pr", "list",
+            "--repo", f"{org}/{repo}",
+            "--state", "open",
+            "--json", "number,title,author,updatedAt,isDraft,reviews",
+        ],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        print(f"  warning: could not fetch PRs for {repo}: {result.stderr.strip()}", file=sys.stderr)
+        return []
+    return json.loads(result.stdout)
+
+
+def format_date(iso):
+    dt = datetime.fromisoformat(iso.replace("Z", "+00:00"))
+    return dt.strftime("%b %-d")
+
+
+def summarize_reviews(reviews, author_login):
+    if not reviews:
+        return dim("None")
+
+    all_by_author = all(r["author"]["login"] == author_login for r in reviews)
+    if all_by_author:
+        n = len(reviews)
+        return dim(italic(f"Self-commented ({n} comment{'s' if n != 1 else ''}, {author_login})"))
+
+    latest = {}
+    for r in reviews:
+        login = r["author"]["login"]
+        if login != author_login:
+            latest[login] = r["state"]
+
+    parts = []
+    for login, state in latest.items():
+        styler, label = review_style(state)
+        parts.append(styler(f"{label} ({login})"))
+    return ", ".join(parts)
+
+
+# ── Table rendering ───────────────────────────────────────────────────────────
+
+def render_table(headers, rows):
+    col_widths = [visible_len(h) for h in headers]
+    for row in rows:
+        for i, cell in enumerate(row):
+            col_widths[i] = max(col_widths[i], visible_len(str(cell)))
+
+    def border(left, mid, right):
+        segs = (dim("─") * (w + 2) for w in col_widths)
+        return dim(left) + dim(mid).join(segs) + dim(right)
+
+    def fmt_header(cells):
+        sep = dim("│")
+        parts = (f" {bold(str(c)).center(col_widths[i] + (len(bold(str(c))) - visible_len(bold(str(c)))))} " for i, c in enumerate(cells))
+        return sep + sep.join(parts) + sep
+
+    def fmt_row(cells):
+        sep = dim("│")
+        parts = (f" {str(c):<{col_widths[i] + (len(str(c)) - visible_len(str(c)))}} " for i, c in enumerate(cells))
+        return sep + sep.join(parts) + sep
+
+    lines = [border("┌", "┬", "┐"), fmt_header(headers), border("├", "┼", "┤")]
+    for i, row in enumerate(rows):
+        lines.append(fmt_row(row))
+        if i < len(rows) - 1:
+            lines.append(border("├", "┼", "┤"))
+    lines.append(border("└", "┴", "┘"))
+    return "\n".join(lines)
+
+
+# ── Main ──────────────────────────────────────────────────────────────────────
+
+def main():
+    parser = argparse.ArgumentParser(description="Show open PRs grouped by author across repos.")
+    parser.add_argument("repos", nargs="+", metavar="REPO", help="Repository names (without org prefix)")
+    parser.add_argument("--org", default=ORG, help=f"GitHub org (default: {ORG})")
+    args = parser.parse_args()
+
+    by_author = defaultdict(list)
+    bot_prs = []
+
+    for repo in args.repos:
+        prs = fetch_prs(args.org, repo)
+        for pr in prs:
+            author = pr["author"]
+            if author.get("is_bot"):
+                bot_prs.append((repo, pr))
+            else:
+                by_author[author["login"]].append((repo, pr))
+
+    if not by_author and not bot_prs:
+        print("No open PRs found.")
+        return
+
+    headers = ["Repo", "PR", "Draft", "Reviews", "Title", "Last Updated"]
+
+    for login, entries in sorted(by_author.items(), key=lambda x: -len(x[1])):
+        name = entries[0][1]["author"].get("name") or login
+        display = f"{name} ({login})" if name != login else login
+        count = len(entries)
+        pr_label = f"— {count} PR{'s' if count != 1 else ''}"
+        print(f"\n{dim('───')}\n{cyan(display)} {dim(pr_label)}\n")
+
+        rows = []
+        for repo, pr in sorted(entries, key=lambda x: x[1]["updatedAt"], reverse=True):
+            draft_cell = yellow("Draft") if pr["isDraft"] else dim("No")
+            rows.append([
+                blue(repo),
+                magenta(f"#{pr['number']}"),
+                draft_cell,
+                summarize_reviews(pr["reviews"], login),
+                pr["title"],
+                dim(format_date(pr["updatedAt"])),
+            ])
+
+        print(render_table(headers, rows))
+
+    if bot_prs:
+        print(f"\n{dim('───')}\n{dim('Bot PRs')} {dim(f'({len(bot_prs)})')}\n")
+        rows = []
+        for repo, pr in bot_prs:
+            rows.append([blue(repo), magenta(f"#{pr['number']}"), pr["title"], dim(format_date(pr["updatedAt"]))])
+        print(render_table(["Repo", "PR", "Title", "Last Updated"], rows))
+
+
+if __name__ == "__main__":
+    main()
