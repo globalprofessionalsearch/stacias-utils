@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+# ============================================================
+# repos - open a new iTerm window at the Jeenie repos directory
+# ============================================================
+set -euo pipefail
+
+DIR="$HOME/Documents/code/github/globalprofessionalsearch"
+
+case "${1:-}" in
+  -h|--help)
+    cat <<EOF
+repos - open a new iTerm window at the Jeenie repos directory
+
+Usage: repos
+
+  Opens a new iTerm window, cd'd to $DIR
+EOF
+    exit 0
+    ;;
+esac
+
+if [[ ! -d "$DIR" ]]; then
+  echo "repos: directory not found: $DIR" >&2
+  exit 1
+fi
+
+osascript - "$DIR" <<'APPLESCRIPT'
+on run argv
+  set targetDir to item 1 of argv
+  tell application "iTerm2"
+    activate
+    set newWindow to (create window with default profile)
+    tell current session of newWindow
+      write text "cd " & quoted form of targetDir & " && clear"
+    end tell
+  end tell
+end run
+APPLESCRIPT
