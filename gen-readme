@@ -34,7 +34,8 @@ rows=""
 for link in "$BIN_DIR"/*; do
   [[ -L "$link" ]] || continue
   name="$(basename "$link")"
-  target="$(cd "$BIN_DIR" && cd "$(dirname "$(readlink "$name")")" && pwd)/$(basename "$(readlink "$name")")"
+  rel="$(readlink "$link")"
+  target="$(cd "$BIN_DIR" && cd "$(dirname "$rel")" && pwd)/$(basename "$rel")"
   rows+="- \`$name\` - $(describe "$name" "$target")"$'\n'
 done
 
