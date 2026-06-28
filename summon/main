@@ -10,8 +10,9 @@
 # harvests line 1 of each `main --help`, so there is nothing to regenerate and
 # no per-utility metadata to keep in sync. `summon lint` enforces the contract.
 #
-# Sugar: a leading "the" is ignored, so `summon ctx` and `summon the ctx` are
-# equivalent. Summon the tools.
+# Sugar: a leading run of filler words (a an the this that these those up me my
+# some) is ignored, so `summon ctx`, `summon the ctx`, and `summon up a ctx` are
+# all equivalent. Summon the tools.
 set -euo pipefail
 
 # ---------------------------------------------------------------------------
@@ -27,9 +28,10 @@ done
 SELF_DIR="$(cd -P "$(dirname "$_self")" && pwd)"   # <repo>/summon
 REPO="$(dirname "$SELF_DIR")"
 
-# Names that can never be a utility: builtins, the "the" filler, + the
-# dispatcher itself.
-RESERVED="list lint commit-lint setup help the summon"
+# Leading filler/incantation words stripped before dispatch (see main()).
+FILLER="a an the this that these those up me my some"
+# Names that can never be a utility: builtins, filler words, + the dispatcher.
+RESERVED="list lint commit-lint setup help summon $FILLER"
 # Top-level entries that are infrastructure, not utilities.
 is_infra() {
   case "$1" in
@@ -67,8 +69,9 @@ summon - discover and run Stacia's personal *nix-style utilities
 
 Usage:
   summon list                    List every utility with its one-line synopsis
-  summon [the] <name> [args...]  Run a utility ("the" is optional sugar)
-  summon [the] <name> --help     Show a utility's full help
+  summon [filler] <name> [args]  Run a utility (leading a/an/the/this/that/
+                                 these/those/up/me/my/some are optional sugar)
+  summon [filler] <name> --help  Show a utility's full help
   summon lint                    Enforce the utility contract (CI + pre-commit)
   summon commit-lint <file|->    Validate a Conventional Commits message
   summon setup                   Configure hooks, PATH hint, and agent skills
@@ -210,8 +213,20 @@ EOF
 # Dispatch
 # ---------------------------------------------------------------------------
 main() {
-  # Sugar: ignore a leading "the" so `summon the ctx` == `summon ctx`.
-  if [[ "${1:-}" == "the" ]]; then shift; fi
+  # Sugar: strip a leading run of filler words so `summon up the ctx` == `summon
+  # ctx`. Remember what we stripped so an all-filler call can echo it back.
+  local stripped=""
+  while [[ $# -gt 0 ]]; do
+    case " $FILLER " in
+      *" $1 "*) stripped="${stripped:+$stripped }$1"; shift ;;
+      *)        break ;;
+    esac
+  done
+  if [[ -n "$stripped" && $# -eq 0 ]]; then
+    err "summon $stripped what?"
+    cmd_help
+    exit 0
+  fi
   local cmd="${1:-help}"
   case "$cmd" in
     help|-h|--help) cmd_help ;;
