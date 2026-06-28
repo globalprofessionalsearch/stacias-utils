@@ -195,7 +195,8 @@ cmd_setup() {
     [[ -f "$s/SKILL.md" ]] || continue
     name="$(basename "$s")"
     ln -sfn "$s" "$pi/$name"            # pi: native SKILL.md dirs
-    cp "$s/SKILL.md" "$claude/$name.md" # claude: flat .md
+    rm -f "$claude/$name.md"            # remove prior (broken) flat-file install
+    ln -sfn "$s" "$claude/$name"        # claude: same SKILL.md dir layout as pi
     echo "✓ skill synced: $name"
   done
 
