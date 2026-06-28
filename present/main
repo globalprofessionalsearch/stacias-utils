@@ -17,6 +17,19 @@ NC='\033[0m' # No Color
 # Constants for tokens
 NEW_SLIDE_TOKEN=__NEW_SLIDE__
 
+# Show help before requiring a slides directory.
+case "${1:-}" in
+  -h|--help|help)
+    cat <<'EOF'
+present - terminal-based slide presentation tool
+
+Usage: present <slides_directory>
+  The directory must contain title.txt and deck.txt.
+EOF
+    exit 0
+    ;;
+esac
+
 # Check if the slides directory is provided as an argument
 if [ -z "$1" ]; then
     echo "Usage: $0 <slides_directory>"

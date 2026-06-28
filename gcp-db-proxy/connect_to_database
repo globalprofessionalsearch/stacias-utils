@@ -5,6 +5,9 @@
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/load_config.sh"
 
+# Private certs/keys live outside the repo. Override with GCP_DB_PROXY_HOME.
+DATA_DIR="${GCP_DB_PROXY_HOME:-${XDG_CONFIG_HOME:-$HOME/.config}/gcp-db-proxy}"
+
 # Parse command-line arguments
 CONFIG_NAME="$1"
 
@@ -96,7 +99,8 @@ if [ "$BASTION_STATUS" != "RUNNING" ]; then
 fi
 
 # Check for SSL certificates
-CERTS_DIR="$SCRIPT_DIR/certs/$INSTANCE_NAME"
+CERTS_DIR="$DATA_DIR/certs/$INSTANCE_NAME"
+mkdir -p "$CERTS_DIR"
 CLIENT_CERT="$CERTS_DIR/client-cert.pem"
 CLIENT_KEY="$CERTS_DIR/client-key.pem"
 SERVER_CA="$CERTS_DIR/server-ca.pem"

@@ -1,6 +1,0 @@
-#!/usr/bin/env bash
-# Auto-sync skills + regenerate README after pulling/checking out.
-set -e
-root="$(git rev-parse --show-toplevel)"
-"$root/sync-skills"
-"$root/gen-readme"

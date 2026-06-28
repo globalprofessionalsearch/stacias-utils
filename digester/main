@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+# desc: Personal attention digest — ranks messages needing action from Slack/email
+# Thin entrypoint. Runs digester.py under the local venv if present,
+# otherwise falls back to the system python3.
+set -euo pipefail
+
+case "${1:-}" in
+  -h|--help)
+    cat <<'EOF'
+digester - personal attention digest; ranks Slack/email messages needing action
+
+Usage:
+  digester [--latest] [--max-done N] [--json]
+  digester <N> [--json]
+  digester <RANKS> done|active|pending [--json]
+EOF
+    exit 0
+    ;;
+esac
+
+# Resolve through the bin/ symlink to the real script directory.
+SOURCE="${BASH_SOURCE[0]}"
+while [[ -h "$SOURCE" ]]; do
+  d="$(cd -P "$(dirname "$SOURCE")" && pwd)"
+  SOURCE="$(readlink "$SOURCE")"
+  [[ "$SOURCE" != /* ]] && SOURCE="$d/$SOURCE"
+done
+DIR="$(cd -P "$(dirname "$SOURCE")" && pwd)"
+
+if [[ -x "$DIR/venv/bin/python" ]]; then
+  PY="$DIR/venv/bin/python"
+else
+  PY="$(command -v python3)"
+fi
+
+exec "$PY" "$DIR/digester.py" "$@"

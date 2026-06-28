@@ -1,8 +1,5 @@
 #!/usr/bin/env bash
-# Enforce layout, sync skills, regenerate README, and stage it.
+# Enforce the utility contract before every commit.
 set -e
 root="$(git rev-parse --show-toplevel)"
-"$root/check-layout"
-"$root/sync-skills"
-"$root/gen-readme"
-git add "$root/README.md"
+exec "$root/summon/main" lint

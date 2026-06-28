@@ -1,39 +1,5 @@
 #!/usr/bin/env bash
-# Conventional Commits validator
-
-commit_msg_file=$1
-commit_msg=$(cat "$commit_msg_file")
-
-# Pattern for conventional commits
-pattern='^(feat|fix|docs|style|refactor|perf|test|chore|ci|build|revert)(\(.+\))?: .+'
-
-if ! echo "$commit_msg" | grep -qE "$pattern"; then
-  cat <<EOF
-❌ Commit message must follow Conventional Commits format:
-
-  type(scope?): subject
-
-Types:
-  feat:     New feature
-  fix:      Bug fix
-  docs:     Documentation changes
-  style:    Code style/formatting
-  refactor: Code refactoring
-  perf:     Performance improvements
-  test:     Tests
-  chore:    Maintenance
-  ci:       CI/CD changes
-  build:    Build system changes
-  revert:   Revert a commit
-
-Examples:
-  feat: add bash_presentation utility
-  fix(ctx): handle missing kubectl config
-  docs: update README with usage examples
-
-Your commit message:
-  $commit_msg
-
-EOF
-  exit 1
-fi
+# Validate the commit message against Conventional Commits.
+set -e
+root="$(git rev-parse --show-toplevel)"
+exec "$root/summon/main" commit-lint "$1"

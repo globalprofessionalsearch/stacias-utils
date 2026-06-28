@@ -109,4 +109,10 @@ def main():
     print("="*80)
 
 if __name__ == "__main__":
+    if "-h" in sys.argv or "--help" in sys.argv:
+        print("classify-repos - interactively classify and move repos into experiments or utilities")
+        print()
+        print("Usage: classify-repos")
+        print("  Scans ~/Documents/code for loose repos and prompts where each belongs.")
+        sys.exit(0)
     main()

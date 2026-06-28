@@ -130,7 +130,15 @@ def render_table(headers, rows):
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def main():
-    parser = argparse.ArgumentParser(description="Show open PRs grouped by author across repos.")
+    if "-h" in sys.argv or "--help" in sys.argv:
+        print("pr-overview - summarize open GitHub pull requests grouped by author")
+        print()
+        print("Usage: pr-overview [--org ORG] REPO [REPO ...]")
+        print()
+        print("  REPO   repository name(s) without org prefix")
+        print(f"  --org  GitHub org (default: {ORG})")
+        sys.exit(0)
+    parser = argparse.ArgumentParser(prog="pr-overview", description="Show open PRs grouped by author across repos.")
     parser.add_argument("repos", nargs="+", metavar="REPO", help="Repository names (without org prefix)")
     parser.add_argument("--org", default=ORG, help=f"GitHub org (default: {ORG})")
     args = parser.parse_args()

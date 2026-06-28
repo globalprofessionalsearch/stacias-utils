@@ -1,0 +1,233 @@
+#!/usr/bin/env bash
+# summon - discover and run Stacia's personal *nix-style utilities
+#
+# A utility is any top-level repo directory that contains an executable `main`
+# whose `--help` prints, on line 1, a man-page-style synopsis:
+#
+#     <name> - <one-line description>
+#
+# That single convention makes every utility self-describing: `summon list`
+# harvests line 1 of each `main --help`, so there is nothing to regenerate and
+# no per-utility metadata to keep in sync. `summon lint` enforces the contract.
+#
+# Sugar: a leading "the" is ignored, so `summon ctx` and `summon the ctx` are
+# equivalent. Summon the tools.
+set -euo pipefail
+
+# ---------------------------------------------------------------------------
+# Locate the repo root by resolving this script through any symlinks (the one
+# PATH entry, bin/summon, is a symlink to <repo>/summon/main).
+# ---------------------------------------------------------------------------
+_self="${BASH_SOURCE[0]}"
+while [ -L "$_self" ]; do
+  _dir="$(cd -P "$(dirname "$_self")" && pwd)"
+  _self="$(readlink "$_self")"
+  case "$_self" in /*) : ;; *) _self="$_dir/$_self" ;; esac
+done
+SELF_DIR="$(cd -P "$(dirname "$_self")" && pwd)"   # <repo>/summon
+REPO="$(dirname "$SELF_DIR")"
+
+# Names that can never be a utility: builtins, the "the" filler, + the
+# dispatcher itself.
+RESERVED="list lint commit-lint setup help the summon"
+# Top-level entries that are infrastructure, not utilities.
+is_infra() {
+  case "$1" in
+    bin|skills|summon|.git|.github|.githooks|.*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+err()  { printf '%s\n' "$*" >&2; }
+die()  { err "$*"; exit 1; }
+
+# Print the names of all utilities (dirs with a `main`), sorted.
+utils() {
+  local d name
+  for d in "$REPO"/*/; do
+    name="$(basename "$d")"
+    is_infra "$name" && continue
+    [[ -f "$d/main" ]] || continue
+    printf '%s\n' "$name"
+  done | LC_ALL=C sort
+}
+
+# Line 1 of a utility's `--help` (its synopsis). Empty if it produced none.
+synopsis() {
+  local name="$1"
+  "$REPO/$name/main" --help 2>/dev/null </dev/null | head -n1
+}
+
+# ---------------------------------------------------------------------------
+# Builtins
+# ---------------------------------------------------------------------------
+cmd_help() {
+  cat <<EOF
+summon - discover and run Stacia's personal *nix-style utilities
+
+Usage:
+  summon list                    List every utility with its one-line synopsis
+  summon [the] <name> [args...]  Run a utility ("the" is optional sugar)
+  summon [the] <name> --help     Show a utility's full help
+  summon lint                    Enforce the utility contract (CI + pre-commit)
+  summon commit-lint <file|->    Validate a Conventional Commits message
+  summon setup                   Configure hooks, PATH hint, and agent skills
+  summon help | --help           Show this help
+
+A utility is a top-level directory with an executable \`main\` whose
+\`--help\` prints "<name> - <description>" on line 1. Run \`summon list\`.
+EOF
+}
+
+cmd_list() {
+  local name syn missing=0
+  while IFS= read -r name; do
+    [[ -n "$name" ]] || continue
+    syn="$(synopsis "$name" || true)"
+    if [[ -z "$syn" ]]; then
+      printf '  %-18s (no --help synopsis; run: summon lint)\n' "$name"
+      missing=1
+    else
+      printf '  %s\n' "$syn"
+    fi
+  done < <(utils)
+  return $missing
+}
+
+# ---------------------------------------------------------------------------
+# Linter: hard-ass enforcement of the utility contract.
+# ---------------------------------------------------------------------------
+cmd_lint() {
+  local fail=0 name kebab='^[a-z0-9]+(-[a-z0-9]+)*$'
+
+  # No stray executables loose at the repo root: all code lives in <name>/main.
+  local f
+  for f in "$REPO"/*; do
+    [[ -f "$f" && -x "$f" ]] || continue
+    err "LINT: stray executable at repo root: $(basename "$f") (move it into <name>/main)"
+    fail=1
+  done
+
+  # Every non-infra top-level directory must be a conforming utility.
+  local d
+  for d in "$REPO"/*/; do
+    name="$(basename "$d")"
+    is_infra "$name" && continue
+
+    if [[ ! "$name" =~ $kebab ]]; then
+      err "LINT: $name: name must be kebab-case ([a-z0-9] and single hyphens)"; fail=1
+    fi
+    case " $RESERVED " in *" $name "*)
+      err "LINT: $name: reserved name (clashes with a summon builtin)"; fail=1 ;;
+    esac
+
+    if [[ ! -e "$d/main" ]]; then
+      err "LINT: $name: no entrypoint (expected $name/main)"; fail=1; continue
+    fi
+    if [[ ! -f "$d/main" || ! -x "$d/main" ]]; then
+      err "LINT: $name: main must be an executable file (chmod +x $name/main)"; fail=1; continue
+    fi
+    if ! head -c2 "$d/main" | grep -q '^#!'; then
+      err "LINT: $name: main must start with a shebang (#!...)"; fail=1
+    fi
+
+    # The contract: `main --help` exits 0 and prints "<name> - <desc>" on line 1.
+    local out rc line1
+    out="$("$d/main" --help 2>/dev/null </dev/null)" && rc=0 || rc=$?
+    if [[ $rc -ne 0 ]]; then
+      err "LINT: $name: 'main --help' must exit 0 (got $rc)"; fail=1
+    fi
+    line1="$(printf '%s\n' "$out" | head -n1)"
+    if [[ -z "$line1" ]]; then
+      err "LINT: $name: 'main --help' printed nothing to stdout"; fail=1
+    elif [[ "$line1" != "$name - "* || "$line1" == "$name - " ]]; then
+      err "LINT: $name: line 1 of --help must be '$name - <description>' (got: ${line1:-<empty>})"
+      fail=1
+    fi
+  done
+
+  # The dispatcher must obey its own contract too.
+  local s
+  s="$("$SELF_DIR/main" --help 2>/dev/null </dev/null | head -n1)"
+  [[ "$s" == "summon - "* ]] || { err "LINT: summon: own --help line 1 malformed"; fail=1; }
+
+  if [[ $fail -eq 0 ]]; then
+    echo "lint OK ($(utils | grep -c . || true) utilities)"
+  fi
+  return $fail
+}
+
+# ---------------------------------------------------------------------------
+# Conventional Commits validator (shared by commit-msg hook and CI).
+# ---------------------------------------------------------------------------
+cmd_commit_lint() {
+  local src="${1:--}" message subject
+  local pattern='^(feat|fix|docs|style|refactor|perf|test|chore|ci|build|revert)(\(.+\))?(!)?: .+'
+  if [[ "$src" == "-" ]]; then message="$(cat)"; else message="$(cat "$src")"; fi
+  subject="$(printf '%s\n' "$message" | head -n1)"
+  if printf '%s' "$subject" | grep -qE "$pattern"; then exit 0; fi
+  cat >&2 <<EOF
+Commit subject must follow Conventional Commits:
+
+  type(scope?): subject
+
+types: feat fix docs style refactor perf test chore ci build revert
+
+Your subject:
+  $subject
+EOF
+  exit 1
+}
+
+# ---------------------------------------------------------------------------
+# One-shot setup: hooks + agent skills + PATH hint. Idempotent.
+# ---------------------------------------------------------------------------
+cmd_setup() {
+  git -C "$REPO" config core.hooksPath .githooks
+  echo "✓ git hooks enabled (core.hooksPath=.githooks)"
+
+  local pi="$HOME/.pi/agent/skills" claude="$HOME/.claude/skills" s name
+  mkdir -p "$pi" "$claude"
+  for s in "$REPO"/skills/*/; do
+    [[ -f "$s/SKILL.md" ]] || continue
+    name="$(basename "$s")"
+    ln -sfn "$s" "$pi/$name"            # pi: native SKILL.md dirs
+    cp "$s/SKILL.md" "$claude/$name.md" # claude: flat .md
+    echo "✓ skill synced: $name"
+  done
+
+  cat <<EOF
+
+Add the single PATH entry to your shell rc (once):
+
+  export PATH="$REPO/bin:\$PATH"
+
+Then: summon list
+EOF
+}
+
+# ---------------------------------------------------------------------------
+# Dispatch
+# ---------------------------------------------------------------------------
+main() {
+  # Sugar: ignore a leading "the" so `summon the ctx` == `summon ctx`.
+  if [[ "${1:-}" == "the" ]]; then shift; fi
+  local cmd="${1:-help}"
+  case "$cmd" in
+    help|-h|--help) cmd_help ;;
+    list)           shift; cmd_list "$@" ;;
+    lint)           shift; cmd_lint "$@" ;;
+    commit-lint)    shift; cmd_commit_lint "$@" ;;
+    setup)          shift; cmd_setup "$@" ;;
+    *)
+      if [[ -x "$REPO/$cmd/main" ]]; then
+        shift; exec "$REPO/$cmd/main" "$@"
+      fi
+      err "summon: unknown utility or command: $cmd"
+      err "Run 'summon list' to see what's available."
+      exit 127
+      ;;
+  esac
+}
+
+main "$@"
