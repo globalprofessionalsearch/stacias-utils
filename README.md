@@ -38,6 +38,25 @@ Then add the single PATH entry it prints to your shell rc:
 export PATH="$HOME/Documents/code/github/globalprofessionalsearch/stacias-utils/bin:$PATH"
 ```
 
+## Agent skills
+
+The repo ships agent skills under `skills/<name>/SKILL.md` (e.g.
+`using-stacia-utils`, `contributing-stacia-utils`). Nothing in this repo is on
+an agent's search path by default — `summon setup` installs them into the
+harness-global skill directories:
+
+- **pi** discovers skills in `~/.pi/agent/skills/`, recursing into any
+  subdirectory that contains a `SKILL.md`. `summon setup` symlinks each
+  `skills/<name>/` into `~/.pi/agent/skills/<name>`, so pi picks them up with no
+  registration or config. Because it's a symlink, repo edits are live.
+- **Claude Code** discovers flat `~/.claude/skills/<name>.md` files. `summon
+  setup` copies each `SKILL.md` there; that's a copy, so re-run `summon setup`
+  after editing a skill.
+
+In short: pi knows where the skills are because they live in (or symlink from)
+`~/.pi/agent/skills/`, one of pi's built-in global skill locations. Run `summon
+setup` once after cloning, and again whenever you add or change a skill.
+
 ## Conventions
 
 - One command on PATH: `summon` (everything else is `summon <name>`).
