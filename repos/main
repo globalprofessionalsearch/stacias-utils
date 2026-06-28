@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ============================================================
-# repos - open a new iTerm window at the Jeenie repos directory
+# repos - split the current iTerm tab to the Jeenie repos directory
 # ============================================================
 set -euo pipefail
 
@@ -9,11 +9,12 @@ DIR="$HOME/Documents/code/github/globalprofessionalsearch"
 case "${1:-}" in
   -h|--help)
     cat <<EOF
-repos - open a new iTerm window at the Jeenie repos directory
+repos - split the current iTerm tab horizontally at the Jeenie repos directory
 
 Usage: repos
 
-  Opens a new iTerm window, cd'd to $DIR
+  Splits the current iTerm session horizontally and cd's the new pane to
+  $DIR (opens a new window if iTerm has none).
 EOF
     exit 0
     ;;
@@ -29,8 +30,14 @@ on run argv
   set targetDir to item 1 of argv
   tell application "iTerm2"
     activate
-    set newWindow to (create window with default profile)
-    tell current session of newWindow
+    if (count of windows) = 0 then
+      set newSession to (current session of (create window with default profile))
+    else
+      tell current session of current window
+        set newSession to (split horizontally with default profile)
+      end tell
+    end if
+    tell newSession
       write text "cd " & quoted form of targetDir & " && clear"
     end tell
   end tell
