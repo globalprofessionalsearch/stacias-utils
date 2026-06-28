@@ -1,0 +1,53 @@
+#!/usr/bin/env bash
+# check-layout - Enforce the utility layout standard. (Repo tooling; exempt.)
+#
+# Rules:
+#   1. No bare executable scripts at the repo root (except exempt tooling).
+#   2. Every bin/<tool> symlink must point at <dir>/main* (a dir entrypoint).
+
+set -euo pipefail
+
+REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$REPO_DIR"
+
+# Tooling exempt from the directory+main layout.
+EXEMPT=("sync-skills" "gen-readme" "check-layout")
+
+is_exempt() {
+  local f="$1"
+  for e in "${EXEMPT[@]}"; do [[ "$f" == "$e" ]] && return 0; done
+  return 1
+}
+
+fail=0
+
+# Rule 1: no bare executable files at repo root.
+for f in *; do
+  [[ -f "$f" && -x "$f" ]] || continue
+  is_exempt "$f" && continue
+  echo "LAYOUT ERROR: bare executable at repo root: $f (move to $f/main or <tool>/main)" >&2
+  fail=1
+done
+
+# Rule 2: bin symlinks must target <dir>/main*
+if [[ -d bin ]]; then
+  for link in bin/*; do
+    [[ -L "$link" ]] || continue
+    name="$(basename "$link")"
+    is_exempt "$name" && continue
+    target="$(readlink "$link")"
+    case "$(basename "$target")" in
+      main|main.*) : ;;
+      *)
+        # Allow compiled-binary entrypoints that match the tool dir name (e.g. Go).
+        if [[ "$target" == "../$name/$name" ]]; then : ; else
+          echo "LAYOUT ERROR: bin/$name -> $target (must point at <dir>/main*)" >&2
+          fail=1
+        fi
+        ;;
+    esac
+  done
+fi
+
+[[ $fail -eq 0 ]] && echo "layout OK"
+exit $fail

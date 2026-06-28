@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+# desc: Connect to / verify private Cloud SQL instances via bastion + IAP tunnel
+set -euo pipefail
+
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cmd="${1:-}"
+shift || true
+
+case "$cmd" in
+  connect) exec "$DIR/connect_to_database" "$@" ;;
+  verify)  exec "$DIR/verify_database_requirements" "$@" ;;
+  *)
+    cat >&2 <<EOF
+Usage: gcp-db-proxy <command> <config-name>
+
+Commands:
+  connect   Open an SSH tunnel to a Cloud SQL instance via bastion + IAP
+  verify    Check prerequisites for connecting to a Cloud SQL instance
+
+Run 'gcp-db-proxy verify <config>' before 'connect' on first use.
+EOF
+    exit 1
+    ;;
+esac

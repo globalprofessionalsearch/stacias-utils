@@ -1,50 +1,56 @@
 # Adding New Utilities
 
-## Structure
+## Standard Layout (required)
+
+Every utility is a **directory** named after the tool, containing a single
+**`main` entrypoint** at its root. No bare scripts at the repo root.
 
 ```
 stacias-utils/
-  utility-name/           # Complex utilities with multiple files
-    main-script
-    helpers.sh
-    README.md             # What it does, how to use it
-  simple-script           # Simple single-file utilities
-  bin/                    # Symlinks only (managed)
+  my-tool/                # Directory named after the tool (kebab-case)
+    main                  # Entrypoint (main, main.py, main.go, ...)
+    helpers.sh            # Internal files (not on PATH)
+    README.md             # Optional: details for complex tools
+  bin/
+    my-tool -> ../my-tool/main   # One symlink per tool (the only PATH entry)
 ```
+
+This mirrors the Go `cmd/<name>/main.go` convention, generalized across
+languages (bash `main`, Python `main.py`, etc.). A tool with multiple
+sub-commands uses one `main` that dispatches (see `gcp-db-proxy`).
+
+> Repo tooling (`sync-skills`, `gen-readme`) is exempt from this layout.
 
 ## Steps to Add a Utility
 
-1. **Create the utility**
-   - Single script: Place in root with executable permissions
-   - Multi-file: Create a subdirectory with main executable + README.md
-
-2. **Make it executable**
+1. **Create the directory + entrypoint**
    ```bash
-   chmod +x your-script
+   mkdir my-tool
+   $EDITOR my-tool/main          # or main.py, main.go, ...
+   chmod +x my-tool/main
    ```
 
-3. **Add to PATH**
+2. **Add a description** so it auto-documents in the README. Either:
+   - a `# desc: <one line>` header in `main`, or
+   - a `skills/my-tool/SKILL.md` with a `description:` frontmatter field.
+
+3. **Expose on PATH** with a single symlink:
    ```bash
-   cd bin/
-   ln -sf ../path/to/your-script friendly-name
+   ln -sf ../my-tool/main bin/my-tool
    ```
 
-4. **Document it**
-   - Add entry to main README.md under "Available Utilities"
-   - For complex utilities, include a README.md in its directory
-
-5. **Commit**
+4. **Commit** (the `pre-commit` hook regenerates the README + syncs skills):
    ```bash
    git add .
-   git commit -m "feat: add utility-name"
+   git commit -m "feat: add my-tool"
    git push
    ```
 
 ## Naming Conventions
 
-- Use kebab-case for symlink names: `my-tool`, not `my_tool` or `myTool`
-- Keep names short and descriptive
-- Avoid generic names like `util` or `helper`
+- Directory and symlink share the same kebab-case name: `my-tool`
+- Entrypoint is always `main` (plus language extension if needed)
+- Keep names short and descriptive; avoid generic names like `util`/`helper`
 
 ## Documentation
 
