@@ -1,0 +1,175 @@
+#!/bin/bash
+
+# Load configuration
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/load_config.sh"
+
+# Parse command-line arguments
+CONFIG_NAME="$1"
+
+# Load the specified configuration
+if ! load_config "$CONFIG_NAME"; then
+    exit 1
+fi
+
+echo "======================================"
+echo "Cloud SQL Connection Requirements Check"
+echo "Configuration: $CONFIG_NAME"
+echo "======================================"
+echo ""
+
+# Color codes for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+NC='\033[0m' # No Color
+
+PASSED=0
+FAILED=0
+
+# 1. Check if gcloud is installed
+echo "1. Checking if gcloud CLI is installed..."
+if command -v gcloud &> /dev/null; then
+    GCLOUD_VERSION=$(gcloud version --format="value(core)" 2>/dev/null)
+    echo -e "${GREEN}✓ PASS${NC} - gcloud CLI is installed (version: $GCLOUD_VERSION)"
+    ((PASSED++))
+else
+    echo -e "${RED}✗ FAIL${NC} - gcloud CLI is not installed"
+    echo "   Install from: https://cloud.google.com/sdk/docs/install"
+    ((FAILED++))
+    exit 1
+fi
+echo ""
+
+# 2. Check if gcloud is authenticated
+echo "2. Checking gcloud authentication..."
+ACTIVE_ACCOUNT=$(gcloud auth list --filter=status:ACTIVE --format="value(account)" 2>/dev/null)
+if [ -n "$ACTIVE_ACCOUNT" ]; then
+    echo -e "${GREEN}✓ PASS${NC} - Authenticated as: $ACTIVE_ACCOUNT"
+    ((PASSED++))
+else
+    echo -e "${RED}✗ FAIL${NC} - No active gcloud authentication"
+    echo "   Run: gcloud auth login"
+    ((FAILED++))
+fi
+echo ""
+
+# 3. Check if project is set and accessible
+echo "3. Checking project configuration..."
+CURRENT_PROJECT=$(gcloud config get-value project 2>/dev/null)
+echo "   Current project: ${CURRENT_PROJECT:-<none>}"
+echo "   Target project: $PROJECT_ID"
+
+PROJECT_EXISTS=$(gcloud projects describe $PROJECT_ID --format="value(projectId)" 2>/dev/null)
+if [ -n "$PROJECT_EXISTS" ]; then
+    echo -e "${GREEN}✓ PASS${NC} - Project '$PROJECT_ID' exists and is accessible"
+    ((PASSED++))
+else
+    echo -e "${RED}✗ FAIL${NC} - Cannot access project '$PROJECT_ID'"
+    echo "   Check project name or run: gcloud auth login"
+    ((FAILED++))
+fi
+echo ""
+
+# 4. Check if Cloud SQL instance exists
+echo "4. Checking if Cloud SQL instance exists..."
+INSTANCE_EXISTS=$(gcloud sql instances list \
+    --project=$PROJECT_ID \
+    --filter="name=$INSTANCE_NAME" \
+    --format="value(name)" 2>/dev/null)
+
+if [ -n "$INSTANCE_EXISTS" ]; then
+    echo -e "${GREEN}✓ PASS${NC} - Instance '$INSTANCE_NAME' exists"
+    ((PASSED++))
+else
+    echo -e "${RED}✗ FAIL${NC} - Instance '$INSTANCE_NAME' not found in project '$PROJECT_ID'"
+    echo "   Available instances:"
+    gcloud sql instances list --project=$PROJECT_ID --format="table(name,region,databaseVersion)" 2>/dev/null || echo "   (none or error listing)"
+    ((FAILED++))
+fi
+echo ""
+
+# 5. Check if instance has private IP configuration
+echo "5. Checking private network configuration..."
+SQL_NETWORK=$(gcloud sql instances describe $INSTANCE_NAME \
+    --project=$PROJECT_ID \
+    --format="value(settings.ipConfiguration.privateNetwork)" 2>/dev/null)
+
+if [ -n "$SQL_NETWORK" ]; then
+    NETWORK_NAME=$(basename $SQL_NETWORK)
+    echo -e "${GREEN}✓ PASS${NC} - Private network configured: $NETWORK_NAME"
+    ((PASSED++))
+else
+    echo -e "${RED}✗ FAIL${NC} - No private network configured for instance"
+    echo "   The instance might only have a public IP"
+    echo "   Check IP configuration:"
+    gcloud sql instances describe $INSTANCE_NAME \
+        --project=$PROJECT_ID \
+        --format="value(ipAddresses)" 2>/dev/null || echo "   (error retrieving)"
+    ((FAILED++))
+fi
+echo ""
+
+# 6. Check if private IP is assigned
+echo "6. Checking private IP address..."
+SQL_PRIVATE_IP=$(gcloud sql instances describe $INSTANCE_NAME \
+    --project=$PROJECT_ID \
+    --format="value(ipAddresses[0].ipAddress)" 2>/dev/null)
+
+if [ -n "$SQL_PRIVATE_IP" ]; then
+    echo -e "${GREEN}✓ PASS${NC} - Private IP: $SQL_PRIVATE_IP"
+    ((PASSED++))
+else
+    echo -e "${YELLOW}⚠ WARN${NC} - Could not retrieve private IP address"
+fi
+echo ""
+
+# 7. Check Compute Engine permissions (for bastion)
+echo "7. Checking Compute Engine permissions..."
+COMPUTE_TEST=$(gcloud compute instances list \
+    --project=$PROJECT_ID \
+    --limit=1 \
+    --format="value(name)" 2>&1)
+
+if [ $? -eq 0 ]; then
+    echo -e "${GREEN}✓ PASS${NC} - Can list Compute Engine instances"
+    ((PASSED++))
+else
+    echo -e "${RED}✗ FAIL${NC} - Cannot access Compute Engine"
+    echo "   Error: $COMPUTE_TEST"
+    echo "   Required permission: compute.instances.list"
+    ((FAILED++))
+fi
+echo ""
+
+# 8. Check if IAP is enabled (needed for tunnel)
+echo "8. Checking IAP tunnel prerequisites..."
+IAP_CHECK=$(gcloud services list \
+    --project=$PROJECT_ID \
+    --filter="config.name:iap.googleapis.com" \
+    --format="value(config.name)" 2>/dev/null)
+
+if [ -n "$IAP_CHECK" ]; then
+    echo -e "${GREEN}✓ PASS${NC} - IAP API is enabled"
+    ((PASSED++))
+else
+    echo -e "${YELLOW}⚠ WARN${NC} - IAP API might not be enabled"
+    echo "   Enable with: gcloud services enable iap.googleapis.com --project=$PROJECT_ID"
+fi
+echo ""
+
+# Summary
+echo "======================================"
+echo "SUMMARY"
+echo "======================================"
+echo -e "Passed: ${GREEN}$PASSED${NC}"
+echo -e "Failed: ${RED}$FAILED${NC}"
+echo ""
+
+if [ $FAILED -eq 0 ]; then
+    echo -e "${GREEN}All checks passed! You should be able to run connect_to_database${NC}"
+    exit 0
+else
+    echo -e "${RED}Some checks failed. Fix the issues above before running connect_to_database${NC}"
+    exit 1
+fi

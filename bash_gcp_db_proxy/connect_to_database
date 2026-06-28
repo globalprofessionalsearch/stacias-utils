@@ -1,0 +1,152 @@
+#!/bin/bash
+
+# Load configuration
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/load_config.sh"
+
+# Parse command-line arguments
+CONFIG_NAME="$1"
+
+# Load the specified configuration
+if ! load_config "$CONFIG_NAME"; then
+    exit 1
+fi
+
+echo "Using configuration: $CONFIG_NAME"
+echo ""
+
+# Get the VPC network that the Cloud SQL instance is in
+echo "Finding Cloud SQL instance network..."
+SQL_NETWORK=$(gcloud sql instances describe $INSTANCE_NAME \
+  --project=$PROJECT_ID \
+  --format="value(settings.ipConfiguration.privateNetwork)" 2>/dev/null)
+
+if [ -z "$SQL_NETWORK" ]; then
+  echo "Error: Could not find private network for Cloud SQL instance"
+  exit 1
+fi
+
+# Extract network name from full path
+NETWORK_NAME=$(basename $SQL_NETWORK)
+
+# Get Cloud SQL private IP
+echo "Getting Cloud SQL private IP..."
+SQL_PRIVATE_IP=$(gcloud sql instances describe $INSTANCE_NAME \
+  --project=$PROJECT_ID \
+  --format="value(ipAddresses[0].ipAddress)")
+
+if [ -z "$SQL_PRIVATE_IP" ]; then
+  echo "Error: Could not get private IP for Cloud SQL instance"
+  exit 1
+fi
+
+echo "Cloud SQL private IP: $SQL_PRIVATE_IP"
+
+# Check if bastion exists
+echo "Checking for bastion VM..."
+BASTION_EXISTS=$(gcloud compute instances list \
+  --project=$PROJECT_ID \
+  --filter="name=$BASTION_NAME AND zone:$ZONE" \
+  --format="value(name)" 2>/dev/null)
+
+if [ -z "$BASTION_EXISTS" ]; then
+  echo "Creating bastion VM..."
+  gcloud compute instances create $BASTION_NAME \
+    --project=$PROJECT_ID \
+    --zone=$ZONE \
+    --machine-type=e2-micro \
+    --network=$NETWORK_NAME \
+    --no-address \
+    --tags=sql-bastion \
+    --metadata=enable-oslogin=true
+
+  echo "Waiting for bastion to be ready for SSH..."
+  # Wait for instance to be RUNNING and SSH-ready
+  for i in {1..12}; do
+    STATUS=$(gcloud compute instances describe $BASTION_NAME \
+      --project=$PROJECT_ID \
+      --zone=$ZONE \
+      --format="value(status)" 2>/dev/null)
+    if [ "$STATUS" = "RUNNING" ]; then
+      echo "Instance is running, waiting for SSH initialization..."
+      sleep 30
+      break
+    fi
+    echo "Waiting... ($i/12)"
+    sleep 5
+  done
+else
+  echo "Bastion VM already exists"
+fi
+
+# Start the bastion if it's not running
+BASTION_STATUS=$(gcloud compute instances describe $BASTION_NAME \
+  --project=$PROJECT_ID \
+  --zone=$ZONE \
+  --format="value(status)")
+
+if [ "$BASTION_STATUS" != "RUNNING" ]; then
+  echo "Starting bastion VM..."
+  gcloud compute instances start $BASTION_NAME \
+    --project=$PROJECT_ID \
+    --zone=$ZONE
+  echo "Waiting for instance to be ready for SSH..."
+  sleep 20
+fi
+
+# Check for SSL certificates
+CERTS_DIR="$SCRIPT_DIR/certs/$INSTANCE_NAME"
+CLIENT_CERT="$CERTS_DIR/client-cert.pem"
+CLIENT_KEY="$CERTS_DIR/client-key.pem"
+SERVER_CA="$CERTS_DIR/server-ca.pem"
+
+echo "Checking SSL certificates..."
+if [ ! -f "$CLIENT_CERT" ] || [ ! -f "$CLIENT_KEY" ] || [ ! -f "$SERVER_CA" ]; then
+  echo "SSL certificates not found. Creating them..."
+  mkdir -p "$CERTS_DIR"
+
+  # Create client certificate
+  CERT_NAME="client-cert-$(date +%Y%m%d-%H%M%S)"
+  echo "Creating client certificate: $CERT_NAME"
+  gcloud sql ssl client-certs create "$CERT_NAME" "$CLIENT_KEY" \
+    --instance=$INSTANCE_NAME \
+    --project=$PROJECT_ID
+
+  # Download the client certificate
+  gcloud sql ssl client-certs describe "$CERT_NAME" \
+    --instance=$INSTANCE_NAME \
+    --project=$PROJECT_ID \
+    --format="get(cert)" > "$CLIENT_CERT"
+
+  # Download server CA certificate
+  echo "Downloading server CA certificate..."
+  gcloud sql instances describe $INSTANCE_NAME \
+    --project=$PROJECT_ID \
+    --format="get(serverCaCert.cert)" > "$SERVER_CA"
+
+  echo "Certificates created and saved to: $CERTS_DIR"
+else
+  echo "SSL certificates found at: $CERTS_DIR"
+fi
+
+echo "Establishing SSH tunnel..."
+echo "Local port $LOCAL_PORT -> Cloud SQL at $SQL_PRIVATE_IP:5432"
+echo ""
+echo "Connect with SSL certificates:"
+echo "  psql \"host=127.0.0.1 port=$LOCAL_PORT user=$DB_USER dbname=$DB_NAME sslmode=verify-ca sslcert=$CLIENT_CERT sslkey=$CLIENT_KEY sslrootcert=$SERVER_CA\""
+echo ""
+echo "Or export environment variables:"
+echo "  export PGSSLCERT=$CLIENT_CERT"
+echo "  export PGSSLKEY=$CLIENT_KEY"
+echo "  export PGSSLROOTCERT=$SERVER_CA"
+echo "  psql -h 127.0.0.1 -p $LOCAL_PORT -U $DB_USER -d $DB_NAME"
+echo ""
+echo "Press Ctrl+C to close the tunnel"
+echo ""
+
+# Establish tunnel using IAP
+gcloud compute ssh $BASTION_NAME \
+  --project=$PROJECT_ID \
+  --zone=$ZONE \
+  --tunnel-through-iap \
+  -- -L $LOCAL_PORT:$SQL_PRIVATE_IP:5432 -N
