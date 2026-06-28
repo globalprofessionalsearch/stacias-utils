@@ -11,6 +11,10 @@
 set -euo pipefail
 export LC_ALL=C
 
+# --check: report drift without writing (exit 1 if the section is stale).
+CHECK=0
+[[ "${1:-}" == "--check" ]] && CHECK=1
+
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BIN_DIR="$REPO_DIR/bin"
 SKILLS_DIR="$REPO_DIR/skills"
@@ -48,6 +52,19 @@ awk -v begin="$BEGIN" -v end="$END" -v bodyfile="$bodyfile" '
   $0 == end   { print; skip=0; next }
   !skip       { print }
 ' "$README" > "$tmp"
+
+if [[ "$CHECK" -eq 1 ]]; then
+  rm -f "$bodyfile"
+  if cmp -s "$tmp" "$README"; then
+    rm -f "$tmp"
+    echo "README utilities section up to date"
+    exit 0
+  fi
+  rm -f "$tmp"
+  echo "README utilities section is stale" >&2
+  exit 1
+fi
+
 mv "$tmp" "$README"
 rm -f "$bodyfile"
 

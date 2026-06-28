@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# desc: Check whether your attention is needed across Slack and Jira
+# Thin entrypoint. Execs the compiled binary (build with `make build`).
+set -euo pipefail
+
+# Resolve through the bin/ symlink to the real script directory.
+SOURCE="${BASH_SOURCE[0]}"
+while [[ -h "$SOURCE" ]]; do
+  d="$(cd -P "$(dirname "$SOURCE")" && pwd)"
+  SOURCE="$(readlink "$SOURCE")"
+  [[ "$SOURCE" != /* ]] && SOURCE="$d/$SOURCE"
+done
+DIR="$(cd -P "$(dirname "$SOURCE")" && pwd)"
+BIN="$DIR/whoneedsme"
+
+if [[ ! -x "$BIN" ]]; then
+  echo "whoneedsme: binary not built — run 'make build' in $DIR" >&2
+  exit 1
+fi
+
+exec "$BIN" "$@"

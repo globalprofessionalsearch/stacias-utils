@@ -11,11 +11,35 @@ REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$REPO_DIR"
 
 # Tooling exempt from the directory+main layout.
-EXEMPT=("sync-skills" "gen-readme" "check-layout")
+EXEMPT=("sync-skills" "gen-readme" "check-layout" "commit-lint")
+
+# Non-tool directories (infrastructure, not utilities).
+DIR_EXEMPT=("bin" "skills")
 
 is_exempt() {
   local f="$1"
   for e in "${EXEMPT[@]}"; do [[ "$f" == "$e" ]] && return 0; done
+  return 1
+}
+
+is_dir_exempt() {
+  local d="$1"
+  for e in "${DIR_EXEMPT[@]}"; do [[ "$d" == "$e" ]] && return 0; done
+  return 1
+}
+
+# Resolve a tool description the same way gen-readme does:
+#   skills/<name>/SKILL.md "description:"  ->  target "# desc:"  ->  none
+has_description() {
+  local name="$1" target="$2"
+  if [[ -f "skills/$name/SKILL.md" ]] \
+     && sed -n 's/^description:[[:space:]]*//p' "skills/$name/SKILL.md" | grep -q .; then
+    return 0
+  fi
+  if [[ -f "$target" ]] \
+     && sed -n 's/^#[[:space:]]*desc:[[:space:]]*//p' "$target" | grep -q .; then
+    return 0
+  fi
   return 1
 }
 
@@ -48,6 +72,24 @@ if [[ -d bin ]]; then
     esac
   done
 fi
+
+# Rule 3: every non-exempt top-level directory is a utility -> must have a
+# bin/<dir> symlink and a resolvable description.
+for d in */; do
+  name="${d%/}"
+  is_dir_exempt "$name" && continue
+  if [[ ! -L "bin/$name" ]]; then
+    echo "LAYOUT ERROR: $name/ has no bin/$name symlink (add: ln -sf ../$name/main bin/$name)" >&2
+    fail=1
+    continue
+  fi
+  rel="$(readlink "bin/$name")"
+  target="$(cd bin && cd "$(dirname "$rel")" && pwd)/$(basename "$rel")"
+  if ! has_description "$name" "$target"; then
+    echo "LAYOUT ERROR: $name has no description (add '# desc:' to its entrypoint or skills/$name/SKILL.md)" >&2
+    fail=1
+  fi
+done
 
 [[ $fail -eq 0 ]] && echo "layout OK"
 exit $fail

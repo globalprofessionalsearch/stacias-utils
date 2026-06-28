@@ -93,14 +93,15 @@ Once the tunnel is running, open a new terminal and connect:
 
 **Using connection string:**
 ```bash
-psql "host=127.0.0.1 port=6665 user=your-user dbname=your-db sslmode=verify-ca sslcert=certs/instance-name/client-cert.pem sslkey=certs/instance-name/client-key.pem sslrootcert=certs/instance-name/server-ca.pem"
+CERTS=~/.config/gcp-db-proxy/certs
+psql "host=127.0.0.1 port=6665 user=your-user dbname=your-db sslmode=verify-ca sslcert=$CERTS/instance-name/client-cert.pem sslkey=$CERTS/instance-name/client-key.pem sslrootcert=$CERTS/instance-name/server-ca.pem"
 ```
 
 **Using environment variables:**
 ```bash
-export PGSSLCERT=certs/inventory-registrar/client-cert.pem
-export PGSSLKEY=certs/inventory-registrar/client-key.pem
-export PGSSLROOTCERT=certs/inventory-registrar/server-ca.pem
+export PGSSLCERT=~/.config/gcp-db-proxy/certs/inventory-registrar/client-cert.pem
+export PGSSLKEY=~/.config/gcp-db-proxy/certs/inventory-registrar/client-key.pem
+export PGSSLROOTCERT=~/.config/gcp-db-proxy/certs/inventory-registrar/server-ca.pem
 psql -h 127.0.0.1 -p 6665 -U your-user -d your-database
 ```
 
@@ -115,9 +116,9 @@ psql -h 127.0.0.1 -p 6665 -U your-user -d your-database
    - Password: (your password)
 3. **SSL** tab:
    - Use SSL: `true`
-   - CA certificate: `certs/instance-name/server-ca.pem`
-   - Client certificate: `certs/instance-name/client-cert.pem`
-   - Client private key: `certs/instance-name/client-key.pem`
+   - CA certificate: `~/.config/gcp-db-proxy/certs/instance-name/server-ca.pem`
+   - Client certificate: `~/.config/gcp-db-proxy/certs/instance-name/client-cert.pem`
+   - Client private key: `~/.config/gcp-db-proxy/certs/instance-name/client-key.pem`
    - SSL mode: `verify-ca`
 
 ## Configuration
@@ -170,14 +171,16 @@ source load_config.sh && list_configs
 
 ### SSL Certificates
 
-Client SSL certificates are automatically generated and stored in:
+Client SSL certificates are automatically generated and stored **outside the
+repo** (never committed) in:
 ```
-certs/<instance-name>/
+~/.config/gcp-db-proxy/certs/<instance-name>/
   ├── client-cert.pem
   ├── client-key.pem
   └── server-ca.pem
 ```
 
+- Location overridable via `GCP_DB_PROXY_HOME` (or `XDG_CONFIG_HOME`)
 - Certificates are **instance-specific** to prevent collisions
 - Created automatically on first connection
 - Reused on subsequent connections
