@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+# ============================================================
+# new-project (shell wrapper)
+#
+# Finds iTerm2's bundled Python and runs the provisioner.
+# ============================================================
+
+set -euo pipefail
+
+case "${1:-}" in
+  -h|--help|"")
+    cat <<'EOF'
+new-project - open an iTerm2 workspace centered on the current directory
+
+Usage: new-project <project-name>
+
+  Example: new-project my-api
+EOF
+    exit 0
+    ;;
+esac
+
+# Find iTerm2's bundled Python runtime (note: path has a space)
+ITERM2_BASE="$HOME/Library/Application Support/iTerm2/iterm2env/versions"
+ITERM2_PYTHON=$(ls "$ITERM2_BASE"/*/bin/python3 2>/dev/null | sort -V | tail -1)
+
+if [[ -z "$ITERM2_PYTHON" ]]; then
+    echo "Error: iTerm2 Python runtime not found."
+    echo "Install it via: iTerm2 menu → Scripts → Manage → Install Python Runtime"
+    exit 1
+fi
+
+# Find the provisioner script (same directory as this wrapper)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROVISIONER="$SCRIPT_DIR/new-project.py"
+
+if [[ ! -f "$PROVISIONER" ]]; then
+    echo "Error: new-project.py not found in $SCRIPT_DIR"
+    exit 1
+fi
+
+# Pass project name and current directory to provisioner
+exec "$ITERM2_PYTHON" "$PROVISIONER" "$1" "$(pwd)"
