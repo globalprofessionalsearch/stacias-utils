@@ -1,4 +1,5 @@
 import json as _json
+from datetime import datetime, timedelta, timezone
 import pytest
 from unittest.mock import patch
 import digester
@@ -255,8 +256,9 @@ def test_run_detail_no_contacts_or_channel(capsys):
 def test_run_detail_age_string_formatting(capsys):
     """Age is correctly formatted for display."""
     msg = _msg("id1", "Test task", category="pull_request")
-    # Set to roughly 2 days ago
-    msg["received_at"] = "2026-06-21T10:00:00+00:00"
+    # Set to roughly 2 days ago, relative to now so the test stays evergreen
+    two_days_ago = datetime.now(timezone.utc) - timedelta(days=2, hours=1)
+    msg["received_at"] = two_days_ago.isoformat()
 
     tasks = {"tid1": [msg]}
     ranked = [("tid1", 1.0)]

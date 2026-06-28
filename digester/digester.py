@@ -19,6 +19,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 import db
+import llm
 import scorer
 import sources.email as _email_source
 
@@ -600,6 +601,14 @@ def run_deliver(tasks: dict[str, list[dict]], ranked: list[tuple[str, float]], s
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def run(limit=None, only_source=None, as_json: bool = False):
+    if not llm.ensure_running(interactive=not as_json):
+        if as_json:
+            import json as _json
+            print(_json.dumps({"error": "llm_unavailable", "url": llm.QWEN_URL}))
+        else:
+            print("[digester] Aborting: LLM server not available.")
+        return
+
     config = load_config()
     settings = load_settings()
     if limit is not None:

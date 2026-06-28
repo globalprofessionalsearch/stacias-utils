@@ -9,7 +9,7 @@ Qwen 3.6 has built-in extended thinking/reasoning capabilities. By default, it o
 Disable thinking mode when starting the MLX server using `--chat-template-args`:
 
 ```bash
-~/Documents/code/sandbox/ollama/.venv/bin/mlx_lm.server \
+~/Documents/code/experiments/ollama/.venv/bin/mlx_lm.server \
   --model mlx-community/Qwen3.6-35B-A3B-4bit \
   --port 8099 \
   --chat-template-args '{"enable_thinking":false}'
