@@ -1,6 +1,6 @@
 ---
 name: stacia-code-review
-description: Orchestrated multi-perspective code review of a change set, optionally spanning multiple repositories. Uses nicobailon pi-subagents to fan out parallel read-only reviewer agents (correctness, security, performance, api-contract, tests, cross-repo) with a shared structured-output schema, then deduplicates, groups, and prioritizes their findings into a single report. Use when asked to review a PR, a set of PRs, a branch range, or uncommitted changes — especially when the work spans more than one repo.
+description: Orchestrated multi-perspective code review of a change set, optionally spanning multiple repositories. Uses nicobailon pi-subagents to fan out parallel read-only reviewer agents (correctness, security, performance, api-contract, tests, cross-repo) with a shared structured-output schema, then synthesizes their findings per repo (one report per repo, a separate cross-repo analysis, and an overall top-priorities triage). Use when asked to review a PR, a set of PRs, a branch range, or uncommitted changes — especially when the work spans more than one repo.
 ---
 
 # Code Review (orchestrator)
@@ -25,6 +25,9 @@ here because the set of repos and refs isn't established yet.
 - **`gh` available & authed**: `gh auth status`. If it fails or `gh` is missing,
   you cannot resolve PRs — fall back to branch-range or working-tree diffs and tell
   the user.
+- **`python3` present**: the run-directory helper (step 2) is a Python script.
+  `python3 --version`. If absent, tell the user — without it you cannot allocate the
+  deterministic run directory.
 
 Report any preflight failure to the user before proceeding. Never fabricate a diff.
 
@@ -67,27 +70,53 @@ whole flow in a saved `.chain.md`/`.chain.json` (chains run autonomously after t
 clarify UI and would skip this confirmation). The fan-out in step 3 is a single
 direct `subagent({ tasks: [...] })` parallel call.
 
-## 2. Collect the diff bundle
+## 2. Allocate the run directory and collect per-repo bundles
 
-For each repo in scope, gather:
-- The unified diff (`gh pr diff <id>`; `git diff <base>...<head>` for a branch
-  range; or `git diff` / `git diff --staged` / `git diff HEAD` for uncommitted
-  changes — match what was confirmed in step 1).
-- Changed file list with stat (the same command with `--stat`).
-- PR metadata when applicable: title, description, linked issues, labels.
-- Enough surrounding context that reviewers can reason about the change (reviewers
-  are read-only and can open files in the repo themselves; give them the repo path).
+All state for a run lives in a central, cwd-independent directory owned by the
+bundled helper `code-review-workdir.py` (next to this `SKILL.md`) — **never** the
+current working directory, which we can't assume is writable or where the user wants
+output. The helper owns every path, name, and `mkdir`, **and performs every write**,
+so you never handle a filesystem path for output: you allocate the run, then pipe
+content to named targets the script resolves. Do not use the `write` tool for any
+run artifact — route it through the helper.
 
-Assemble a **diff bundle** = the per-repo diffs + metadata + each repo's local path.
-**Write it to a file** (e.g. `code-review-bundle.md` in the current working dir;
-overwrite any prior bundle, and if the cwd isn't writable fall back to a
-`mktemp` path) and hand every reviewer that one path via `reads` — don't paste the bundle inline into
-six task strings. State the absolute repo paths inside the bundle so reviewers can
-open files for context.
+Once scope is confirmed, allocate the run **once** with the repo identifiers in scope:
+
+```
+python3 <skill-dir>/code-review-workdir.py init <repo> [<repo> ...]
+```
+
+It creates `${XDG_CACHE_HOME:-$HOME/.cache}/stacia-code-review/runs/<ts>-<id>/`
+with `bundles/`, `findings/`, a `report.md` target, and a `manifest.json`, then
+prints that manifest as JSON: per-repo `slug` + `bundle` + `findings`, the `run_dir`,
+`report`, `multi_repo`, and (multi-repo only) `cross_repo_findings`. **Keep the
+parsed manifest** — you pass `run_dir` and per-repo `slug` to every later write, and
+you reference the paths (for `reads`) through steps 3–4.
+
+Then, for **each** repo in scope, build that repo's **own** diff bundle and store it
+by piping it to the helper (never the `write` tool):
+
+```
+python3 <skill-dir>/code-review-workdir.py write-bundle --run <run_dir> --slug <slug>  # bundle on stdin
+```
+
+The helper resolves the destination from the manifest, rejects an unknown slug or
+empty input, and prints the absolute path it wrote. A per-repo bundle holds only
+that one repo's:
+- unified diff (`gh pr diff <id>`; `git diff <base>...<head>` for a branch range; or
+  `git diff` / `git diff --staged` / `git diff HEAD` for uncommitted — match step 1),
+- changed-file list with `--stat`,
+- PR metadata when applicable (title, description, linked issues, labels),
+- the repo's absolute local path, so reviewers can open files for context.
+
+One repo per bundle file is deliberate: a mid-tier model reviews a single repo far
+more reliably than it filters a combined bundle, and it removes the "which repo does
+this finding belong to" failure mode entirely. Per-repo reviewers see only their
+repo's bundle; the cross-repo reviewer reads all of them.
 
 **Large diffs.** If a repo's diff is large (rule of thumb: >1500 changed lines or
->40 changed files), do not paste the raw diff wholesale and do not silently
-truncate it. Instead, in the bundle file:
+>40 changed files), do not paste the raw diff wholesale and do not silently truncate
+it. Instead, in that repo's bundle:
 - Include the full `--stat` and PR metadata.
 - Provide a per-file summary (path + churn + one-line nature of the change).
 - Inline the diffs of the highest-risk files. Rank "highest-risk" by, in order:
@@ -114,14 +143,20 @@ so a `tools` list of just `read, grep, find, ls` would hide it — the reviewer 
 can't satisfy the schema and silently degrades to prose. It must be listed
 explicitly for the structured-output contract to work. Do not drop it.
 
-| Perspective    | Agent name                     |
-|----------------|--------------------------------|
-| correctness    | `stacia-review-correctness`    |
-| security       | `stacia-review-security`       |
-| performance    | `stacia-review-performance`    |
-| api-contract   | `stacia-review-api-contract`   |
-| tests          | `stacia-review-tests`          |
-| cross-repo     | `stacia-review-cross-repo`     |
+| Perspective          | Agent name                     |
+|----------------------|--------------------------------|
+| correctness          | `stacia-review-correctness`    |
+| security             | `stacia-review-security`       |
+| performance          | `stacia-review-performance`    |
+| api-contract         | `stacia-review-api-contract`   |
+| tests                | `stacia-review-tests`          |
+| cross-repo           | `stacia-review-cross-repo`     |
+| synthesis (per-repo) | `stacia-review-synth` (step 4) |
+
+The first five are **per-repo perspectives**: in a multi-repo run each one is
+launched once *per repo*, scoped to that repo's bundle. `stacia-review-cross-repo`
+runs once over **all** bundles (skipped for a single repo). `stacia-review-synth` is
+not a reviewer — it merges each repo's per-perspective findings in step 4.
 
 These are first-class agents in the `stacias-utils` repo under
 `agents/code-review/` and are discovered by pi-subagents through the
@@ -133,27 +168,34 @@ rc, and restart pi — then re-list to confirm.
 
 ### Launch
 
-Fan out in a **single** `subagent` call so the reviewers run concurrently. First
-load the shared schema **once** — read `findings.schema.json` from this skill's
-directory and reuse that one parsed object as the `outputSchema` for every task
-(don't retype it per task). Give each task the bundle file via `reads` (an **array**
-of paths). Use `context: "fresh"` to keep each reviewer isolated from the parent
-conversation. Skip `stacia-review-cross-repo` only when the scope is a single repo.
+Fan out in a **single** `subagent` call so everything runs concurrently. Load
+`findings.schema.json` from this skill's directory **once** and reuse that one parsed
+object as the `outputSchema` for every reviewer task (don't retype it per task).
+Build the task list programmatically from the workdir JSON (`wd`):
+
+- For **each repo** (`wd.repos`), add the five per-perspective reviewers, each with
+  `reads: [<that repo's bundle>]` and `outputSchema: findingsSchema`.
+- If `wd.multi_repo`, add one `stacia-review-cross-repo` with `reads:` set to **every**
+  repo's bundle. Skip it for a single repo.
+
+Track which task maps to which `(repo, perspective)` — results return in task order,
+and you need that mapping to bucket findings per repo in step 4.
 
 ```
 // findingsSchema = JSON.parse(<contents of this skill's findings.schema.json>)
-subagent({
-  tasks: [
-    { agent: "stacia-review-correctness",  task: "Review the change set in code-review-bundle.md.", reads: ["code-review-bundle.md"], outputSchema: findingsSchema },
-    { agent: "stacia-review-security",     task: "Review the change set in code-review-bundle.md.", reads: ["code-review-bundle.md"], outputSchema: findingsSchema },
-    { agent: "stacia-review-performance",  task: "Review the change set in code-review-bundle.md.", reads: ["code-review-bundle.md"], outputSchema: findingsSchema },
-    { agent: "stacia-review-api-contract", task: "Review the change set in code-review-bundle.md.", reads: ["code-review-bundle.md"], outputSchema: findingsSchema },
-    { agent: "stacia-review-tests",        task: "Review the change set in code-review-bundle.md.", reads: ["code-review-bundle.md"], outputSchema: findingsSchema },
-    { agent: "stacia-review-cross-repo",   task: "Review the change set in code-review-bundle.md.", reads: ["code-review-bundle.md"], outputSchema: findingsSchema }
-  ],
-  context: "fresh",
-  concurrency: 6
-})
+// wd = parsed manifest from `code-review-workdir.py init` (step 2)
+const perspectives = ["correctness", "security", "performance", "api-contract", "tests"]
+const tasks = []
+for (const r of wd.repos) {
+  for (const p of perspectives) {
+    tasks.push({ agent: `stacia-review-${p}`, task: `Review the change set in ${r.bundle} (repo ${r.repo}).`, reads: [r.bundle], outputSchema: findingsSchema })
+  }
+}
+if (wd.multi_repo) {
+  const bundles = wd.repos.map(r => r.bundle)
+  tasks.push({ agent: "stacia-review-cross-repo", task: `Review the cross-repo change set across all bundles: ${bundles.join(", ")}.`, reads: bundles, outputSchema: findingsSchema })
+}
+subagent({ tasks, context: "fresh", concurrency: 6 })
 ```
 
 The agents already carry the read-only + untrusted-input (prompt-injection) defense
@@ -204,43 +246,109 @@ don't add conditionals expecting them to be enforced.
 
 ## 4. Synthesize
 
-After all reviewers return, merge their structured findings:
-0. **Spot-check evidence** — reviewers (especially moderate models) can cite lines
-   that don't exist. Before promoting anything to Blocker/Major, sanity-check its
-   `location` + quoted `evidence` against the diff bundle (or open the file). If the
-   evidence doesn't match the cited location, downgrade to an open question or drop
-   it; don't propagate an unverified high-severity finding.
-1. **Deduplicate** — collapse findings that point at the same root cause, even if
-   raised by different perspectives. Keep the highest severity; list contributing
-   perspectives.
-2. **Group** — cluster by theme (e.g. error handling, auth, query performance,
-   contract drift), not by reviewer.
-3. **Prioritize** — order groups and findings by severity: Blocker → Major →
-   Minor → Nit. Within equal severity, higher confidence first.
-4. **Report** — emit a single report:
-   - **Summary**: scope reviewed (repos + refs/PRs), reviewer count, headline risks,
-     and any perspective that produced no usable result.
-   - **Blockers**: must fix before merge.
-   - **Major / Minor / Nit**: grouped findings with location + evidence + rationale
-     + suggestion.
-   - **Cross-repo notes**: integration/contract risks spanning repos.
-   - **Open questions**: anything reviewers flagged as needing author input, plus
-     any low-confidence findings worth a human glance.
+A review has two components, handled differently: **per-repo** (many perspectives
+that must be *merged*) and **cross-repo** (a single reviewer whose output already
+*is* the analysis — nothing to merge).
 
-Print the report inline. Keep any secret-like values in evidence redacted (prefix +
-length, never the full credential), especially before persisting. Offer to also
-write it to `code-review-<YYYY-MM-DD>.md` if the user wants a file.
+### Per-repo — delegated synthesis (one synth agent per repo)
+
+Merging several perspectives' findings is the heaviest reasoning in the run, and
+doing it inline is where peak context pressure lands on a mid-tier orchestrator.
+Delegate it instead, one repo at a time, to `stacia-review-synth`:
+
+1. For each repo, assemble that repo's **raw findings** — the array of its
+   per-perspective reviewer results (each `{perspective, note, findings[]}`) from
+   step 3 — and store it by piping the JSON to the helper (it validates the JSON and
+   resolves the destination from the manifest):
+   ```
+   python3 <skill-dir>/code-review-workdir.py write-findings --run <run_dir> --slug <slug>  # findings JSON on stdin
+   ```
+2. Fan out the synth agents in one `subagent` call (parallel, one per repo), each
+   reading its repo's findings + bundle. The agent spot-checks evidence, dedups
+   across perspectives, themes, prioritizes, and returns a structured per-repo result
+   (mini-summary + ordered findings). Load `synth.schema.json` from this skill's
+   directory **once** as the `outputSchema`.
+
+```
+// synthSchema = JSON.parse(<contents of this skill's synth.schema.json>)
+const synthTasks = wd.repos.map(r => ({
+  agent: "stacia-review-synth",
+  task: `Synthesize the per-repo findings in ${r.findings} for repo ${r.repo}.`,
+  reads: [r.findings, r.bundle],
+  outputSchema: synthSchema
+}))
+subagent({ tasks: synthTasks, context: "fresh", concurrency: 6 })
+```
+
+### Cross-repo — no synthesis
+
+The cross-repo reviewer is a single perspective; there is nothing to merge. Its
+structured result *is* the cross-repo section. Because it has no synth pass, **you**
+spot-check its Blocker/Major evidence against the bundles before promoting them
+(downgrade or drop anything whose `evidence` doesn't match its `location`). Persist
+its result for the record by piping the JSON to the helper:
+
+```
+python3 <skill-dir>/code-review-workdir.py write-cross-findings --run <run_dir>  # cross-repo findings JSON on stdin
+```
+
+### Assemble the report
+
+Render one document and store it via the helper (never the `write` tool), then print
+the path it returns (and the run dir) to the user so the artifacts are findable
+regardless of cwd:
+
+```
+python3 <skill-dir>/code-review-workdir.py write-report --run <run_dir>  # report markdown on stdin
+```
+
+Redact secret-like values in evidence (prefix + length, never the full credential)
+before persisting.
+
+**Multi-repo** — three components, in this order:
+
+1. **Top Priorities** — Blockers and Majors **only**, ranked, each labelled with its
+   repo or `cross-repo`. **Cross-repo findings sort first** (highest priority), then
+   by severity (Blocker → Major), then confidence. This is a triage list — never put
+   Minor/Nit here. Draw from both the per-repo synth findings and the cross-repo
+   findings.
+2. **Per-repo sections** — one per repo, each opening with that repo's synth
+   mini-summary line so it stands on its own, then its findings grouped by theme and
+   ordered Blocker → Major → Minor → Nit (location + evidence + rationale +
+   suggestion).
+3. **Cross-repo** — the cross-repo reviewer's findings, same finding shape.
+
+The summary header carries: scope (repos + refs/PRs), reviewer count, and any
+perspective or repo that produced no usable result.
+
+**Single-repo** — collapse to one report (no Top Priorities, no Cross-repo): the
+synth result's mini-summary as the header, then its grouped findings ordered Blocker
+→ Major → Minor → Nit. Note any clean or failed perspective.
+
+The "Handling reviewer results" guidance above applies equally to synth results:
+prefer the validated structured value, parse prose if a synth agent degrades, and
+record any repo whose synth produced no usable result rather than dropping it.
 
 ## Notes
 
-- Reviewers are read-only by construction (`tools: read, grep, find, ls` plus
-  `structured_output` for the result contract — no `bash`, `write`, or `edit`). The
-  orchestrator never edits code as part of a review, and never runs synthesis as a
+- Reviewers **and** the synthesizer are read-only by construction (`tools: read,
+  grep, find, ls` plus `structured_output` for the result contract — no `bash`,
+  `write`, or `edit`). The orchestrator never edits code as part of a review;
+  synthesis is delegated to the read-only `stacia-review-synth` agent, never a
   mutating subagent.
-- The reviewer agents live in the repo at `agents/code-review/stacia-review-*.md`
-  and are the single source of truth — pi-subagents reads them in place via
-  `PI_SUBAGENT_EXTRA_AGENT_DIRS`, so edits are live with no re-sync.
+- The reviewer and synth agents live in the repo at
+  `agents/code-review/stacia-review-*.md` and are the single source of truth —
+  pi-subagents reads them in place via `PI_SUBAGENT_EXTRA_AGENT_DIRS`, so edits are
+  live with no re-sync.
+- Run state lives under `${XDG_CACHE_HOME:-$HOME/.cache}/stacia-code-review/runs/`,
+  allocated **and written** by the bundled `code-review-workdir.py` (a private
+  helper, not a PATH utility): `init` allocates + records a `manifest.json`, and the
+  `write-bundle` / `write-findings` / `write-cross-findings` / `write-report`
+  subcommands resolve every destination from that manifest. The orchestrator never
+  handles an output path or uses the `write` tool for run artifacts, so placement is
+  deterministic and the cwd is never written to. Old run dirs persist until manually
+  cleaned.
 - If `gh` is unavailable or a PR can't be resolved, fall back to branch-range diffs
   and tell the user.
-- Keep the diff bundle reasonably scoped; for very large changes, summarize
+- Keep each per-repo bundle reasonably scoped; for very large changes, summarize
   per-file and let reviewers open files on demand.
