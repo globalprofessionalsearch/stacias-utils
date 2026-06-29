@@ -1,0 +1,147 @@
+#!/usr/bin/env bash
+# summon/test - negative + positive coverage for `summon lint`.
+#
+# CI only runs `summon lint` against the repo's own (valid) tree, so a
+# regression that weakens a rule, or a malformed/duplicate agent, would keep CI
+# green. This harness builds throwaway fixture repos under a temp dir, points a
+# copy of `summon/main` at each, and asserts the linter's exit code (and, for
+# failures, the message). Run: ./summon/test  (or: bash summon/test).
+set -uo pipefail
+
+SELF_DIR="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+MAIN="$SELF_DIR/main"
+
+pass=0 fail=0
+ok()   { printf '  ok   - %s\n' "$1"; pass=$((pass+1)); }
+bad()  { printf '  FAIL - %s\n' "$1"; fail=$((fail+1)); }
+
+# Build a minimal, fully-valid fixture repo in $1 (utility + skill + agent),
+# all passing lint. Individual tests then mutate a copy to trip one rule.
+seed_repo() {
+  local root="$1"
+  mkdir -p "$root/summon" "$root/utilities/good-tool" \
+           "$root/skills/stacia-good-skill" "$root/agents/code-review"
+  cp "$MAIN" "$root/summon/main"; chmod +x "$root/summon/main"
+
+  cat > "$root/utilities/good-tool/main" <<'EOF'
+#!/usr/bin/env bash
+[[ "${1:-}" == "--help" ]] && { echo "good-tool - a valid fixture tool"; exit 0; }
+echo run
+EOF
+  chmod +x "$root/utilities/good-tool/main"
+
+  cat > "$root/skills/stacia-good-skill/SKILL.md" <<'EOF'
+---
+name: stacia-good-skill
+description: A valid fixture skill.
+---
+body
+EOF
+
+  agent_file "$root" stacia-review-correctness "read, grep, find, ls" \
+    "Read-only correctness reviewer fixture"
+}
+
+# agent_file <root> <stem> <tools-or-omit> <description>
+# Writes agents/code-review/<stem>.md. Pass "" tools to omit the field.
+agent_file() {
+  local root="$1" stem="$2" tools="$3" desc="$4" f="$1/agents/code-review/$2.md"
+  {
+    echo "---"
+    echo "name: $stem"
+    echo "description: $desc"
+    [[ -n "$tools" ]] && echo "tools: $tools"
+    echo "systemPromptMode: replace"
+    echo "---"
+    echo "persona body"
+  } > "$f"
+}
+
+# run_lint <root> -> sets RC and LINT_OUT
+run_lint() { LINT_OUT="$("$1/summon/main" lint 2>&1)"; RC=$?; }
+
+# expect_pass <label> <root>
+expect_pass() {
+  run_lint "$2"
+  if [[ $RC -eq 0 ]]; then ok "$1"; else
+    bad "$1 (expected exit 0, got $RC)"; printf '%s\n' "$LINT_OUT" | sed 's/^/      /'
+  fi
+}
+
+# expect_fail <label> <root> <substring-of-expected-message>
+expect_fail() {
+  run_lint "$2"
+  if [[ $RC -eq 0 ]]; then
+    bad "$1 (expected non-zero exit, got 0)"
+  elif [[ "$LINT_OUT" != *"$3"* ]]; then
+    bad "$1 (exit $RC but message missing: '$3')"; printf '%s\n' "$LINT_OUT" | sed 's/^/      /'
+  else
+    ok "$1"
+  fi
+}
+
+TMP="$(mktemp -d)"
+trap 'rm -rf "$TMP"' EXIT
+# Mint a fresh, isolated fixture repo each call. mktemp -d (not a shared counter)
+# because new_repo runs in a command-substitution subshell, where a parent-scope
+# counter increment would not persist and every repo would collide.
+new_repo() { local r; r="$(mktemp -d "$TMP/repo.XXXXXX")"; seed_repo "$r"; printf '%s' "$r"; }
+
+echo "summon lint fixtures:"
+
+# Baseline: the seeded repo is valid.
+r="$(new_repo)"; expect_pass "valid repo passes" "$r"
+
+# --- agent rules ---
+r="$(new_repo)"
+sed -i.bak '/^name: stacia-review-correctness$/d' "$r/agents/code-review/stacia-review-correctness.md"
+expect_fail "agent missing name" "$r" "'name:' must be non-empty"
+
+r="$(new_repo)"
+mv "$r/agents/code-review/stacia-review-correctness.md" "$r/agents/code-review/stacia-review-renamed.md"
+expect_fail "agent name != filename stem" "$r" "must equal the filename stem"
+
+r="$(new_repo)"
+agent_file "$r" review-noprefix "read, grep, find, ls" "missing stacia- prefix"
+# name in frontmatter must match stem; give it a non-prefixed name == stem
+expect_fail "agent missing stacia- prefix" "$r" "must be prefixed with 'stacia-'"
+
+r="$(new_repo)"
+# Two distinct files declaring the same name (stem differs, so only the name
+# collision trips). agent_file keeps name == stem, so override name afterward.
+agent_file "$r" stacia-review-dupe "read, grep, find, ls" "second file, same name"
+sed -i.bak 's/^name: .*/name: stacia-review-correctness/' "$r/agents/code-review/stacia-review-dupe.md"
+rm -f "$r/agents/code-review/stacia-review-dupe.md.bak"
+expect_fail "agent duplicate name" "$r" "duplicate name"
+
+r="$(new_repo)"
+sed -i.bak '/^description: /d' "$r/agents/code-review/stacia-review-correctness.md"
+expect_fail "agent missing description" "$r" "'description:' must be non-empty"
+
+r="$(new_repo)"
+# strip the leading frontmatter delimiter
+sed -i.bak '1d' "$r/agents/code-review/stacia-review-correctness.md"
+expect_fail "agent no frontmatter block" "$r" "must open with a YAML frontmatter block"
+
+# --- reviewer read-only tools rule (the security invariant) ---
+r="$(new_repo)"
+agent_file "$r" stacia-review-correctness "read, grep, write" "reviewer with mutating tool"
+expect_fail "reviewer with disallowed tool (write)" "$r" "not allowed; reviewers are read-only"
+
+r="$(new_repo)"
+agent_file "$r" stacia-review-correctness "" "reviewer missing tools field"
+expect_fail "reviewer missing tools field" "$r" "must declare a read-only 'tools:' field"
+
+r="$(new_repo)"
+# a non-reviewer agent may declare any tools it likes
+agent_file "$r" stacia-build-helper "bash, write, edit" "non-reviewer agent, tools unrestricted"
+expect_pass "non-reviewer agent may use any tools" "$r"
+
+# --- README.md under agents/ is not treated as an agent ---
+r="$(new_repo)"
+echo "# Agents" > "$r/agents/code-review/README.md"
+expect_pass "agents/README.md is ignored by discovery" "$r"
+
+echo
+printf 'summon/test: %d passed, %d failed\n' "$pass" "$fail"
+[[ $fail -eq 0 ]]

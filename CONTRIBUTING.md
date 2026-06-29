@@ -119,6 +119,12 @@ is ordinary pi-subagents config (`tools`, `model`, `systemPromptMode`,
 Unlike skills, agents are **harness-specific by nature** (they target
 pi-subagents), so the harness-neutrality guideline does not apply.
 
+**Reviewer agents are read-only.** Any agent named `stacia-review-*` (the
+code-review fan-out personas) must declare a non-empty `tools:` field restricted
+to `read, grep, find, ls`. `summon lint` enforces this so the fan-out's read-only
+isolation can't be silently weakened by adding `bash`/`write`/`edit`. Other
+agents may declare whatever tools they need.
+
 `summon setup` exposes the whole tree to pi-subagents through one shell-rc line —
 `export PI_SUBAGENT_EXTRA_AGENT_DIRS="<repo>/agents"` — which it scans
 **recursively**. This is **run-once**: add an agent and pi-subagents discovers it

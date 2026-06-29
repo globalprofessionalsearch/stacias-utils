@@ -107,9 +107,14 @@ skill_field() {
 # anywhere under agents/, sorted. pi-subagents discovers them recursively.
 agent_files() {
   [[ -d "$AGENT_DIR" ]] || return 0
-  find "$AGENT_DIR" -type f -name '*.md' ! -name '*.chain.md' 2>/dev/null \
+  find "$AGENT_DIR" -type f -name '*.md' ! -name '*.chain.md' ! -name 'README.md' 2>/dev/null \
     | LC_ALL=C sort
 }
+
+# The read-only tool allow-list every reviewer agent (stacia-review-*) must
+# stay within. The code-review fan-out's isolation guarantee rests on this, so
+# it is enforced by lint, not just asserted in prose.
+REVIEWER_TOOLS="read grep find ls"
 
 # ---------------------------------------------------------------------------
 # Builtins
@@ -163,21 +168,25 @@ cmd_list() {
     fi
   done < <(skills)
 
-  echo
-  echo "Agents:"
-  local af stem aname adesc
-  while IFS= read -r af; do
-    [[ -n "$af" ]] || continue
-    stem="$(basename "$af" .md)"
-    aname="$(frontmatter_field "$af" name || true)"
-    adesc="$(frontmatter_field "$af" description || true)"
-    if [[ -z "$adesc" ]]; then
-      printf '  %-26s (no description; run: summon lint)\n' "${aname:-$stem}"
-      missing=1
-    else
-      printf '  %s - %s\n' "${aname:-$stem}" "$adesc"
-    fi
-  done < <(agent_files)
+  local agents_out
+  agents_out="$(agent_files)"
+  if [[ -n "$agents_out" ]]; then
+    echo
+    echo "Agents:"
+    local af stem aname adesc
+    while IFS= read -r af; do
+      [[ -n "$af" ]] || continue
+      stem="$(basename "$af" .md)"
+      aname="$(frontmatter_field "$af" name || true)"
+      adesc="$(frontmatter_field "$af" description || true)"
+      if [[ -z "$adesc" ]]; then
+        printf '  %-26s (no description; run: summon lint)\n' "${aname:-$stem}"
+        missing=1
+      else
+        printf '  %s - %s\n' "${aname:-$stem}" "$adesc"
+      fi
+    done <<< "$agents_out"
+  fi
 
   return $missing
 }
@@ -299,6 +308,24 @@ cmd_lint() {
         err "LINT: agent $aname: duplicate name (must be unique across agents/)"; fail=1 ;;
       esac
       seen_agents="$seen_agents$aname "
+
+      # Reviewer agents power the read-only code-review fan-out; their isolation
+      # guarantee depends on a tools allow-list, so enforce it (don't just trust
+      # the prose). Other agents may declare any tools they need.
+      if [[ "$aname" == stacia-review-* ]]; then
+        local atools tool
+        atools="$(frontmatter_field "$af" tools || true)"
+        if [[ -z "$atools" ]]; then
+          err "LINT: agent $aname: reviewer must declare a read-only 'tools:' field (${REVIEWER_TOOLS// /, })"; fail=1
+        else
+          for tool in ${atools//,/ }; do
+            case " $REVIEWER_TOOLS " in
+              *" $tool "*) ;;
+              *) err "LINT: agent $aname: tool '$tool' not allowed; reviewers are read-only (${REVIEWER_TOOLS// /, } only)"; fail=1 ;;
+            esac
+          done
+        fi
+      fi
     fi
     if [[ -z "$adesc" ]]; then
       err "LINT: agent $stem: frontmatter 'description:' must be non-empty ($af)"; fail=1
@@ -362,6 +389,23 @@ cmd_setup() {
   done
   ln -sfn "$SKILL_DIR" "$pi/$PI_SKILLS_LINK"
   echo "✓ pi: skills linked once ($PI_SKILLS_LINK -> skills/); new skills auto-discovered"
+
+  # --- claude: Claude Code is no longer a wired harness (the code-review skill
+  # now hard-requires the pi-only subagent tool + outputSchema). Prune any
+  # repo-owned symlinks a prior `summon setup` planted into ~/.claude/skills so
+  # Claude doesn't keep silently loading a now-incompatible skill. One-time.
+  local claude="$HOME/.claude/skills" pruned=0
+  if [[ -d "$claude" ]]; then
+    for link in "$claude"/*; do
+      [[ -L "$link" ]] || continue
+      case "$(readlink "$link")" in
+        "$SKILL_DIR"/*)
+          rm -f "$link"; pruned=1
+          echo "✓ claude: pruned stale link $(basename "$link") (Claude support dropped)" ;;
+      esac
+    done
+  fi
+  [[ $pruned -eq 0 ]] && echo "✓ claude: nothing to prune (no repo-owned links)"
 
   echo "✓ agents: exposed to pi-subagents via PI_SUBAGENT_EXTRA_AGENT_DIRS (run-once; see below)"
 

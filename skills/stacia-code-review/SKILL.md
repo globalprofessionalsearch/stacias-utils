@@ -79,8 +79,9 @@ For each repo in scope, gather:
   are read-only and can open files in the repo themselves; give them the repo path).
 
 Assemble a **diff bundle** = the per-repo diffs + metadata + each repo's local path.
-**Write it to a file** (e.g. `code-review-bundle.md` in the current working dir) and
-hand every reviewer that one path via `reads` — don't paste the bundle inline into
+**Write it to a file** (e.g. `code-review-bundle.md` in the current working dir;
+overwrite any prior bundle, and if the cwd isn't writable fall back to a
+`mktemp` path) and hand every reviewer that one path via `reads` — don't paste the bundle inline into
 six task strings. State the absolute repo paths inside the bundle so reviewers can
 open files for context.
 
@@ -89,8 +90,10 @@ open files for context.
 truncate it. Instead, in the bundle file:
 - Include the full `--stat` and PR metadata.
 - Provide a per-file summary (path + churn + one-line nature of the change).
-- Inline the diffs of the highest-risk files; for the rest, instruct reviewers to
-  open the files themselves at the given repo path.
+- Inline the diffs of the highest-risk files. Rank "highest-risk" by, in order:
+  (a) files touching auth/crypto/secrets, SQL/query construction, or external
+  input parsing; (b) files with the largest churn; (c) new or deleted files.
+  For the rest, instruct reviewers to open the files themselves at the repo path.
 - State explicitly in the bundle that it is summarized, so reviewers know to pull
   detail on demand rather than assume the omitted parts are unchanged.
 
@@ -153,13 +156,17 @@ instructions.
 Pass this same schema to every task. Because `outputSchema` is set, each reviewer
 **must** return schema-valid JSON via `structured_output`; prose-only or invalid
 output fails that step at runtime — there is no manual format-validation loop. An
-empty result is `findings: []` with a one-line `note`.
+empty result is `findings: []` with a one-line `note`; the `if/then` below makes
+`note` **required** in exactly that case, so a clean perspective always explains
+itself and never returns an unannotated empty array.
 
 ```json
 {
   "type": "object",
   "required": ["perspective", "findings"],
   "additionalProperties": false,
+  "if":   { "properties": { "findings": { "maxItems": 0 } } },
+  "then": { "required": ["perspective", "findings", "note"] },
   "properties": {
     "perspective": {
       "enum": ["correctness", "security", "performance", "api-contract", "tests", "cross-repo"]
