@@ -55,6 +55,11 @@ out deploy-ordering hazards and any repo that *should* have changed but didn't.
   it Low confidence or omit.
 - **Confidence**: mark each finding High/Medium/Low; use Low for "worth a human
   look" rather than asserting a certain break.
+- **Confidence ceiling (file size, advisory)**: each repo's bundle annotates every
+  changed file with a size-derived confidence ceiling — the larger the file, the less
+  of it you can see. Never let a finding's confidence exceed the ceiling of the
+  larger of the two files it spans; for an omitted or very large file, stay at Low.
+  Calibrate down, never up.
 - **Severity**: Blocker = must not merge; Major = fix before merge; Minor = fix
   soon; Nit = non-blocking. Calibrate honestly; don't inflate.
 - **No noise**: collapse duplicates, skip generic advice, don't pad the list.

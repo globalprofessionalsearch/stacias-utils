@@ -49,6 +49,10 @@ concrete, reproducible findings over speculation.
   code or diff hunk. No speculation — if you can't point at the code, don't raise it.
 - **Confidence**: mark each finding High/Medium/Low; use Low for "worth a human
   look" rather than asserting a certain bug.
+- **Confidence ceiling (file size, advisory)**: the bundle annotates each changed
+  file with a size-derived confidence ceiling — the larger the file, the less of it
+  you can see. Never let a finding's confidence exceed its file's ceiling; for an
+  omitted or very large file, stay at Low. Calibrate down, never up.
 - **Severity**: Blocker = must not merge; Major = fix before merge; Minor = fix
   soon; Nit = non-blocking. Calibrate honestly; don't inflate.
 - **No noise**: collapse duplicates, skip generic advice, don't pad the list.

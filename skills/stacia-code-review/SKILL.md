@@ -93,38 +93,36 @@ prints that manifest as JSON: per-repo `slug` + `bundle` + `findings`, the `run_
 parsed manifest** — you pass `run_dir` and per-repo `slug` to every later write, and
 you reference the paths (for `reads`) through steps 3–4.
 
-Then, for **each** repo in scope, build that repo's **own** diff bundle and store it
-by piping it to the helper (never the `write` tool):
+Then, for **each** repo in scope, have the helper **capture and build** that repo's
+bundle. You do **not** assemble diff text yourself — you pass the source, and the
+helper runs `gh`/`git`, parses the diff, and writes the bundle:
 
 ```
-python3 <skill-dir>/code-review-workdir.py write-bundle --run <run_dir> --slug <slug>  # bundle on stdin
+python3 <skill-dir>/code-review-workdir.py build-bundle \
+  --run <run_dir> --slug <slug> --repo-path <abs repo path> --source <spec>
 ```
 
-The helper resolves the destination from the manifest, rejects an unknown slug or
-empty input, and prints the absolute path it wrote. A per-repo bundle holds only
-that one repo's:
-- unified diff (`gh pr diff <id>`; `git diff <base>...<head>` for a branch range; or
-  `git diff` / `git diff --staged` / `git diff HEAD` for uncommitted — match step 1),
-- changed-file list with `--stat`,
-- PR metadata when applicable (title, description, linked issues, labels),
-- the repo's absolute local path, so reviewers can open files for context.
+`<spec>` is exactly one of (matching what step 1 confirmed):
+- `pr:<id>` — a GitHub PR (helper runs `gh pr diff` + `gh pr view` for metadata),
+- `range:<base>...<head>` — a committed ref range (`git diff <base>...<head>`),
+- `worktree` / `worktree:all` — uncommitted, staged + unstaged (`git diff HEAD`),
+- `worktree:staged` — staged only (`git diff --staged`).
+
+This exists because capturing diff bytes by hand is the most error-prone step in the
+run: a mis-quoted heredoc once shipped literal `$(... gh pr diff)` to the reviewers
+instead of code. With `build-bundle`, **the model never handles diff bytes** — the
+helper captures them and **fails loudly** if the command errors, the diff is empty,
+or it has no hunks, so a broken capture can never reach a reviewer. The helper also
+annotates every changed file with churn, post-change LOC, and an **advisory
+confidence ceiling** (the larger the file, the lower the ceiling), and inlines each
+file's diff (omitting only diffs too large to inline, with a pointer to open the
+file). `write-bundle` (raw stdin) remains as a guarded fallback for the rare case
+you must hand-build a bundle, but **prefer `build-bundle`**.
 
 One repo per bundle file is deliberate: a mid-tier model reviews a single repo far
 more reliably than it filters a combined bundle, and it removes the "which repo does
 this finding belong to" failure mode entirely. Per-repo reviewers see only their
 repo's bundle; the cross-repo reviewer reads all of them.
-
-**Large diffs.** If a repo's diff is large (rule of thumb: >1500 changed lines or
->40 changed files), do not paste the raw diff wholesale and do not silently truncate
-it. Instead, in that repo's bundle:
-- Include the full `--stat` and PR metadata.
-- Provide a per-file summary (path + churn + one-line nature of the change).
-- Inline the diffs of the highest-risk files. Rank "highest-risk" by, in order:
-  (a) files touching auth/crypto/secrets, SQL/query construction, or external
-  input parsing; (b) files with the largest churn; (c) new or deleted files.
-  For the rest, instruct reviewers to open the files themselves at the repo path.
-- State explicitly in the bundle that it is summarized, so reviewers know to pull
-  detail on demand rather than assume the omitted parts are unchanged.
 
 ## 3. Fan out to reviewers (parallel)
 
@@ -341,13 +339,19 @@ record any repo whose synth produced no usable result rather than dropping it.
   pi-subagents reads them in place via `PI_SUBAGENT_EXTRA_AGENT_DIRS`, so edits are
   live with no re-sync.
 - Run state lives under `${XDG_CACHE_HOME:-$HOME/.cache}/stacia-code-review/runs/`,
-  allocated **and written** by the bundled `code-review-workdir.py` (a private
-  helper, not a PATH utility): `init` allocates + records a `manifest.json`, and the
-  `write-bundle` / `write-findings` / `write-cross-findings` / `write-report`
-  subcommands resolve every destination from that manifest. The orchestrator never
-  handles an output path or uses the `write` tool for run artifacts, so placement is
-  deterministic and the cwd is never written to. Old run dirs persist until manually
-  cleaned.
+  allocated, **captured**, and written by the bundled `code-review-workdir.py` (a
+  private helper, not a PATH utility): `init` allocates + records a `manifest.json`;
+  `build-bundle` runs `gh`/`git` itself to capture each repo's diff (so the model
+  never handles diff bytes) and annotates each file with a size-derived advisory
+  confidence ceiling; `write-findings` / `write-cross-findings` / `write-report`
+  (and the `write-bundle` fallback) resolve every destination from the manifest and
+  validate input. The orchestrator never handles an output path or uses the `write`
+  tool for run artifacts, so placement is deterministic and the cwd is never written
+  to. Old run dirs persist until manually cleaned.
+- The file-size confidence ceiling is **advisory**: the bundle surfaces it, reviewers
+  calibrate down and never exceed it, and the synth agent clamps any finding that
+  does. Nothing is mechanically blocked — a large file just lowers attainable
+  confidence, mirroring how a human reviewer trusts a huge file less.
 - If `gh` is unavailable or a PR can't be resolved, fall back to branch-range diffs
   and tell the user.
 - Keep each per-repo bundle reasonably scoped; for very large changes, summarize

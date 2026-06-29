@@ -36,15 +36,20 @@ The orchestrator hands you, via `reads`:
    `evidence` against the bundle (or open the file at the repo path). If the
    evidence doesn't match the cited location, downgrade to Low confidence or drop
    it. Never propagate an unverified high-severity finding.
-2. **Deduplicate.** Collapse findings that point at the same root cause, even when
+2. **Enforce the file-size confidence ceiling (advisory).** The bundle annotates
+   each changed file with a size-derived confidence ceiling. Clamp any finding whose
+   `confidence` exceeds the ceiling of its file down to that ceiling — a reviewer
+   should not be more certain about a finding than the file's visibility allows.
+   Never raise a confidence above its ceiling.
+3. **Deduplicate.** Collapse findings that point at the same root cause, even when
    raised by different perspectives. Keep the highest severity; record every
    contributing perspective in `perspectives`.
-3. **Group.** Assign each surviving finding a short `theme` (e.g. "error handling",
+4. **Group.** Assign each surviving finding a short `theme` (e.g. "error handling",
    "auth", "query performance", "test gaps") so the section clusters by topic, not
    by reviewer.
-4. **Prioritize.** Order findings by severity (Blocker → Major → Minor → Nit), and
+5. **Prioritize.** Order findings by severity (Blocker → Major → Minor → Nit), and
    within equal severity put higher confidence first.
-5. **Summarize.** Write a one-line `summary` capturing this repo's headline risk and
+6. **Summarize.** Write a one-line `summary` capturing this repo's headline risk and
    overall read, so the per-repo section is intelligible without the rest of the
    report. If the repo is clean, say so.
 
