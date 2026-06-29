@@ -88,27 +88,28 @@ display_slide() {
 
     # Calculate title padding for centering within the border
     title_length=${#presentation_title}
-    border_padding=$(( (WIDTH - title_length - 2) / 2 ))  # Subtract 2 for the border characters
+    border_padding=$(( (WIDTH - 2 - title_length) / 2 ))  # Account for both border characters
 
     # Draw top border with title
     printf "${BLUE}┌%s%s%s┐${NC}\n" \
            "$(printf '─%.0s' $(seq 1 $border_padding))" \
            "$presentation_title" \
-           "$(printf '─%.0s' $(seq 1 $((WIDTH - border_padding - title_length))))"
+           "$(printf '─%.0s' $(seq 1 $((WIDTH - 2 - border_padding - title_length))))"
 
     # Draw side borders and display slide content within the border
     while IFS= read -r line || [ -n "$line" ]; do
-        # Ensure line fits within the width, accounting for border characters
-        printf "${BLUE}│ ${GREEN}%-*s ${BLUE}│${NC}\n" $((WIDTH - 2)) "$line"
+        # Truncate line if it exceeds max width, accounting for border characters
+        line="${line:0:$((WIDTH - 4))}"
+        printf "${BLUE}│ ${GREEN}%-*s ${BLUE}│${NC}\n" $((WIDTH - 4)) "$line"
     done <<< "${slides[$index]}"
     
     # Fill remaining lines with empty borders if slide content is less than HEIGHT - 2 lines
     for ((i=$(echo "${slides[$index]}" | wc -l); i<HEIGHT-2; i++)); do
-        printf "${BLUE}│ ${GREEN}%-*s ${BLUE}│${NC}\n" $((WIDTH - 2)) ""
+        printf "${BLUE}│ ${GREEN}%-*s ${BLUE}│${NC}\n" $((WIDTH - 4)) ""
     done
 
     # Draw bottom border
-    printf "${BLUE}└%s┘${NC}\n" "$(printf '─%.0s' $(seq 1 $WIDTH))"
+    printf "${BLUE}└%s┘${NC}\n" "$(printf '─%.0s' $(seq 1 $((WIDTH - 2))))"
     
     # Prepare slide number and total slides
     slide_info=$(printf "Slide %d of %d" $((index + 1)) "$total_slides")
