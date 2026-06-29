@@ -67,21 +67,19 @@ skills/stacia-my-skill/
 The `stacia-` prefix is enforced so a skill can't shadow, or be shadowed by,
 unrelated skills that land in the shared harness skill directories.
 
-**Harness-neutrality (authoring guideline, not linted):** write skill bodies so
-the same `SKILL.md` works in pi and Claude. Describe behavior abstractly
-("launch parallel read-only subagents, one per perspective, in a single
-message") rather than naming a specific harness's delegation tool or execution
-flags.
+**Harness-neutrality (best practice, not linted):** write skill bodies so a
+`SKILL.md` isn't coupled to one harness. Describe behavior abstractly ("launch
+parallel read-only subagents, one per perspective, in a single message") rather
+than naming a specific harness's delegation tool or execution flags. pi is the
+only harness `summon setup` wires today; keeping skills neutral keeps them
+portable to others.
 
-`summon setup` installs skills into both harnesses:
+`summon setup` installs skills into pi:
 
 - **pi** (recursive discovery): one umbrella symlink `~/.pi/agent/skills/stacia-utils
   -> skills/`. Run-once — new skills are auto-discovered without re-running setup.
-- **Claude Code** (top-level scan only): one symlink per skill under
-  `~/.claude/skills/`. Re-run `summon setup` after adding/renaming a skill to
-  expose it in Claude.
 
-Skill-body edits are live in both (symlinks point back into the repo).
+Skill-body edits are live (the symlink points back into the repo).
 
 ### Add one
 
@@ -89,7 +87,7 @@ Skill-body edits are live in both (symlinks point back into the repo).
 mkdir -p skills/stacia-my-skill
 $EDITOR skills/stacia-my-skill/SKILL.md
 summon lint                          # must pass
-summon setup                         # symlink into pi + claude
+summon setup                         # one-time: plant the pi umbrella symlink
 git add skills/stacia-my-skill
 git commit -m "feat: add stacia-my-skill skill"
 ```

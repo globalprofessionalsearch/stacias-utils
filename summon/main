@@ -15,8 +15,8 @@
 # All three are self-describing: `summon list` harvests utility synopses from
 # `main --help` and skill/agent synopses from frontmatter, so there is nothing
 # to regenerate. `summon lint` enforces all three contracts (skills and agents
-# must be `stacia-`-prefixed). Harness-neutral skill content is an authoring
-# guideline, not linted; agents are harness-specific (pi-subagents) by nature.
+# must be `stacia-`-prefixed). Harness-neutral skill content is a best practice
+# (not linted); agents are harness-specific (pi-subagents) by nature.
 # Agents are exposed to pi-subagents via PI_SUBAGENT_EXTRA_AGENT_DIRS (see
 # `summon setup`), scanned recursively, so adding one needs no re-run.
 # Everything else at the repo root is infrastructure.
@@ -234,7 +234,8 @@ cmd_lint() {
     fi
   done
 
-  # Every directory under skills/ must be a conforming, harness-neutral skill.
+  # Every directory under skills/ must be a conforming skill.
+  # (Harness-neutral content is a best practice, not linted — see CONTRIBUTING.md.)
   for d in "$SKILL_DIR"/*/; do
     [[ -d "$d" ]] || continue
     name="$(basename "$d")"
@@ -346,12 +347,12 @@ cmd_setup() {
   git -C "$REPO" config core.hooksPath .githooks
   echo "✓ git hooks enabled (core.hooksPath=.githooks)"
 
-  local pi="$HOME/.pi/agent/skills" claude="$HOME/.claude/skills" s name link
-  mkdir -p "$pi" "$claude"
+  local pi="$HOME/.pi/agent/skills" link
+  mkdir -p "$pi"
 
   # --- pi: run-once. pi discovers SKILL.md dirs recursively, so a single
   # umbrella symlink to the whole skills/ dir exposes every current and future
-  # skill. Adding a skill to the repo needs no re-run for pi.
+  # skill. Adding a skill to the repo needs no re-run.
   # First remove any prior per-skill symlinks we planted into pi's root.
   for link in "$pi"/*; do
     [[ -L "$link" ]] || continue
@@ -361,25 +362,6 @@ cmd_setup() {
   done
   ln -sfn "$SKILL_DIR" "$pi/$PI_SKILLS_LINK"
   echo "✓ pi: skills linked once ($PI_SKILLS_LINK -> skills/); new skills auto-discovered"
-
-  # --- claude: NOT recursive (top-level scan only), so each skill needs its own
-  # top-level symlink. Re-run 'summon setup' after adding or renaming a skill.
-  # Prune our own stale claude symlinks first, then (re)create one per skill.
-  for link in "$claude"/*; do
-    [[ -L "$link" ]] || continue
-    case "$(readlink "$link")" in
-      "$SKILL_DIR"/*)
-        [[ -f "$link/SKILL.md" ]] && continue   # still valid
-        rm -f "$link"; echo "✓ claude: pruned $(basename "$link")" ;;
-    esac
-  done
-  for s in "$SKILL_DIR"/*/; do
-    [[ -f "$s/SKILL.md" ]] || continue
-    name="$(basename "$s")"
-    rm -f "$claude/$name.md"            # remove prior (broken) flat-file install
-    ln -sfn "$s" "$claude/$name"
-    echo "✓ claude: synced $name"
-  done
 
   echo "✓ agents: exposed to pi-subagents via PI_SUBAGENT_EXTRA_AGENT_DIRS (run-once; see below)"
 

@@ -27,8 +27,8 @@ Everything else at the repo root is infrastructure.
 - **Utilities**: `utilities/<name>/main` is executable and its `--help` exits 0
   and prints `<name> - <one-line description>` on line 1.
 - **Skills**: `skills/<name>/SKILL.md` is `stacia-`-prefixed, with frontmatter
-  `name` (== dir) and a non-empty `description`. (Harness-neutral content is an
-  authoring guideline, not linted.)
+  `name` (== dir) and a non-empty `description`. (Harness-neutral content is a
+  best practice, not linted.)
 - **Agents**: `agents/**/<name>.md` is a pi-subagents definition; frontmatter
   `name` is `stacia-`-prefixed, equals the filename stem, and is unique, with a
   non-empty `description`. (Harness-specific by nature.)
@@ -60,21 +60,16 @@ The repo ships agent skills under `skills/<name>/SKILL.md` (e.g.
 `stacia-code-review`, `stacia-utils-usage`, `stacia-utils-contributing`). Skill
 dirs are `stacia-`-prefixed so they can't collide with unrelated skills in the
 shared directories. Nothing here is on an agent's search path by default —
-`summon setup` installs them into both harness-global skill directories by
-symlink:
+`summon setup` installs them into pi's skill directory by symlink:
 
 - **pi** discovers skills in `~/.pi/agent/skills/` **recursively**. `summon
   setup` plants a single umbrella symlink `~/.pi/agent/skills/stacia-utils ->
   skills/`, so pi sees every current *and future* skill. This is **run-once**:
   add a skill to the repo and pi picks it up with no re-run.
-- **Claude Code** scans only the **top level** of `~/.claude/skills/` (no
-  recursive discovery), so each skill needs its own top-level symlink. `summon
-  setup` creates one per skill and prunes stale ones. **Re-run `summon setup`
-  after adding or renaming a skill** if you want it available in Claude.
 
-Because the symlinks point back into the repo, edits to a skill's body are live
-in both harnesses with no re-sync. pi is the primary harness and is run-once;
-Claude requires a `summon setup` re-run per skill added.
+Because the symlink points back into the repo, edits to a skill's body are live
+with no re-sync. pi is the only wired harness; keeping skill bodies
+harness-neutral (a best practice, not enforced) keeps them portable to others.
 
 ## Agents
 

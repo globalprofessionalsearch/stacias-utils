@@ -73,16 +73,18 @@ skills/stacia-my-skill/
 2. Set `name:` equal to the directory name (which starts with `stacia-`).
 3. Set a non-empty `description:` (what `summon list` shows).
 
-Skills SHOULD also be **harness-neutral** (authoring guideline, not linted):
-describe behavior abstractly so the same skill works in pi and Claude. Prefer
-"launch parallel read-only subagents, one per perspective, in a single message"
-over naming a specific harness's delegation tool or its execution flags.
+Skills SHOULD also be **harness-neutral** (best practice, not linted): describe
+behavior abstractly so a skill isn't coupled to one harness. Prefer "launch
+parallel read-only subagents, one per perspective, in a single message" over
+naming a specific harness's delegation tool or its execution flags. pi is the
+only harness `summon setup` wires today; keeping skills neutral keeps them
+portable to others.
 
 ```bash
 mkdir -p skills/stacia-my-skill
 $EDITOR skills/stacia-my-skill/SKILL.md
 summon lint          # must pass
-summon setup         # required for Claude (per-skill symlink); pi auto-discovers
+summon setup         # one-time: plants the pi umbrella symlink; then auto-discovered
 git add skills/stacia-my-skill
 git commit -m "feat: add stacia-my-skill skill"
 ```
