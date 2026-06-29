@@ -1,7 +1,7 @@
 # Stacia's Utils
 
-Personal command-line utilities **and** agent skills, reached through one
-dispatcher: `summon`.
+Personal command-line **utilities**, agent **skills**, and **pi-subagents
+agents** — three kinds of thing, all reached through one dispatcher: `summon`.
 
 There is no maintained list and no generated metadata. Everything describes
 itself, and `summon` discovers it live:
@@ -54,13 +54,15 @@ export PI_SUBAGENT_EXTRA_AGENT_DIRS="$HOME/Documents/code/github/globalprofessio
 The first puts `summon` on PATH. The second exposes every agent under `agents/`
 to pi-subagents, scanned recursively — run-once, new agents auto-discovered.
 
-## Agent skills
+## Skills
 
-The repo ships agent skills under `skills/<name>/SKILL.md` (e.g.
-`stacia-code-review`, `stacia-utils-usage`, `stacia-utils-contributing`). Skill
-dirs are `stacia-`-prefixed so they can't collide with unrelated skills in the
-shared directories. Nothing here is on an agent's search path by default —
-`summon setup` installs them into pi's skill directory by symlink:
+Skills are agent-skill files (`SKILL.md`) the harness loads on demand — distinct
+from the **Agents** kind below (pi-subagents definitions). The repo ships skills
+under `skills/<name>/SKILL.md` (e.g. `stacia-code-review`, `stacia-utils-usage`,
+`stacia-utils-contributing`). Skill dirs are `stacia-`-prefixed so they can't
+collide with unrelated skills in the shared directories. Nothing here is on a
+harness search path by default — `summon setup` installs them into pi's skill
+directory by symlink:
 
 - **pi** discovers skills in `~/.pi/agent/skills/` **recursively**. `summon
   setup` plants a single umbrella symlink `~/.pi/agent/skills/stacia-utils ->
@@ -88,5 +90,5 @@ harness-neutral skills.)
 - One command on PATH: `summon` (everything else is `summon <name>`).
 - Commits / PR titles use [Conventional Commits](https://www.conventionalcommits.org/),
   enforced by the `commit-msg` hook and CI.
-- Agents discover everything through the `stacia-utils-usage` skill; contributors
-  follow `stacia-utils-contributing`.
+- Coding assistants discover everything through the `stacia-utils-usage` skill;
+  contributors follow `stacia-utils-contributing`.
