@@ -12,6 +12,8 @@ jobs:
       - uses: actions/checkout@v4
       - name: Enforce utility contract
         run: ./summon/main lint
+      - name: Lint rule coverage (negative fixtures)
+        run: ./summon/test
 
   commit:
     if: github.event_name == 'pull_request'

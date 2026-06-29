@@ -1,13 +1,14 @@
 # Contributing
 
-The repo holds two kinds of thing, each in its own top-level directory. Two
-strict conventions govern them; `summon lint` (pre-commit hook + CI) rejects
-anything that breaks either. There is no metadata to maintain — the help text
-and the skill frontmatter *are* the contracts.
+The repo holds three kinds of thing, each in its own top-level directory. Strict
+conventions govern them; `summon lint` (pre-commit hook + CI) rejects anything
+that breaks one. There is no metadata to maintain — the help text and the
+frontmatter *are* the contracts.
 
 ```
-utilities/<name>/main        executable CLI tool
-skills/<name>/SKILL.md        harness-neutral agent skill
+utilities/<name>/main         executable CLI tool
+skills/<name>/SKILL.md         harness-neutral agent skill
+agents/**/<stacia-name>.md    pi-subagents agent definition (harness-specific)
 ```
 
 Everything else at the repo root (`bin/`, `summon/`, `.github/`, ...) is
@@ -66,21 +67,19 @@ skills/stacia-my-skill/
 The `stacia-` prefix is enforced so a skill can't shadow, or be shadowed by,
 unrelated skills that land in the shared harness skill directories.
 
-**Harness-neutrality (authoring guideline, not linted):** write skill bodies so
-the same `SKILL.md` works in pi and Claude. Describe behavior abstractly
-("launch parallel read-only subagents, one per perspective, in a single
-message") rather than naming a specific harness's delegation tool or execution
-flags.
+**Harness-neutrality (best practice, not linted):** write skill bodies so a
+`SKILL.md` isn't coupled to one harness. Describe behavior abstractly ("launch
+parallel read-only subagents, one per perspective, in a single message") rather
+than naming a specific harness's delegation tool or execution flags. pi is the
+only harness `summon setup` wires today; keeping skills neutral keeps them
+portable to others.
 
-`summon setup` installs skills into both harnesses:
+`summon setup` installs skills into pi:
 
 - **pi** (recursive discovery): one umbrella symlink `~/.pi/agent/skills/stacia-utils
   -> skills/`. Run-once — new skills are auto-discovered without re-running setup.
-- **Claude Code** (top-level scan only): one symlink per skill under
-  `~/.claude/skills/`. Re-run `summon setup` after adding/renaming a skill to
-  expose it in Claude.
 
-Skill-body edits are live in both (symlinks point back into the repo).
+Skill-body edits are live (the symlink points back into the repo).
 
 ### Add one
 
@@ -88,15 +87,63 @@ Skill-body edits are live in both (symlinks point back into the repo).
 mkdir -p skills/stacia-my-skill
 $EDITOR skills/stacia-my-skill/SKILL.md
 summon lint                          # must pass
-summon setup                         # symlink into pi + claude
+summon setup                         # one-time: plant the pi umbrella symlink
 git add skills/stacia-my-skill
 git commit -m "feat: add stacia-my-skill skill"
+```
+
+## Agent contract
+
+An agent is a [nicobailon `pi-subagents`](https://github.com/nicobailon/pi-subagents)
+agent definition: a single Markdown file with YAML frontmatter and a system-prompt
+body. Agents live anywhere under `agents/` (group them in subdirs freely —
+discovery is recursive):
+
+```
+agents/<group>/stacia-my-agent.md   # e.g. agents/code-review/stacia-review-tests.md
+```
+
+Each `*.md` under `agents/` (excluding `*.chain.md`) must:
+
+1. Open with a YAML frontmatter block (`---`).
+2. Set `name:` to a `kebab-case`, **`stacia-`-prefixed** value that **equals the
+   filename stem** (`stacia-review-tests` ⇄ `stacia-review-tests.md`).
+3. Set a non-empty `description:` (what `summon list` shows).
+4. Use a name unique across the whole `agents/` tree.
+
+The `stacia-` prefix and uniqueness keep these from shadowing other agents in the
+shared pi-subagents agent namespace. Beyond `name`/`description`, the frontmatter
+is ordinary pi-subagents config (`tools`, `model`, `systemPromptMode`,
+`defaultContext`, …); the body is the agent's system prompt.
+
+Unlike skills, agents are **harness-specific by nature** (they target
+pi-subagents), so the harness-neutrality guideline does not apply.
+
+**Reviewer agents are read-only.** Any agent named `stacia-review-*` (the
+code-review fan-out personas) must declare a non-empty `tools:` field restricted
+to `read, grep, find, ls`. `summon lint` enforces this so the fan-out's read-only
+isolation can't be silently weakened by adding `bash`/`write`/`edit`. Other
+agents may declare whatever tools they need.
+
+`summon setup` exposes the whole tree to pi-subagents through one shell-rc line —
+`export PI_SUBAGENT_EXTRA_AGENT_DIRS="<repo>/agents"` — which it scans
+**recursively**. This is **run-once**: add an agent and pi-subagents discovers it
+with no re-run and no symlink/copy. Edits are live in place.
+
+### Add one
+
+```bash
+mkdir -p agents/my-group
+$EDITOR agents/my-group/stacia-my-agent.md   # frontmatter name == stem, stacia-prefixed
+summon lint                                  # must pass
+git add agents/my-group
+git commit -m "feat: add stacia-my-agent agent"
 ```
 
 ## Reserved names
 
 `list`, `lint`, `commit-lint`, `setup`, `help`, `summon` — dispatcher builtins.
-No utility or skill may use them.
+No utility, skill, or agent may use them.
 
 ## What belongs here
 
