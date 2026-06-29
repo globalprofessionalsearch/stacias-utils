@@ -1,7 +1,7 @@
 ---
 name: stacia-review-cross-repo
 description: Read-only cross-repo integration reviewer (stacia-code-review)
-tools: read, grep, find, ls
+tools: read, grep, find, ls, structured_output
 systemPromptMode: replace
 inheritProjectContext: false
 inheritSkills: false

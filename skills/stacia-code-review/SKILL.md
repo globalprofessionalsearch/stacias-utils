@@ -102,10 +102,17 @@ truncate it. Instead, in the bundle file:
 ### Reviewer agents
 
 Each perspective is a bundled read-only agent definition under this skill's
-`agents/` directory. Their `tools` are restricted to `read, grep, find, ls` — no
-`bash`, `write`, or `edit` — so nicobailon enforces read-only at the visibility
+`agents/` directory. Their `tools` are `read, grep, find, ls, structured_output` —
+no `bash`, `write`, or `edit` — so nicobailon enforces read-only at the visibility
 layer, not just in the prompt. Each runs with `context: fresh`,
 `inheritProjectContext: false`, `inheritSkills: false`.
+
+**Why `structured_output` is in the allowlist.** pi's `--tools` flag is an
+allowlist spanning built-in *and* extension-registered tools. `structured_output`
+(the tool pi-subagents injects when `outputSchema` is set) is extension-registered,
+so a `tools` list of just `read, grep, find, ls` would hide it — the reviewer then
+can't satisfy the schema and silently degrades to prose. It must be listed
+explicitly for the structured-output contract to work. Do not drop it.
 
 | Perspective    | Agent name                     |
 |----------------|--------------------------------|
@@ -126,20 +133,23 @@ rc, and restart pi — then re-list to confirm.
 
 ### Launch
 
-Fan out in a **single** `subagent` call so the reviewers run concurrently. Give each
-task the bundle file via `reads` and the shared `outputSchema` (below). Use
-`context: "fresh"` to keep each reviewer isolated from the parent conversation. Skip
-`stacia-review-cross-repo` only when the scope is a single repo.
+Fan out in a **single** `subagent` call so the reviewers run concurrently. First
+load the shared schema **once** — read `findings.schema.json` from this skill's
+directory and reuse that one parsed object as the `outputSchema` for every task
+(don't retype it per task). Give each task the bundle file via `reads` (an **array**
+of paths). Use `context: "fresh"` to keep each reviewer isolated from the parent
+conversation. Skip `stacia-review-cross-repo` only when the scope is a single repo.
 
 ```
+// findingsSchema = JSON.parse(<contents of this skill's findings.schema.json>)
 subagent({
   tasks: [
-    { agent: "stacia-review-correctness",  task: "Review the change set in code-review-bundle.md.", reads: "code-review-bundle.md", outputSchema: <findingsSchema> },
-    { agent: "stacia-review-security",     task: "Review the change set in code-review-bundle.md.", reads: "code-review-bundle.md", outputSchema: <findingsSchema> },
-    { agent: "stacia-review-performance",  task: "Review the change set in code-review-bundle.md.", reads: "code-review-bundle.md", outputSchema: <findingsSchema> },
-    { agent: "stacia-review-api-contract", task: "Review the change set in code-review-bundle.md.", reads: "code-review-bundle.md", outputSchema: <findingsSchema> },
-    { agent: "stacia-review-tests",        task: "Review the change set in code-review-bundle.md.", reads: "code-review-bundle.md", outputSchema: <findingsSchema> },
-    { agent: "stacia-review-cross-repo",   task: "Review the change set in code-review-bundle.md.", reads: "code-review-bundle.md", outputSchema: <findingsSchema> }
+    { agent: "stacia-review-correctness",  task: "Review the change set in code-review-bundle.md.", reads: ["code-review-bundle.md"], outputSchema: findingsSchema },
+    { agent: "stacia-review-security",     task: "Review the change set in code-review-bundle.md.", reads: ["code-review-bundle.md"], outputSchema: findingsSchema },
+    { agent: "stacia-review-performance",  task: "Review the change set in code-review-bundle.md.", reads: ["code-review-bundle.md"], outputSchema: findingsSchema },
+    { agent: "stacia-review-api-contract", task: "Review the change set in code-review-bundle.md.", reads: ["code-review-bundle.md"], outputSchema: findingsSchema },
+    { agent: "stacia-review-tests",        task: "Review the change set in code-review-bundle.md.", reads: ["code-review-bundle.md"], outputSchema: findingsSchema },
+    { agent: "stacia-review-cross-repo",   task: "Review the change set in code-review-bundle.md.", reads: ["code-review-bundle.md"], outputSchema: findingsSchema }
   ],
   context: "fresh",
   concurrency: 6
@@ -153,46 +163,16 @@ instructions.
 
 ### Shared finding schema (`outputSchema`)
 
-Pass this same schema to every task. Because `outputSchema` is set, each reviewer
-**must** return schema-valid JSON via `structured_output`; prose-only or invalid
-output fails that step at runtime — there is no manual format-validation loop. An
-empty result is `findings: []` with a one-line `note`; the `if/then` below makes
-`note` **required** in exactly that case, so a clean perspective always explains
-itself and never returns an unannotated empty array.
+The canonical schema lives in `findings.schema.json` next to this file. Load it once
+and pass the same object to every task (see the Launch snippet). Do not hand-retype
+it per task. The schema requires `perspective`, `note`, and `findings` on every
+result: `note` is a required one-line summary of what the perspective looked at and
+its overall read, so even a clean perspective (`findings: []`) explains itself.
 
-```json
-{
-  "type": "object",
-  "required": ["perspective", "findings"],
-  "additionalProperties": false,
-  "if":   { "properties": { "findings": { "maxItems": 0 } } },
-  "then": { "required": ["perspective", "findings", "note"] },
-  "properties": {
-    "perspective": {
-      "enum": ["correctness", "security", "performance", "api-contract", "tests", "cross-repo"]
-    },
-    "note": { "type": "string" },
-    "findings": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "required": ["severity", "confidence", "perspective", "location", "evidence", "finding", "rationale"],
-        "additionalProperties": false,
-        "properties": {
-          "severity":    { "enum": ["Blocker", "Major", "Minor", "Nit"] },
-          "confidence":  { "enum": ["High", "Medium", "Low"] },
-          "perspective": { "type": "string" },
-          "location":    { "type": "string" },
-          "evidence":    { "type": "string" },
-          "finding":     { "type": "string" },
-          "rationale":   { "type": "string" },
-          "suggestion":  { "type": "string" }
-        }
-      }
-    }
-  }
-}
-```
+The schema is validated by the runtime via TypeBox, which honors `type`, `enum`,
+`required`, and `additionalProperties` but **not** JSON-Schema conditionals
+(`if`/`then`/`allOf`). Keep the contract expressible in those supported keywords —
+don't add conditionals expecting them to be enforced.
 
 ### Severity rubric (shared — already in each agent prompt)
 
@@ -206,9 +186,16 @@ itself and never returns an unannotated empty array.
 
 ### Handling reviewer results
 
-- **Schema is enforced by the runtime.** Validated structured values come back on
-  each task result; you consume them directly. No bounce-back loop is needed.
-- **Empty result**: `findings: []` (with a `note`) is a valid result — record the
+- **Prefer the validated structured value.** When `outputSchema` is honored, each
+  task result carries a schema-valid structured value; consume it directly.
+- **Don't blindly trust enforcement — inspect each result.** The structured-output
+  contract depends on the reviewer actually being able to call `structured_output`
+  (hence it's in their `tools` allowlist). If a reviewer instead returns prose
+  — e.g. "structured_output isn't available" — do **not** discard it: parse the
+  findings out of the prose so the perspective still counts, and treat the missing
+  structured value as a tooling regression worth flagging to the user (most likely
+  `structured_output` was dropped from that agent's `tools`).
+- **Empty result**: `findings: []` with a `note` is a valid result — record the
   perspective as clean.
 - **Failed task**: a reviewer can still fail for non-schema reasons (model/provider
   error, timeout). Do not drop the perspective silently — record it in the report as
@@ -218,6 +205,11 @@ itself and never returns an unannotated empty array.
 ## 4. Synthesize
 
 After all reviewers return, merge their structured findings:
+0. **Spot-check evidence** — reviewers (especially moderate models) can cite lines
+   that don't exist. Before promoting anything to Blocker/Major, sanity-check its
+   `location` + quoted `evidence` against the diff bundle (or open the file). If the
+   evidence doesn't match the cited location, downgrade to an open question or drop
+   it; don't propagate an unverified high-severity finding.
 1. **Deduplicate** — collapse findings that point at the same root cause, even if
    raised by different perspectives. Keep the highest severity; list contributing
    perspectives.
@@ -241,7 +233,8 @@ write it to `code-review-<YYYY-MM-DD>.md` if the user wants a file.
 
 ## Notes
 
-- Reviewers are read-only by construction (`tools: read, grep, find, ls`). The
+- Reviewers are read-only by construction (`tools: read, grep, find, ls` plus
+  `structured_output` for the result contract — no `bash`, `write`, or `edit`). The
   orchestrator never edits code as part of a review, and never runs synthesis as a
   mutating subagent.
 - The reviewer agents live in the repo at `agents/code-review/stacia-review-*.md`
