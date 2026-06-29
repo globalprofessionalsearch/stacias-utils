@@ -1,28 +1,36 @@
 # Stacia's Utils
 
-Personal *nix-style command-line utilities, reached through one dispatcher:
-`summon`.
+Personal command-line utilities **and** agent skills, reached through one
+dispatcher: `summon`.
 
-There is no maintained list of tools and no generated metadata. Every utility
-describes itself, and `summon` discovers them live:
+There is no maintained list and no generated metadata. Everything describes
+itself, and `summon` discovers it live:
 
 ```bash
-summon list                 # what exists (name - description)
-summon <name> --help        # how one works
-summon <name> [args...]     # run it
+summon list                 # utilities and skills (name - description)
+summon <name> --help        # how a utility works
+summon <name> [args...]     # run a utility
 ```
 
-## The convention (enforced)
-
-A utility is a top-level directory containing an executable `main` whose
-`--help` exits 0 and prints, on line 1:
+## Layout
 
 ```
-<name> - <one-line description>
+utilities/<name>/main        executable CLI tool
+skills/<name>/SKILL.md        harness-neutral agent skill
 ```
 
-That single rule is what makes tools auto-discoverable. `summon lint` enforces
-it (in CI and the pre-commit hook); see `CONTRIBUTING.md`.
+Everything else at the repo root is infrastructure.
+
+## The conventions (enforced)
+
+- **Utilities**: `utilities/<name>/main` is executable and its `--help` exits 0
+  and prints `<name> - <one-line description>` on line 1.
+- **Skills**: `skills/<name>/SKILL.md` is `stacia-`-prefixed, with frontmatter
+  `name` (== dir) and a non-empty `description`. (Harness-neutral content is an
+  authoring guideline, not linted.)
+
+Those rules make everything auto-discoverable. `summon lint` enforces both (in
+CI and the pre-commit hook); see `CONTRIBUTING.md`.
 
 ## Setup
 
@@ -41,26 +49,26 @@ export PATH="$HOME/Documents/code/github/globalprofessionalsearch/stacias-utils/
 ## Agent skills
 
 The repo ships agent skills under `skills/<name>/SKILL.md` (e.g.
-`using-stacia-utils`, `contributing-stacia-utils`). Nothing in this repo is on
-an agent's search path by default — `summon setup` installs them into the
-harness-global skill directories:
+`stacia-code-review`, `stacia-utils-usage`, `stacia-utils-contributing`). Skill
+dirs are `stacia-`-prefixed so they can't collide with unrelated skills in the
+shared directories. Nothing here is on an agent's search path by default —
+`summon setup` installs them into both harness-global skill directories by
+symlink:
 
 - **pi** discovers skills in `~/.pi/agent/skills/`, recursing into any
-  subdirectory that contains a `SKILL.md`. `summon setup` symlinks each
-  `skills/<name>/` into `~/.pi/agent/skills/<name>`, so pi picks them up with no
-  registration or config. Because it's a symlink, repo edits are live.
-- **Claude Code** discovers flat `~/.claude/skills/<name>.md` files. `summon
-  setup` copies each `SKILL.md` there; that's a copy, so re-run `summon setup`
-  after editing a skill.
+  subdirectory that contains a `SKILL.md`.
+- **Claude Code** discovers skills in `~/.claude/skills/` with the same
+  `<name>/SKILL.md` layout.
 
-In short: pi knows where the skills are because they live in (or symlink from)
-`~/.pi/agent/skills/`, one of pi's built-in global skill locations. Run `summon
-setup` once after cloning, and again whenever you add or change a skill.
+`summon setup` symlinks each `skills/<name>/` into both locations (and prunes
+its own stale symlinks), so edits in the repo are live. Because skills are
+harness-neutral, the same `SKILL.md` serves both. Run `summon setup` once after
+cloning, and again whenever you add or remove a skill.
 
 ## Conventions
 
 - One command on PATH: `summon` (everything else is `summon <name>`).
 - Commits / PR titles use [Conventional Commits](https://www.conventionalcommits.org/),
   enforced by the `commit-msg` hook and CI.
-- Agents discover everything through the `using-stacia-utils` skill; contributors
-  follow `contributing-stacia-utils`.
+- Agents discover everything through the `stacia-utils-usage` skill; contributors
+  follow `stacia-utils-contributing`.

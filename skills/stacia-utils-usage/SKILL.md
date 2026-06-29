@@ -1,5 +1,5 @@
 ---
-name: using-stacia-utils
+name: stacia-utils-usage
 description: Discover and run Stacia's personal command-line utilities via the `summon` dispatcher. Use this whenever a task might be served by one of Stacia's tools, or when she refers to one of her utilities by name. Do not guess what exists — ask `summon`.
 ---
 
@@ -15,8 +15,10 @@ tools are self-describing, so always discover them live.
 summon list
 ```
 
-Prints one line per utility: `name - one-line description`. This is generated
-on the fly from each utility, so it is always current.
+Prints two sections — **Utilities** (runnable CLI tools) and **Skills** (agent
+skills) — one line each as `name - one-line description`. Generated on the fly,
+so it is always current. Only utilities are run via `summon <name>`; skills are
+installed into the agent harness by `summon setup` and load automatically.
 
 ## Learn one utility
 

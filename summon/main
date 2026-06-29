@@ -1,14 +1,19 @@
 #!/usr/bin/env bash
-# summon - discover and run Stacia's personal *nix-style utilities
+# summon - discover and run Stacia's personal utilities and agent skills
 #
-# A utility is any top-level repo directory that contains an executable `main`
-# whose `--help` prints, on line 1, a man-page-style synopsis:
+# The repo holds two kinds of thing, each in its own top-level directory:
 #
-#     <name> - <one-line description>
+#   utilities/<name>/main       an executable whose `--help` prints, on line 1,
+#                               a man-page-style synopsis: "<name> - <desc>"
+#   skills/<name>/SKILL.md       an agent skill, namespaced with the `stacia-`
+#                               prefix; its frontmatter `name`/`description`
+#                               are the contract.
 #
-# That single convention makes every utility self-describing: `summon list`
-# harvests line 1 of each `main --help`, so there is nothing to regenerate and
-# no per-utility metadata to keep in sync. `summon lint` enforces the contract.
+# Both kinds are self-describing: `summon list` harvests utility synopses from
+# `main --help` and skill synopses from SKILL.md frontmatter, so there is
+# nothing to regenerate. `summon lint` enforces both contracts (skills must be
+# `stacia-`-prefixed). Harness-neutral skill content is an authoring guideline,
+# not linted. Everything else at the repo root is infrastructure.
 #
 # Sugar: a leading run of filler words (a an the this that these those up me my
 # some) is ignored, so `summon ctx`, `summon the ctx`, and `summon up a ctx` are
@@ -27,29 +32,39 @@ while [ -L "$_self" ]; do
 done
 SELF_DIR="$(cd -P "$(dirname "$_self")" && pwd)"   # <repo>/summon
 REPO="$(dirname "$SELF_DIR")"
+UTIL_DIR="$REPO/utilities"   # executable utilities: <name>/main
+SKILL_DIR="$REPO/skills"     # agent skills:        <name>/SKILL.md
 
 # Leading filler/incantation words stripped before dispatch (see main()).
 FILLER="a an the this that these those up me my some"
-# Names that can never be a utility: builtins, filler words, + the dispatcher.
+# Names that can never be a utility or skill: builtins, filler words, dispatcher.
 RESERVED="list lint commit-lint setup help summon $FILLER"
-# Top-level entries that are infrastructure, not utilities.
-is_infra() {
-  case "$1" in
-    bin|skills|summon|.git|.github|.githooks|.*) return 0 ;;
-    *) return 1 ;;
-  esac
-}
+
+# Every skill must be namespaced with this prefix so it can't shadow (or be
+# shadowed by) unrelated skills in the shared harness skill directories.
+SKILL_PREFIX="stacia-"
 
 err()  { printf '%s\n' "$*" >&2; }
 die()  { err "$*"; exit 1; }
 
-# Print the names of all utilities (dirs with a `main`), sorted.
+# Print the names of all utilities (dirs under utilities/ with a `main`), sorted.
 utils() {
   local d name
-  for d in "$REPO"/*/; do
+  for d in "$UTIL_DIR"/*/; do
+    [[ -d "$d" ]] || continue
     name="$(basename "$d")"
-    is_infra "$name" && continue
     [[ -f "$d/main" ]] || continue
+    printf '%s\n' "$name"
+  done | LC_ALL=C sort
+}
+
+# Print the names of all skills (dirs under skills/ with a SKILL.md), sorted.
+skills() {
+  local d name
+  for d in "$SKILL_DIR"/*/; do
+    [[ -d "$d" ]] || continue
+    name="$(basename "$d")"
+    [[ -f "$d/SKILL.md" ]] || continue
     printf '%s\n' "$name"
   done | LC_ALL=C sort
 }
@@ -57,7 +72,21 @@ utils() {
 # Line 1 of a utility's `--help` (its synopsis). Empty if it produced none.
 synopsis() {
   local name="$1"
-  "$REPO/$name/main" --help 2>/dev/null </dev/null | head -n1
+  "$UTIL_DIR/$name/main" --help 2>/dev/null </dev/null | head -n1
+}
+
+# A skill's frontmatter field value (name/description). Empty if absent.
+skill_field() {
+  local name="$1" key="$2"
+  awk -v k="$key" '
+    NR==1 && $0!~/^---[[:space:]]*$/ { exit }
+    NR>1 && /^---[[:space:]]*$/ { exit }
+    NR>1 {
+      if (match($0, "^" k ":[[:space:]]*")) {
+        print substr($0, RLENGTH+1); exit
+      }
+    }
+  ' "$SKILL_DIR/$name/SKILL.md"
 }
 
 # ---------------------------------------------------------------------------
@@ -65,25 +94,27 @@ synopsis() {
 # ---------------------------------------------------------------------------
 cmd_help() {
   cat <<EOF
-summon - discover and run Stacia's personal *nix-style utilities
+summon - discover and run Stacia's personal utilities and agent skills
 
 Usage:
-  summon list                    List every utility with its one-line synopsis
+  summon list                    List every utility and skill with its synopsis
   summon [filler] <name> [args]  Run a utility (leading a/an/the/this/that/
                                  these/those/up/me/my/some are optional sugar)
   summon [filler] <name> --help  Show a utility's full help
-  summon lint                    Enforce the utility contract (CI + pre-commit)
+  summon lint                    Enforce the utility + skill contracts (CI + hook)
   summon commit-lint <file|->    Validate a Conventional Commits message
   summon setup                   Configure hooks, PATH hint, and agent skills
   summon help | --help           Show this help
 
-A utility is a top-level directory with an executable \`main\` whose
-\`--help\` prints "<name> - <description>" on line 1. Run \`summon list\`.
+Utilities live in utilities/<name>/main (\`--help\` line 1 is "<name> - <desc>").
+Skills live in skills/<name>/SKILL.md (harness-neutral). Run \`summon list\`.
 EOF
 }
 
 cmd_list() {
-  local name syn missing=0
+  local name syn missing=0 desc
+
+  echo "Utilities:"
   while IFS= read -r name; do
     [[ -n "$name" ]] || continue
     syn="$(synopsis "$name" || true)"
@@ -94,6 +125,20 @@ cmd_list() {
       printf '  %s\n' "$syn"
     fi
   done < <(utils)
+
+  echo
+  echo "Skills:"
+  while IFS= read -r name; do
+    [[ -n "$name" ]] || continue
+    desc="$(skill_field "$name" description || true)"
+    if [[ -z "$desc" ]]; then
+      printf '  %-18s (no description; run: summon lint)\n' "$name"
+      missing=1
+    else
+      printf '  %s - %s\n' "$name" "$desc"
+    fi
+  done < <(skills)
+
   return $missing
 }
 
@@ -103,19 +148,19 @@ cmd_list() {
 cmd_lint() {
   local fail=0 name kebab='^[a-z0-9]+(-[a-z0-9]+)*$'
 
-  # No stray executables loose at the repo root: all code lives in <name>/main.
+  # No stray executables loose at the repo root: all code lives in its own dir.
   local f
   for f in "$REPO"/*; do
     [[ -f "$f" && -x "$f" ]] || continue
-    err "LINT: stray executable at repo root: $(basename "$f") (move it into <name>/main)"
+    err "LINT: stray executable at repo root: $(basename "$f") (move it into utilities/<name>/main)"
     fail=1
   done
 
-  # Every non-infra top-level directory must be a conforming utility.
+  # Every directory under utilities/ must be a conforming utility.
   local d
-  for d in "$REPO"/*/; do
+  for d in "$UTIL_DIR"/*/; do
+    [[ -d "$d" ]] || continue
     name="$(basename "$d")"
-    is_infra "$name" && continue
 
     if [[ ! "$name" =~ $kebab ]]; then
       err "LINT: $name: name must be kebab-case ([a-z0-9] and single hyphens)"; fail=1
@@ -149,13 +194,45 @@ cmd_lint() {
     fi
   done
 
+  # Every directory under skills/ must be a conforming, harness-neutral skill.
+  for d in "$SKILL_DIR"/*/; do
+    [[ -d "$d" ]] || continue
+    name="$(basename "$d")"
+
+    if [[ ! "$name" =~ $kebab ]]; then
+      err "LINT: skill $name: name must be kebab-case ([a-z0-9] and single hyphens)"; fail=1
+    fi
+    if [[ "$name" != "$SKILL_PREFIX"?* ]]; then
+      err "LINT: skill $name: name must be prefixed with '$SKILL_PREFIX' (e.g. ${SKILL_PREFIX}$name)"; fail=1
+    fi
+    case " $RESERVED " in *" $name "*)
+      err "LINT: skill $name: reserved name (clashes with a summon builtin)"; fail=1 ;;
+    esac
+
+    if [[ ! -f "$d/SKILL.md" ]]; then
+      err "LINT: skill $name: missing entrypoint (expected skills/$name/SKILL.md)"; fail=1; continue
+    fi
+    if [[ "$(head -n1 "$d/SKILL.md")" != "---" ]]; then
+      err "LINT: skill $name: SKILL.md must open with a YAML frontmatter block (---)"; fail=1
+    fi
+    local fname fdesc
+    fname="$(skill_field "$name" name || true)"
+    fdesc="$(skill_field "$name" description || true)"
+    if [[ "$fname" != "$name" ]]; then
+      err "LINT: skill $name: frontmatter 'name:' must equal '$name' (got: ${fname:-<empty>})"; fail=1
+    fi
+    if [[ -z "$fdesc" ]]; then
+      err "LINT: skill $name: frontmatter 'description:' must be non-empty"; fail=1
+    fi
+  done
+
   # The dispatcher must obey its own contract too.
   local s
   s="$("$SELF_DIR/main" --help 2>/dev/null </dev/null | head -n1)"
   [[ "$s" == "summon - "* ]] || { err "LINT: summon: own --help line 1 malformed"; fail=1; }
 
   if [[ $fail -eq 0 ]]; then
-    echo "lint OK ($(utils | grep -c . || true) utilities)"
+    echo "lint OK ($(utils | grep -c . || true) utilities, $(skills | grep -c . || true) skills)"
   fi
   return $fail
 }
@@ -189,9 +266,23 @@ cmd_setup() {
   git -C "$REPO" config core.hooksPath .githooks
   echo "✓ git hooks enabled (core.hooksPath=.githooks)"
 
-  local pi="$HOME/.pi/agent/skills" claude="$HOME/.claude/skills" s name
+  local pi="$HOME/.pi/agent/skills" claude="$HOME/.claude/skills" dest s name link
   mkdir -p "$pi" "$claude"
-  for s in "$REPO"/skills/*/; do
+
+  # Prune our own stale symlinks (skills removed/renamed in the repo) from both
+  # destinations, so setup is a true sync rather than append-only.
+  for dest in "$pi" "$claude"; do
+    for link in "$dest"/*; do
+      [[ -L "$link" ]] || continue
+      case "$(readlink "$link")" in
+        "$SKILL_DIR"/*)
+          [[ -f "$link/SKILL.md" ]] && continue   # still valid
+          rm -f "$link"; echo "✓ skill pruned: $(basename "$link")" ;;
+      esac
+    done
+  done
+
+  for s in "$SKILL_DIR"/*/; do
     [[ -f "$s/SKILL.md" ]] || continue
     name="$(basename "$s")"
     ln -sfn "$s" "$pi/$name"            # pi: native SKILL.md dirs
@@ -236,8 +327,8 @@ main() {
     commit-lint)    shift; cmd_commit_lint "$@" ;;
     setup)          shift; cmd_setup "$@" ;;
     *)
-      if [[ -x "$REPO/$cmd/main" ]]; then
-        shift; exec "$REPO/$cmd/main" "$@"
+      if [[ -x "$UTIL_DIR/$cmd/main" ]]; then
+        shift; exec "$UTIL_DIR/$cmd/main" "$@"
       fi
       err "summon: unknown utility or command: $cmd"
       err "Run 'summon list' to see what's available."
