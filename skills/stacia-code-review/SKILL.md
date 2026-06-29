@@ -75,23 +75,34 @@ direct `subagent({ tasks: [...] })` parallel call.
 All state for a run lives in a central, cwd-independent directory owned by the
 bundled helper `code-review-workdir.py` (next to this `SKILL.md`) — **never** the
 current working directory, which we can't assume is writable or where the user wants
-output. The helper owns every path, name, and `mkdir` so you never invent one.
+output. The helper owns every path, name, and `mkdir`, **and performs every write**,
+so you never handle a filesystem path for output: you allocate the run, then pipe
+content to named targets the script resolves. Do not use the `write` tool for any
+run artifact — route it through the helper.
 
-Once scope is confirmed, call it **once** with the repo identifiers in scope:
+Once scope is confirmed, allocate the run **once** with the repo identifiers in scope:
 
 ```
-python3 <skill-dir>/code-review-workdir.py <repo> [<repo> ...]
+python3 <skill-dir>/code-review-workdir.py init <repo> [<repo> ...]
 ```
 
 It creates `${XDG_CACHE_HOME:-$HOME/.cache}/stacia-code-review/runs/<ts>-<id>/`
-with `bundles/`, `findings/`, and a `report.md` target, and prints JSON giving the
-absolute path of every artifact: per-repo `bundle` and `findings`, the `report`,
-`multi_repo`, and (multi-repo only) `cross_repo_findings`. **Use exactly those
-paths** — do not invent your own. Keep the parsed JSON; you reference these paths
-through steps 3–4.
+with `bundles/`, `findings/`, a `report.md` target, and a `manifest.json`, then
+prints that manifest as JSON: per-repo `slug` + `bundle` + `findings`, the `run_dir`,
+`report`, `multi_repo`, and (multi-repo only) `cross_repo_findings`. **Keep the
+parsed manifest** — you pass `run_dir` and per-repo `slug` to every later write, and
+you reference the paths (for `reads`) through steps 3–4.
 
-Then, for **each** repo in scope, write that repo's **own** diff bundle to its
-`bundle` path. A per-repo bundle holds only that one repo's:
+Then, for **each** repo in scope, build that repo's **own** diff bundle and store it
+by piping it to the helper (never the `write` tool):
+
+```
+python3 <skill-dir>/code-review-workdir.py write-bundle --run <run_dir> --slug <slug>  # bundle on stdin
+```
+
+The helper resolves the destination from the manifest, rejects an unknown slug or
+empty input, and prints the absolute path it wrote. A per-repo bundle holds only
+that one repo's:
 - unified diff (`gh pr diff <id>`; `git diff <base>...<head>` for a branch range; or
   `git diff` / `git diff --staged` / `git diff HEAD` for uncommitted — match step 1),
 - changed-file list with `--stat`,
@@ -172,7 +183,7 @@ and you need that mapping to bucket findings per repo in step 4.
 
 ```
 // findingsSchema = JSON.parse(<contents of this skill's findings.schema.json>)
-// wd = parsed stdout of code-review-workdir.py (step 2)
+// wd = parsed manifest from `code-review-workdir.py init` (step 2)
 const perspectives = ["correctness", "security", "performance", "api-contract", "tests"]
 const tasks = []
 for (const r of wd.repos) {
@@ -247,7 +258,11 @@ Delegate it instead, one repo at a time, to `stacia-review-synth`:
 
 1. For each repo, assemble that repo's **raw findings** — the array of its
    per-perspective reviewer results (each `{perspective, note, findings[]}`) from
-   step 3 — and **write it to that repo's `findings` path** from the workdir JSON.
+   step 3 — and store it by piping the JSON to the helper (it validates the JSON and
+   resolves the destination from the manifest):
+   ```
+   python3 <skill-dir>/code-review-workdir.py write-findings --run <run_dir> --slug <slug>  # findings JSON on stdin
+   ```
 2. Fan out the synth agents in one `subagent` call (parallel, one per repo), each
    reading its repo's findings + bundle. The agent spot-checks evidence, dedups
    across perspectives, themes, prioritizes, and returns a structured per-repo result
@@ -271,14 +286,24 @@ The cross-repo reviewer is a single perspective; there is nothing to merge. Its
 structured result *is* the cross-repo section. Because it has no synth pass, **you**
 spot-check its Blocker/Major evidence against the bundles before promoting them
 (downgrade or drop anything whose `evidence` doesn't match its `location`). Persist
-its result to `cross_repo_findings` for the record.
+its result for the record by piping the JSON to the helper:
+
+```
+python3 <skill-dir>/code-review-workdir.py write-cross-findings --run <run_dir>  # cross-repo findings JSON on stdin
+```
 
 ### Assemble the report
 
-Render one document, **write it to the workdir `report` path** (`report.md`), and
-print that absolute path (and the run dir) to the user so the artifacts are findable
-regardless of cwd. Redact secret-like values in evidence (prefix + length, never the
-full credential) before persisting.
+Render one document and store it via the helper (never the `write` tool), then print
+the path it returns (and the run dir) to the user so the artifacts are findable
+regardless of cwd:
+
+```
+python3 <skill-dir>/code-review-workdir.py write-report --run <run_dir>  # report markdown on stdin
+```
+
+Redact secret-like values in evidence (prefix + length, never the full credential)
+before persisting.
 
 **Multi-repo** — three components, in this order:
 
@@ -316,8 +341,13 @@ record any repo whose synth produced no usable result rather than dropping it.
   pi-subagents reads them in place via `PI_SUBAGENT_EXTRA_AGENT_DIRS`, so edits are
   live with no re-sync.
 - Run state lives under `${XDG_CACHE_HOME:-$HOME/.cache}/stacia-code-review/runs/`,
-  allocated by the bundled `code-review-workdir.py` (a private helper, not a PATH
-  utility). The cwd is never written to. Old run dirs persist until manually cleaned.
+  allocated **and written** by the bundled `code-review-workdir.py` (a private
+  helper, not a PATH utility): `init` allocates + records a `manifest.json`, and the
+  `write-bundle` / `write-findings` / `write-cross-findings` / `write-report`
+  subcommands resolve every destination from that manifest. The orchestrator never
+  handles an output path or uses the `write` tool for run artifacts, so placement is
+  deterministic and the cwd is never written to. Old run dirs persist until manually
+  cleaned.
 - If `gh` is unavailable or a PR can't be resolved, fall back to branch-range diffs
   and tell the user.
 - Keep each per-repo bundle reasonably scoped; for very large changes, summarize
