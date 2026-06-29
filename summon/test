@@ -129,6 +129,12 @@ agent_file "$r" stacia-review-correctness "read, grep, write" "reviewer with mut
 expect_fail "reviewer with disallowed tool (write)" "$r" "not allowed; reviewers are read-only"
 
 r="$(new_repo)"
+# structured_output is the non-mutating result-contract tool; it must be allowed
+# (the code-review fan-out's outputSchema is unreachable without it).
+agent_file "$r" stacia-review-correctness "read, grep, find, ls, structured_output" "reviewer with structured_output"
+expect_pass "reviewer may declare structured_output" "$r"
+
+r="$(new_repo)"
 agent_file "$r" stacia-review-correctness "" "reviewer missing tools field"
 expect_fail "reviewer missing tools field" "$r" "must declare a read-only 'tools:' field"
 

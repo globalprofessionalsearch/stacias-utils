@@ -113,8 +113,10 @@ agent_files() {
 
 # The read-only tool allow-list every reviewer agent (stacia-review-*) must
 # stay within. The code-review fan-out's isolation guarantee rests on this, so
-# it is enforced by lint, not just asserted in prose.
-REVIEWER_TOOLS="read grep find ls"
+# it is enforced by lint, not just asserted in prose. 'structured_output' is the
+# non-mutating result-contract tool pi-subagents injects for outputSchema; it is
+# allowed (and required for the schema to work) but is not a mutating tool.
+REVIEWER_TOOLS="read grep find ls structured_output"
 
 # ---------------------------------------------------------------------------
 # Builtins

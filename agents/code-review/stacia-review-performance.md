@@ -1,7 +1,7 @@
 ---
 name: stacia-review-performance
 description: Read-only performance reviewer (stacia-code-review)
-tools: read, grep, find, ls
+tools: read, grep, find, ls, structured_output
 systemPromptMode: replace
 inheritProjectContext: false
 inheritSkills: false
