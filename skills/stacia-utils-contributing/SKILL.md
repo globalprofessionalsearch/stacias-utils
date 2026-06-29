@@ -82,7 +82,7 @@ over naming a specific harness's delegation tool or its execution flags.
 mkdir -p skills/stacia-my-skill
 $EDITOR skills/stacia-my-skill/SKILL.md
 summon lint          # must pass
-summon setup         # symlink into ~/.pi and ~/.claude
+summon setup         # required for Claude (per-skill symlink); pi auto-discovers
 git add skills/stacia-my-skill
 git commit -m "feat: add stacia-my-skill skill"
 ```

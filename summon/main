@@ -43,6 +43,8 @@ RESERVED="list lint commit-lint setup help summon $FILLER"
 # Every skill must be namespaced with this prefix so it can't shadow (or be
 # shadowed by) unrelated skills in the shared harness skill directories.
 SKILL_PREFIX="stacia-"
+# Umbrella symlink name used for pi's run-once install (pi recurses into it).
+PI_SKILLS_LINK="stacia-utils"
 
 err()  { printf '%s\n' "$*" >&2; }
 die()  { err "$*"; exit 1; }
@@ -266,29 +268,39 @@ cmd_setup() {
   git -C "$REPO" config core.hooksPath .githooks
   echo "✓ git hooks enabled (core.hooksPath=.githooks)"
 
-  local pi="$HOME/.pi/agent/skills" claude="$HOME/.claude/skills" dest s name link
+  local pi="$HOME/.pi/agent/skills" claude="$HOME/.claude/skills" s name link
   mkdir -p "$pi" "$claude"
 
-  # Prune our own stale symlinks (skills removed/renamed in the repo) from both
-  # destinations, so setup is a true sync rather than append-only.
-  for dest in "$pi" "$claude"; do
-    for link in "$dest"/*; do
-      [[ -L "$link" ]] || continue
-      case "$(readlink "$link")" in
-        "$SKILL_DIR"/*)
-          [[ -f "$link/SKILL.md" ]] && continue   # still valid
-          rm -f "$link"; echo "✓ skill pruned: $(basename "$link")" ;;
-      esac
-    done
+  # --- pi: run-once. pi discovers SKILL.md dirs recursively, so a single
+  # umbrella symlink to the whole skills/ dir exposes every current and future
+  # skill. Adding a skill to the repo needs no re-run for pi.
+  # First remove any prior per-skill symlinks we planted into pi's root.
+  for link in "$pi"/*; do
+    [[ -L "$link" ]] || continue
+    case "$(readlink "$link")" in
+      "$SKILL_DIR"/*) rm -f "$link"; echo "✓ pi: removed per-skill link $(basename "$link")" ;;
+    esac
   done
+  ln -sfn "$SKILL_DIR" "$pi/$PI_SKILLS_LINK"
+  echo "✓ pi: skills linked once ($PI_SKILLS_LINK -> skills/); new skills auto-discovered"
 
+  # --- claude: NOT recursive (top-level scan only), so each skill needs its own
+  # top-level symlink. Re-run 'summon setup' after adding or renaming a skill.
+  # Prune our own stale claude symlinks first, then (re)create one per skill.
+  for link in "$claude"/*; do
+    [[ -L "$link" ]] || continue
+    case "$(readlink "$link")" in
+      "$SKILL_DIR"/*)
+        [[ -f "$link/SKILL.md" ]] && continue   # still valid
+        rm -f "$link"; echo "✓ claude: pruned $(basename "$link")" ;;
+    esac
+  done
   for s in "$SKILL_DIR"/*/; do
     [[ -f "$s/SKILL.md" ]] || continue
     name="$(basename "$s")"
-    ln -sfn "$s" "$pi/$name"            # pi: native SKILL.md dirs
     rm -f "$claude/$name.md"            # remove prior (broken) flat-file install
-    ln -sfn "$s" "$claude/$name"        # claude: same SKILL.md dir layout as pi
-    echo "✓ skill synced: $name"
+    ln -sfn "$s" "$claude/$name"
+    echo "✓ claude: synced $name"
   done
 
   cat <<EOF

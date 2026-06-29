@@ -55,15 +55,18 @@ shared directories. Nothing here is on an agent's search path by default —
 `summon setup` installs them into both harness-global skill directories by
 symlink:
 
-- **pi** discovers skills in `~/.pi/agent/skills/`, recursing into any
-  subdirectory that contains a `SKILL.md`.
-- **Claude Code** discovers skills in `~/.claude/skills/` with the same
-  `<name>/SKILL.md` layout.
+- **pi** discovers skills in `~/.pi/agent/skills/` **recursively**. `summon
+  setup` plants a single umbrella symlink `~/.pi/agent/skills/stacia-utils ->
+  skills/`, so pi sees every current *and future* skill. This is **run-once**:
+  add a skill to the repo and pi picks it up with no re-run.
+- **Claude Code** scans only the **top level** of `~/.claude/skills/` (no
+  recursive discovery), so each skill needs its own top-level symlink. `summon
+  setup` creates one per skill and prunes stale ones. **Re-run `summon setup`
+  after adding or renaming a skill** if you want it available in Claude.
 
-`summon setup` symlinks each `skills/<name>/` into both locations (and prunes
-its own stale symlinks), so edits in the repo are live. Because skills are
-harness-neutral, the same `SKILL.md` serves both. Run `summon setup` once after
-cloning, and again whenever you add or remove a skill.
+Because the symlinks point back into the repo, edits to a skill's body are live
+in both harnesses with no re-sync. pi is the primary harness and is run-once;
+Claude requires a `summon setup` re-run per skill added.
 
 ## Conventions
 

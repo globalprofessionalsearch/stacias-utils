@@ -72,8 +72,15 @@ the same `SKILL.md` works in pi and Claude. Describe behavior abstractly
 message") rather than naming a specific harness's delegation tool or execution
 flags.
 
-`summon setup` symlinks each `skills/<name>/` into both `~/.pi/agent/skills/`
-and `~/.claude/skills/`, and prunes its own stale symlinks.
+`summon setup` installs skills into both harnesses:
+
+- **pi** (recursive discovery): one umbrella symlink `~/.pi/agent/skills/stacia-utils
+  -> skills/`. Run-once — new skills are auto-discovered without re-running setup.
+- **Claude Code** (top-level scan only): one symlink per skill under
+  `~/.claude/skills/`. Re-run `summon setup` after adding/renaming a skill to
+  expose it in Claude.
+
+Skill-body edits are live in both (symlinks point back into the repo).
 
 ### Add one
 
