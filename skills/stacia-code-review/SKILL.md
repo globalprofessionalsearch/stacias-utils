@@ -104,21 +104,22 @@ Each perspective is a bundled read-only agent definition under this skill's
 layer, not just in the prompt. Each runs with `context: fresh`,
 `inheritProjectContext: false`, `inheritSkills: false`.
 
-| Perspective    | Agent name                     | File                       |
-|----------------|--------------------------------|----------------------------|
-| correctness    | `stacia-review-correctness`    | `agents/correctness.md`    |
-| security       | `stacia-review-security`       | `agents/security.md`       |
-| performance    | `stacia-review-performance`    | `agents/performance.md`    |
-| api-contract   | `stacia-review-api-contract`   | `agents/api-contract.md`   |
-| tests          | `stacia-review-tests`          | `agents/tests.md`          |
-| cross-repo     | `stacia-review-cross-repo`     | `agents/cross-repo.md`     |
+| Perspective    | Agent name                     |
+|----------------|--------------------------------|
+| correctness    | `stacia-review-correctness`    |
+| security       | `stacia-review-security`       |
+| performance    | `stacia-review-performance`    |
+| api-contract   | `stacia-review-api-contract`   |
+| tests          | `stacia-review-tests`          |
+| cross-repo     | `stacia-review-cross-repo`     |
 
-**Ensure the agents are discoverable (one-time).** nicobailon discovers agents from
-user (`~/.pi/agent/agents/`) and project (`.pi/agents/`) dirs, not from skill dirs.
-Run `subagent({ action: "list" })`. If the `stacia-review-*` agents are absent,
-install them once by copying this skill's `agents/*.md` into `~/.pi/agent/agents/`
-(they are already valid nicobailon agent files), then re-list to confirm. The copies
-are the source of truth thereafter; re-copy if you edit the bundled personas.
+These are first-class agents in the `stacias-utils` repo under
+`agents/code-review/` and are discovered by pi-subagents through the
+`PI_SUBAGENT_EXTRA_AGENT_DIRS` env var that `summon setup` configures (recursive,
+run-once — no copying or symlinking). Confirm they are live with
+`subagent({ action: "list" })`. If the `stacia-review-*` agents are absent, run
+`summon setup`, add the printed `PI_SUBAGENT_EXTRA_AGENT_DIRS` line to your shell
+rc, and restart pi — then re-list to confirm.
 
 ### Launch
 
@@ -236,8 +237,9 @@ write it to `code-review-<YYYY-MM-DD>.md` if the user wants a file.
 - Reviewers are read-only by construction (`tools: read, grep, find, ls`). The
   orchestrator never edits code as part of a review, and never runs synthesis as a
   mutating subagent.
-- The bundled `agents/*.md` are the persona source of truth; the copies under
-  `~/.pi/agent/agents/` are what nicobailon runs. Keep them in sync.
+- The reviewer agents live in the repo at `agents/code-review/stacia-review-*.md`
+  and are the single source of truth — pi-subagents reads them in place via
+  `PI_SUBAGENT_EXTRA_AGENT_DIRS`, so edits are live with no re-sync.
 - If `gh` is unavailable or a PR can't be resolved, fall back to branch-range diffs
   and tell the user.
 - Keep the diff bundle reasonably scoped; for very large changes, summarize

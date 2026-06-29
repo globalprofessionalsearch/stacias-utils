@@ -1,19 +1,25 @@
 #!/usr/bin/env bash
 # summon - discover and run Stacia's personal utilities and agent skills
 #
-# The repo holds two kinds of thing, each in its own top-level directory:
+# The repo holds three kinds of thing, each in its own top-level directory:
 #
 #   utilities/<name>/main       an executable whose `--help` prints, on line 1,
 #                               a man-page-style synopsis: "<name> - <desc>"
 #   skills/<name>/SKILL.md       an agent skill, namespaced with the `stacia-`
 #                               prefix; its frontmatter `name`/`description`
 #                               are the contract.
+#   agents/**/<stacia-name>.md  a nicobailon pi-subagents agent definition; its
+#                               frontmatter `name` (== filename stem, `stacia-`
+#                               prefixed) and `description` are the contract.
 #
-# Both kinds are self-describing: `summon list` harvests utility synopses from
-# `main --help` and skill synopses from SKILL.md frontmatter, so there is
-# nothing to regenerate. `summon lint` enforces both contracts (skills must be
-# `stacia-`-prefixed). Harness-neutral skill content is an authoring guideline,
-# not linted. Everything else at the repo root is infrastructure.
+# All three are self-describing: `summon list` harvests utility synopses from
+# `main --help` and skill/agent synopses from frontmatter, so there is nothing
+# to regenerate. `summon lint` enforces all three contracts (skills and agents
+# must be `stacia-`-prefixed). Harness-neutral skill content is an authoring
+# guideline, not linted; agents are harness-specific (pi-subagents) by nature.
+# Agents are exposed to pi-subagents via PI_SUBAGENT_EXTRA_AGENT_DIRS (see
+# `summon setup`), scanned recursively, so adding one needs no re-run.
+# Everything else at the repo root is infrastructure.
 #
 # Sugar: a leading run of filler words (a an the this that these those up me my
 # some) is ignored, so `summon ctx`, `summon the ctx`, and `summon up a ctx` are
@@ -32,16 +38,17 @@ while [ -L "$_self" ]; do
 done
 SELF_DIR="$(cd -P "$(dirname "$_self")" && pwd)"   # <repo>/summon
 REPO="$(dirname "$SELF_DIR")"
-UTIL_DIR="$REPO/utilities"   # executable utilities: <name>/main
-SKILL_DIR="$REPO/skills"     # agent skills:        <name>/SKILL.md
+UTIL_DIR="$REPO/utilities"   # executable utilities:    <name>/main
+SKILL_DIR="$REPO/skills"     # agent skills:            <name>/SKILL.md
+AGENT_DIR="$REPO/agents"     # pi-subagents agents:     **/<stacia-name>.md
 
 # Leading filler/incantation words stripped before dispatch (see main()).
 FILLER="a an the this that these those up me my some"
 # Names that can never be a utility or skill: builtins, filler words, dispatcher.
 RESERVED="list lint commit-lint setup help summon $FILLER"
 
-# Every skill must be namespaced with this prefix so it can't shadow (or be
-# shadowed by) unrelated skills in the shared harness skill directories.
+# Every skill and agent must be namespaced with this prefix so it can't shadow
+# (or be shadowed by) unrelated definitions in the shared harness directories.
 SKILL_PREFIX="stacia-"
 # Umbrella symlink name used for pi's run-once install (pi recurses into it).
 PI_SKILLS_LINK="stacia-utils"
@@ -77,9 +84,9 @@ synopsis() {
   "$UTIL_DIR/$name/main" --help 2>/dev/null </dev/null | head -n1
 }
 
-# A skill's frontmatter field value (name/description). Empty if absent.
-skill_field() {
-  local name="$1" key="$2"
+# A YAML frontmatter field value (name/description) from any file. Empty if absent.
+frontmatter_field() {
+  local file="$1" key="$2"
   awk -v k="$key" '
     NR==1 && $0!~/^---[[:space:]]*$/ { exit }
     NR>1 && /^---[[:space:]]*$/ { exit }
@@ -88,7 +95,20 @@ skill_field() {
         print substr($0, RLENGTH+1); exit
       }
     }
-  ' "$SKILL_DIR/$name/SKILL.md"
+  ' "$file"
+}
+
+# A skill's frontmatter field value (name/description). Empty if absent.
+skill_field() {
+  frontmatter_field "$SKILL_DIR/$1/SKILL.md" "$2"
+}
+
+# Print the paths of all agent definition files (*.md, excluding *.chain.md)
+# anywhere under agents/, sorted. pi-subagents discovers them recursively.
+agent_files() {
+  [[ -d "$AGENT_DIR" ]] || return 0
+  find "$AGENT_DIR" -type f -name '*.md' ! -name '*.chain.md' 2>/dev/null \
+    | LC_ALL=C sort
 }
 
 # ---------------------------------------------------------------------------
@@ -105,11 +125,13 @@ Usage:
   summon [filler] <name> --help  Show a utility's full help
   summon lint                    Enforce the utility + skill contracts (CI + hook)
   summon commit-lint <file|->    Validate a Conventional Commits message
-  summon setup                   Configure hooks, PATH hint, and agent skills
+  summon setup                   Configure hooks + skills, print shell-rc hints
   summon help | --help           Show this help
 
-Utilities live in utilities/<name>/main (\`--help\` line 1 is "<name> - <desc>").
-Skills live in skills/<name>/SKILL.md (harness-neutral). Run \`summon list\`.
+Utilities: utilities/<name>/main (\`--help\` line 1 is "<name> - <desc>").
+Skills:    skills/<name>/SKILL.md (stacia-prefixed frontmatter contract).
+Agents:    agents/**/<stacia-name>.md (pi-subagents definitions; name == stem).
+Run \`summon list\`.
 EOF
 }
 
@@ -140,6 +162,22 @@ cmd_list() {
       printf '  %s - %s\n' "$name" "$desc"
     fi
   done < <(skills)
+
+  echo
+  echo "Agents:"
+  local af stem aname adesc
+  while IFS= read -r af; do
+    [[ -n "$af" ]] || continue
+    stem="$(basename "$af" .md)"
+    aname="$(frontmatter_field "$af" name || true)"
+    adesc="$(frontmatter_field "$af" description || true)"
+    if [[ -z "$adesc" ]]; then
+      printf '  %-26s (no description; run: summon lint)\n' "${aname:-$stem}"
+      missing=1
+    else
+      printf '  %s - %s\n' "${aname:-$stem}" "$adesc"
+    fi
+  done < <(agent_files)
 
   return $missing
 }
@@ -228,13 +266,51 @@ cmd_lint() {
     fi
   done
 
+  # Every *.md under agents/ (recursively, excluding *.chain.md) must be a
+  # conforming, stacia-prefixed agent definition with a unique name == stem.
+  local af stem aname adesc seen_agents=" "
+  while IFS= read -r af; do
+    [[ -n "$af" ]] || continue
+    stem="$(basename "$af" .md)"
+
+    if [[ "$(head -n1 "$af")" != "---" ]]; then
+      err "LINT: agent $stem: $af must open with a YAML frontmatter block (---)"; fail=1; continue
+    fi
+    aname="$(frontmatter_field "$af" name || true)"
+    adesc="$(frontmatter_field "$af" description || true)"
+
+    if [[ -z "$aname" ]]; then
+      err "LINT: agent $stem: frontmatter 'name:' must be non-empty ($af)"; fail=1
+    else
+      if [[ ! "$aname" =~ $kebab ]]; then
+        err "LINT: agent $aname: name must be kebab-case ([a-z0-9] and single hyphens)"; fail=1
+      fi
+      if [[ "$aname" != "$SKILL_PREFIX"?* ]]; then
+        err "LINT: agent $aname: name must be prefixed with '$SKILL_PREFIX' ($af)"; fail=1
+      fi
+      if [[ "$aname" != "$stem" ]]; then
+        err "LINT: agent $aname: frontmatter 'name:' must equal the filename stem '$stem' ($af)"; fail=1
+      fi
+      case " $RESERVED " in *" $aname "*)
+        err "LINT: agent $aname: reserved name (clashes with a summon builtin)"; fail=1 ;;
+      esac
+      case "$seen_agents" in *" $aname "*)
+        err "LINT: agent $aname: duplicate name (must be unique across agents/)"; fail=1 ;;
+      esac
+      seen_agents="$seen_agents$aname "
+    fi
+    if [[ -z "$adesc" ]]; then
+      err "LINT: agent $stem: frontmatter 'description:' must be non-empty ($af)"; fail=1
+    fi
+  done < <(agent_files)
+
   # The dispatcher must obey its own contract too.
   local s
   s="$("$SELF_DIR/main" --help 2>/dev/null </dev/null | head -n1)"
   [[ "$s" == "summon - "* ]] || { err "LINT: summon: own --help line 1 malformed"; fail=1; }
 
   if [[ $fail -eq 0 ]]; then
-    echo "lint OK ($(utils | grep -c . || true) utilities, $(skills | grep -c . || true) skills)"
+    echo "lint OK ($(utils | grep -c . || true) utilities, $(skills | grep -c . || true) skills, $(agent_files | grep -c . || true) agents)"
   fi
   return $fail
 }
@@ -262,7 +338,9 @@ EOF
 }
 
 # ---------------------------------------------------------------------------
-# One-shot setup: hooks + agent skills + PATH hint. Idempotent.
+# One-shot setup: hooks + agent skills + PATH/agent-dir shell-rc hints. Idempotent.
+# Agents need no symlink/copy: the printed PI_SUBAGENT_EXTRA_AGENT_DIRS env line
+# exposes the whole agents/ tree to pi-subagents recursively, run-once.
 # ---------------------------------------------------------------------------
 cmd_setup() {
   git -C "$REPO" config core.hooksPath .githooks
@@ -303,11 +381,18 @@ cmd_setup() {
     echo "✓ claude: synced $name"
   done
 
+  echo "✓ agents: exposed to pi-subagents via PI_SUBAGENT_EXTRA_AGENT_DIRS (run-once; see below)"
+
   cat <<EOF
 
-Add the single PATH entry to your shell rc (once):
+Add these lines to your shell rc (once):
 
   export PATH="$REPO/bin:\$PATH"
+  export PI_SUBAGENT_EXTRA_AGENT_DIRS="$AGENT_DIR"
+
+The first puts \`summon\` on PATH. The second exposes every agent under
+agents/ to pi-subagents (nicobailon), scanned recursively — run-once: new
+agents are auto-discovered with no re-run.
 
 Then: summon list
 EOF
