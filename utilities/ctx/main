@@ -1,15 +1,18 @@
 #!/usr/bin/env bash
-# Usage: ctx [dev|staging|prod|eng|status]
+# Usage: ctx [dev|staging|prod|eng|strider|status]
 # No args: shows current context and toggles between dev and staging.
 # eng: dev cluster (jeenie-development) with the next-engineering gcloud project.
+# strider: interpretation platform production cluster (solo-infrastructure project).
 
 DEV_KUBE="gke_jeenie-development_us-east1-b_jeenie-development-gke"
 STAGING_KUBE="gke_jeenie-staging_us-east1-b_jeenie-staging-gke"
 PROD_KUBE="gke_jeenie-production_us-east1-b_jeenie-production-gke"
+STRIDER_KUBE="gke_solo-infrastructure_us-east1-c_strider"
 DEV_PROJECT="jeenie-development"
 STAGING_PROJECT="jeenie-staging"
 PROD_PROJECT="jeenie-production"
 ENG_PROJECT="next-engineering"
+STRIDER_PROJECT="solo-infrastructure"
 
 current_kube=$(kubectl config current-context 2>/dev/null)
 
@@ -20,6 +23,7 @@ _switch() {
     staging) kube="$STAGING_KUBE"; project="$STAGING_PROJECT" ;;
     prod)    kube="$PROD_KUBE";    project="$PROD_PROJECT" ;;
     eng)     kube="$DEV_KUBE";     project="$ENG_PROJECT" ;;
+    strider) kube="$STRIDER_KUBE"; project="$STRIDER_PROJECT" ;;
   esac
   kubectl config use-context "$kube" > /dev/null
   gcloud config set project "$project" --quiet
@@ -29,16 +33,17 @@ _switch() {
 case "${1:-}" in
   -h|--help|help)
     cat <<'EOF'
-ctx - switch GCP/Kubernetes context for Jeenie environments (dev, staging, prod, eng)
+ctx - switch GCP/Kubernetes context for Jeenie environments (dev, staging, prod, eng, strider)
 
-Usage: ctx [dev|staging|prod|eng|status]
-  (no args)             toggle between dev and staging
-  dev|staging|prod|eng  switch to that environment
-  status                show current kubectl context and gcloud project
+Usage: ctx [dev|staging|prod|eng|strider|status]
+  (no args)                     toggle between dev and staging
+  dev|staging|prod|eng|strider  switch to that environment
+  strider                       interpretation platform prod (solo-infrastructure)
+  status                        show current kubectl context and gcloud project
 EOF
     exit 0
     ;;
-  dev|staging|prod|eng)
+  dev|staging|prod|eng|strider)
     _switch "$1"
     ;;
   "")
@@ -53,7 +58,7 @@ EOF
     echo "gcloud:  $(gcloud config get-value project 2>/dev/null)"
     ;;
   *)
-    echo "Usage: ctx [dev|staging|prod|eng|status]"
+    echo "Usage: ctx [dev|staging|prod|eng|strider|status]"
     exit 1
     ;;
 esac
