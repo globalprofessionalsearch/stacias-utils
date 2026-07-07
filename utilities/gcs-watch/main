@@ -168,6 +168,30 @@ class PubSubWatcher:
             "gcloud", "pubsub", "topics", "create", self.topic_name,
             "--project", self.project_id
         ])
+        
+        # Grant GCS service account permission to publish to the topic
+        self._grant_gcs_publish_permission()
+    
+    def _grant_gcs_publish_permission(self):
+        """Grant GCS service account permission to publish to Pub/Sub topic."""
+        # Get GCS service account for this project
+        result = run_gcloud([
+            "gcloud", "storage", "service-agent",
+            "--project", self.project_id
+        ])
+        service_account = result.stdout.strip()
+        
+        if not service_account:
+            print(f"  Warning: Could not determine GCS service account", file=sys.stderr)
+            return
+        
+        # Grant pubsub.publisher role
+        run_gcloud([
+            "gcloud", "pubsub", "topics", "add-iam-policy-binding", self.topic_name,
+            "--member", f"serviceAccount:{service_account}",
+            "--role", "roles/pubsub.publisher",
+            "--project", self.project_id
+        ], capture_output=True)  # Suppress verbose output
     
     def _create_subscription(self):
         """Create Pub/Sub subscription."""
@@ -228,10 +252,12 @@ class PubSubWatcher:
         # Check if topic exists, create if not
         if self._topic_exists():
             print(f"  Topic exists, reusing")
+            # Ensure GCS service account has permissions even on reuse
+            self._grant_gcs_publish_permission()
         else:
             print(f"  Creating topic...")
             self._create_topic()
-            # Brief delay to let topic propagate
+            # Brief delay to let permissions propagate
             time.sleep(1)
         
         # Check if subscription exists, create if not
