@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-gcs-watch - Poll a GCS bucket and send SMS alerts for new files
+gcs-watch - Poll a GCS bucket and send SMS alerts for new folders
 """
 
 import argparse
@@ -66,8 +66,8 @@ def send_sms(phone, carrier, message, gmail_email, gmail_password):
         raise
 
 
-def list_bucket(bucket_path):
-    """List all files in the bucket using gsutil."""
+def list_folders(bucket_path):
+    """List all folders in the bucket using gsutil."""
     try:
         result = subprocess.run(
             ["gsutil", "ls", "-r", bucket_path],
@@ -75,32 +75,41 @@ def list_bucket(bucket_path):
             text=True,
             check=True
         )
-        # Filter out directory entries (end with :)
-        files = [line.strip() for line in result.stdout.splitlines() 
-                 if line.strip() and not line.endswith(":")]
-        return set(files)
+        # Keep only directory entries (end with / or :)
+        folders = set()
+        for line in result.stdout.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            # Lines ending with : are directory headers, extract the path
+            if line.endswith(":"):
+                folders.add(line[:-1] + "/")
+            # Lines ending with / are also folders
+            elif line.endswith("/"):
+                folders.add(line)
+        return folders
     except subprocess.CalledProcessError as e:
         print(f"Error listing bucket: {e.stderr}", file=sys.stderr)
         return set()
 
 
 def load_state(state_file):
-    """Load seen files from state file."""
+    """Load seen folders from state file."""
     if not os.path.exists(state_file):
         return set()
     with open(state_file) as f:
         return set(line.strip() for line in f if line.strip())
 
 
-def save_state(state_file, files):
-    """Save seen files to state file."""
+def save_state(state_file, folders):
+    """Save seen folders to state file."""
     with open(state_file, "w") as f:
-        for path in sorted(files):
+        for path in sorted(folders):
             f.write(path + "\n")
 
 
 def watch(bucket_path, phone, carrier, interval, state_file):
-    """Poll bucket and send alerts for new files."""
+    """Poll bucket and send alerts for new folders."""
     gmail_email, gmail_password = load_gmail_creds()
     seen = load_state(state_file)
     
@@ -112,25 +121,33 @@ def watch(bucket_path, phone, carrier, interval, state_file):
     # Initial scan - don't alert on startup
     if not seen:
         print("Initial scan...")
-        seen = list_bucket(bucket_path)
+        seen = list_folders(bucket_path)
         save_state(state_file, seen)
-        print(f"Found {len(seen)} existing files\n")
+        print(f"Found {len(seen)} existing folders\n")
     
     try:
         while True:
-            current = list_bucket(bucket_path)
-            new_files = current - seen
+            current = list_folders(bucket_path)
+            new_folders = current - seen
             
-            if new_files:
-                for path in sorted(new_files):
-                    filename = path.split("/")[-1]
-                    print(f"NEW: {filename}")
-                    message = f"GCS: {filename}\n{path}"
-                    try:
-                        send_sms(phone, carrier, message, gmail_email, gmail_password)
-                        print(f"  → SMS sent")
-                    except Exception as e:
-                        print(f"  → SMS failed: {e}")
+            if new_folders:
+                # Batch all new folders into one SMS
+                count = len(new_folders)
+                folder_list = "\n".join(sorted(new_folders)[:10])  # Max 10 in SMS
+                if count > 10:
+                    folder_list += f"\n... and {count - 10} more"
+                
+                message = f"GCS: {count} new folder{'s' if count > 1 else ''}\n{folder_list}"
+                
+                print(f"NEW FOLDERS: {count}")
+                for path in sorted(new_folders):
+                    print(f"  {path}")
+                
+                try:
+                    send_sms(phone, carrier, message, gmail_email, gmail_password)
+                    print(f"  → SMS sent")
+                except Exception as e:
+                    print(f"  → SMS failed: {e}")
                 
                 seen = current
                 save_state(state_file, seen)
@@ -143,7 +160,7 @@ def watch(bucket_path, phone, carrier, interval, state_file):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Poll a GCS bucket and send SMS alerts for new files",
+        description="Poll a GCS bucket and send SMS alerts for new folders",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
@@ -153,6 +170,7 @@ Examples:
 
 Supported carriers: verizon, att, tmobile, sprint
 Uses Gmail credentials from digester/.env
+Tracks folders only (not individual files)
         """
     )
     
@@ -167,7 +185,7 @@ Uses Gmail credentials from digester/.env
                        help="State file path (default: ~/.gcs-watch.state)")
     
     if len(sys.argv) == 1 or sys.argv[1] in ("-h", "--help"):
-        print("gcs-watch - Poll a GCS bucket and send SMS alerts for new files")
+        print("gcs-watch - Poll a GCS bucket and send SMS alerts for new folders")
         parser.print_help()
         sys.exit(0)
     
