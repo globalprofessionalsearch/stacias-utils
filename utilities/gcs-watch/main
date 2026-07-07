@@ -88,6 +88,9 @@ def run_gcloud(cmd, check=True, capture_output=True):
         return result
     except subprocess.CalledProcessError as e:
         if check:
+            print(f"Error running: {' '.join(cmd)}", file=sys.stderr)
+            print(f"stdout: {e.stdout}", file=sys.stderr)
+            print(f"stderr: {e.stderr}", file=sys.stderr)
             raise
         return e
 
