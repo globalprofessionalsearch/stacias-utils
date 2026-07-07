@@ -5,9 +5,10 @@ gcs-watch - Real-time GCS bucket monitoring with SMS alerts via Pub/Sub
 
 import argparse
 import hashlib
-import os
+import json
 import signal
 import smtplib
+import subprocess
 import sys
 import time
 from email.mime.text import MIMEText
@@ -75,24 +76,30 @@ def bucket_hash(bucket_path):
     return hashlib.sha256(bucket_path.encode()).hexdigest()[:8]
 
 
-def get_gcp_project():
-    """Get GCP project ID from gcloud config."""
-    import subprocess
+def run_gcloud(cmd, check=True, capture_output=True):
+    """Run a gcloud command and return result."""
     try:
         result = subprocess.run(
-            ["gcloud", "config", "get-value", "project"],
-            capture_output=True,
+            cmd,
+            capture_output=capture_output,
             text=True,
-            check=True
+            check=check
         )
-        project = result.stdout.strip()
-        if not project:
-            print("Error: no GCP project configured (gcloud config set project <project>)", file=sys.stderr)
-            sys.exit(1)
-        return project
-    except subprocess.CalledProcessError:
-        print("Error: failed to get GCP project from gcloud", file=sys.stderr)
+        return result
+    except subprocess.CalledProcessError as e:
+        if check:
+            raise
+        return e
+
+
+def get_gcp_project():
+    """Get GCP project ID from gcloud config."""
+    result = run_gcloud(["gcloud", "config", "get-value", "project"])
+    project = result.stdout.strip()
+    if not project:
+        print("Error: no GCP project configured (gcloud config set project <project>)", file=sys.stderr)
         sys.exit(1)
+    return project
 
 
 def parse_bucket_name(bucket_path):
@@ -107,8 +114,6 @@ def parse_bucket_name(bucket_path):
 
 class PubSubWatcher:
     def __init__(self, bucket_path, phone, carrier):
-        from google.cloud import pubsub_v1, storage
-        
         self.bucket_path = bucket_path
         self.bucket_name = parse_bucket_name(bucket_path)
         self.phone = phone
@@ -119,13 +124,6 @@ class PubSubWatcher:
         bhash = bucket_hash(bucket_path)
         self.topic_name = f"gcs-watch-stacias-utils-{bhash}"
         self.subscription_name = f"{self.topic_name}-sub"
-        self.topic_path = f"projects/{self.project_id}/topics/{self.topic_name}"
-        self.subscription_path = f"projects/{self.project_id}/subscriptions/{self.subscription_name}"
-        
-        # Clients
-        self.publisher = pubsub_v1.PublisherClient()
-        self.subscriber = pubsub_v1.SubscriberClient()
-        self.storage_client = storage.Client()
         
         # Gmail creds
         self.gmail_email, self.gmail_password = load_gmail_creds()
@@ -143,6 +141,70 @@ class PubSubWatcher:
         print("\n\nShutting down...")
         self.running = False
     
+    def _topic_exists(self):
+        """Check if topic exists."""
+        result = run_gcloud(
+            ["gcloud", "pubsub", "topics", "describe", self.topic_name, 
+             "--project", self.project_id],
+            check=False
+        )
+        return result.returncode == 0
+    
+    def _subscription_exists(self):
+        """Check if subscription exists."""
+        result = run_gcloud(
+            ["gcloud", "pubsub", "subscriptions", "describe", self.subscription_name,
+             "--project", self.project_id],
+            check=False
+        )
+        return result.returncode == 0
+    
+    def _create_topic(self):
+        """Create Pub/Sub topic."""
+        run_gcloud([
+            "gcloud", "pubsub", "topics", "create", self.topic_name,
+            "--project", self.project_id
+        ])
+    
+    def _create_subscription(self):
+        """Create Pub/Sub subscription."""
+        run_gcloud([
+            "gcloud", "pubsub", "subscriptions", "create", self.subscription_name,
+            "--topic", self.topic_name,
+            "--project", self.project_id,
+            "--ack-deadline", "10",
+            "--message-retention-duration", "10m",
+        ])
+    
+    def _get_notification_id(self):
+        """Get notification ID if it exists for our topic."""
+        result = run_gcloud([
+            "gcloud", "storage", "buckets", "notifications", "list",
+            f"gs://{self.bucket_name}",
+            "--format=json"
+        ])
+        
+        if not result.stdout.strip():
+            return None
+        
+        notifications = json.loads(result.stdout)
+        for notif in notifications:
+            # Topic format: //pubsub.googleapis.com/projects/PROJECT/topics/TOPIC
+            topic_path = notif.get("topic", "")
+            if topic_path.endswith(f"/topics/{self.topic_name}"):
+                return notif.get("id")
+        
+        return None
+    
+    def _create_notification(self):
+        """Create GCS bucket notification."""
+        run_gcloud([
+            "gcloud", "storage", "buckets", "notifications", "create",
+            f"gs://{self.bucket_name}",
+            "--topic", self.topic_name,
+            "--event-types", "OBJECT_FINALIZE"
+        ])
+    
     def setup(self):
         """Setup Pub/Sub topic, subscription, and bucket notification."""
         print(f"Project: {self.project_id}")
@@ -150,46 +212,30 @@ class PubSubWatcher:
         print(f"Topic: {self.topic_name}")
         
         # Check if topic exists, create if not
-        try:
-            self.publisher.get_topic(topic=self.topic_path)
+        if self._topic_exists():
             print(f"  Topic exists, reusing")
-        except Exception:
+        else:
             print(f"  Creating topic...")
-            self.publisher.create_topic(name=self.topic_path)
+            self._create_topic()
         
         # Check if subscription exists, create if not
-        try:
-            self.subscriber.get_subscription(subscription=self.subscription_path)
+        if self._subscription_exists():
             print(f"  Subscription exists, reusing")
-        except Exception:
+        else:
             print(f"  Creating subscription...")
-            self.subscriber.create_subscription(
-                name=self.subscription_path,
-                topic=self.topic_path,
-                ack_deadline_seconds=10,
-                retain_acked_messages=False,
-                message_retention_duration={"seconds": 600},  # 10 minutes
-            )
+            self._create_subscription()
         
-        # Setup bucket notification
-        bucket = self.storage_client.bucket(self.bucket_name)
-        
-        # Check if notification already exists for this topic
-        existing = list(bucket.list_notifications())
-        notification_exists = False
-        for notif in existing:
-            if notif.topic_name == self.topic_name:
-                self.notification_id = notif.notification_id
-                notification_exists = True
-                print(f"  Bucket notification exists (id: {self.notification_id})")
-                break
-        
-        if not notification_exists:
+        # Check if notification exists
+        self.notification_id = self._get_notification_id()
+        if self.notification_id:
+            print(f"  Bucket notification exists (id: {self.notification_id})")
+        else:
             print(f"  Creating bucket notification...")
-            notification = bucket.notification(topic_name=self.topic_name)
-            notification.create()
-            self.notification_id = notification.notification_id
-            print(f"  Bucket notification created (id: {self.notification_id})")
+            self._create_notification()
+            # Get the ID that was just created
+            self.notification_id = self._get_notification_id()
+            if self.notification_id:
+                print(f"  Bucket notification created (id: {self.notification_id})")
         
         # Drain any backlog
         print(f"  Draining message backlog...")
@@ -202,28 +248,48 @@ class PubSubWatcher:
     def _drain_backlog(self):
         """Pull and ack all existing messages to start fresh."""
         try:
-            response = self.subscriber.pull(
-                subscription=self.subscription_path,
-                max_messages=1000,
-                timeout=5.0,
-            )
-            if response.received_messages:
-                ack_ids = [msg.ack_id for msg in response.received_messages]
-                self.subscriber.acknowledge(
-                    subscription=self.subscription_path,
-                    ack_ids=ack_ids,
-                )
-                print(f"    Drained {len(response.received_messages)} old messages")
+            result = run_gcloud([
+                "gcloud", "pubsub", "subscriptions", "pull", self.subscription_name,
+                "--project", self.project_id,
+                "--limit", "1000",
+                "--auto-ack",
+                "--format=json"
+            ], check=False)
+            
+            if result.returncode == 0 and result.stdout.strip():
+                messages = json.loads(result.stdout)
+                if messages:
+                    print(f"    Drained {len(messages)} old messages")
         except Exception:
-            pass  # No messages or timeout is fine
+            pass  # No messages or error is fine
+    
+    def _pull_messages(self):
+        """Pull messages from subscription."""
+        result = run_gcloud([
+            "gcloud", "pubsub", "subscriptions", "pull", self.subscription_name,
+            "--project", self.project_id,
+            "--limit", "100",
+            "--auto-ack",
+            "--format=json"
+        ], check=False)
+        
+        if result.returncode != 0 or not result.stdout.strip():
+            return []
+        
+        try:
+            return json.loads(result.stdout)
+        except json.JSONDecodeError:
+            return []
     
     def _extract_folders(self, messages):
         """Extract unique folder paths from Pub/Sub messages."""
         folders = set()
         for msg in messages:
-            # GCS notification format includes object name in attributes
-            attrs = msg.message.attributes
+            # GCS notification format
+            message_data = msg.get("message", {})
+            attrs = message_data.get("attributes", {})
             object_name = attrs.get("objectId", "")
+            
             if not object_name:
                 continue
             
@@ -261,22 +327,10 @@ class PubSubWatcher:
         
         while self.running:
             try:
-                # Pull messages
-                response = self.subscriber.pull(
-                    subscription=self.subscription_path,
-                    max_messages=100,
-                    timeout=POLL_INTERVAL,
-                )
+                messages = self._pull_messages()
                 
-                if response.received_messages:
-                    folders = self._extract_folders(response.received_messages)
-                    
-                    # Immediately ack all messages
-                    ack_ids = [msg.ack_id for msg in response.received_messages]
-                    self.subscriber.acknowledge(
-                        subscription=self.subscription_path,
-                        ack_ids=ack_ids,
-                    )
+                if messages:
+                    folders = self._extract_folders(messages)
                     
                     if folders:
                         pending_folders.update(folders)
@@ -294,6 +348,9 @@ class PubSubWatcher:
                     pending_folders.clear()
                     cooldown_until = 0
                 
+                # Sleep between polls
+                time.sleep(POLL_INTERVAL)
+                
             except Exception as e:
                 if self.running:
                     print(f"Error: {e}")
@@ -310,23 +367,33 @@ class PubSubWatcher:
         # Remove bucket notification
         if self.notification_id:
             try:
-                bucket = self.storage_client.bucket(self.bucket_name)
-                notification = bucket.notification(notification_id=self.notification_id)
-                notification.delete()
+                run_gcloud([
+                    "gcloud", "storage", "buckets", "notifications", "delete",
+                    self.notification_id,
+                    f"gs://{self.bucket_name}"
+                ])
                 print(f"  Removed bucket notification")
             except Exception as e:
                 print(f"  Warning: failed to remove bucket notification: {e}")
         
         # Delete subscription
         try:
-            self.subscriber.delete_subscription(subscription=self.subscription_path)
+            run_gcloud([
+                "gcloud", "pubsub", "subscriptions", "delete", self.subscription_name,
+                "--project", self.project_id,
+                "--quiet"
+            ])
             print(f"  Deleted subscription")
         except Exception as e:
             print(f"  Warning: failed to delete subscription: {e}")
         
         # Delete topic
         try:
-            self.publisher.delete_topic(topic=self.topic_path)
+            run_gcloud([
+                "gcloud", "pubsub", "topics", "delete", self.topic_name,
+                "--project", self.project_id,
+                "--quiet"
+            ])
             print(f"  Deleted topic")
         except Exception as e:
             print(f"  Warning: failed to delete topic: {e}")
@@ -352,6 +419,8 @@ Uses:
 
 Alerts on new folders appearing anywhere in the bucket.
 Batches notifications within 60s windows to avoid spam.
+
+No pip dependencies - uses gcloud CLI only.
         """
     )
     
@@ -370,14 +439,6 @@ Batches notifications within 60s windows to avoid spam.
     # Validate phone number
     if not args.phone.isdigit():
         print("Error: phone must be digits only", file=sys.stderr)
-        sys.exit(1)
-    
-    # Check for required dependencies (before creating watcher)
-    try:
-        from google.cloud import pubsub_v1, storage
-    except ImportError:
-        print("Error: google-cloud-pubsub and google-cloud-storage required", file=sys.stderr)
-        print("Install: pip install google-cloud-pubsub google-cloud-storage", file=sys.stderr)
         sys.exit(1)
     
     # Create watcher and run

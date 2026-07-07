@@ -4,9 +4,7 @@ Real-time GCS bucket monitoring with SMS alerts via Pub/Sub.
 
 ## Dependencies
 
-```bash
-pip install google-cloud-pubsub google-cloud-storage
-```
+None - uses `gcloud` CLI only (no pip install required).
 
 ## Setup
 
