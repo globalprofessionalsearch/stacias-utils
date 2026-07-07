@@ -1,0 +1,497 @@
+#!/usr/bin/env python3
+"""
+gcs-watch - Real-time GCS bucket monitoring with SMS alerts via Pub/Sub
+"""
+
+import argparse
+import hashlib
+import json
+import signal
+import smtplib
+import subprocess
+import sys
+import time
+from email.mime.text import MIMEText
+from pathlib import Path
+
+
+CARRIERS = {
+    "verizon": "vtext.com",
+    "att": "txt.att.net",
+    "tmobile": "tmomail.net",
+    "sprint": "messaging.sprintpcs.com",
+}
+
+POLL_INTERVAL = 10  # seconds between Pub/Sub pulls
+COOLDOWN_SECONDS = 60  # batch notifications within this window
+
+
+def load_gmail_creds():
+    """Load Gmail credentials from digester's .env file."""
+    env_path = Path(__file__).parent.parent.parent / "utilities" / "digester" / ".env"
+    if not env_path.exists():
+        print(f"Error: {env_path} not found", file=sys.stderr)
+        sys.exit(1)
+    
+    email = None
+    password = None
+    with open(env_path) as f:
+        for line in f:
+            line = line.strip()
+            if line.startswith("EMAIL="):
+                email = line.split("=", 1)[1]
+            elif line.startswith("APP_PASSWORD="):
+                password = line.split("=", 1)[1]
+    
+    if not email or not password:
+        print("Error: EMAIL or APP_PASSWORD not found in digester .env", file=sys.stderr)
+        sys.exit(1)
+    
+    return email, password
+
+
+def send_sms(phone, carrier, message, gmail_email, gmail_password):
+    """Send SMS via email-to-SMS gateway."""
+    if carrier not in CARRIERS:
+        print(f"Error: unknown carrier '{carrier}'", file=sys.stderr)
+        sys.exit(1)
+    
+    to_addr = f"{phone}@{CARRIERS[carrier]}"
+    msg = MIMEText(message)
+    msg["From"] = gmail_email
+    msg["To"] = to_addr
+    msg["Subject"] = ""  # SMS gateways ignore subject
+    
+    try:
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as smtp:
+            smtp.login(gmail_email, gmail_password)
+            smtp.send_message(msg)
+    except Exception as e:
+        print(f"Error sending SMS: {e}", file=sys.stderr)
+        raise
+
+
+def bucket_hash(bucket_path):
+    """Generate short hash from bucket path."""
+    return hashlib.sha256(bucket_path.encode()).hexdigest()[:8]
+
+
+def run_gcloud(cmd, check=True, capture_output=True):
+    """Run a gcloud command and return result."""
+    try:
+        result = subprocess.run(
+            cmd,
+            capture_output=capture_output,
+            text=True,
+            check=check
+        )
+        return result
+    except subprocess.CalledProcessError as e:
+        if check:
+            print(f"Error running: {' '.join(cmd)}", file=sys.stderr)
+            print(f"stdout: {e.stdout}", file=sys.stderr)
+            print(f"stderr: {e.stderr}", file=sys.stderr)
+            raise
+        return e
+
+
+def get_gcp_project():
+    """Get GCP project ID from gcloud config."""
+    result = run_gcloud(["gcloud", "config", "get-value", "project"])
+    project = result.stdout.strip()
+    if not project:
+        print("Error: no GCP project configured (gcloud config set project <project>)", file=sys.stderr)
+        sys.exit(1)
+    return project
+
+
+def parse_bucket_name(bucket_path):
+    """Extract bucket name from gs:// path."""
+    if not bucket_path.startswith("gs://"):
+        print("Error: bucket must start with gs://", file=sys.stderr)
+        sys.exit(1)
+    # Remove gs:// and any path components
+    bucket = bucket_path[5:].split("/")[0]
+    return bucket
+
+
+class PubSubWatcher:
+    def __init__(self, bucket_path, phone, carrier):
+        self.bucket_path = bucket_path
+        self.bucket_name = parse_bucket_name(bucket_path)
+        self.phone = phone
+        self.carrier = carrier
+        self.project_id = get_gcp_project()
+        
+        # Resource names
+        bhash = bucket_hash(bucket_path)
+        self.topic_name = f"gcs-watch-stacias-utils-{bhash}"
+        self.subscription_name = f"{self.topic_name}-sub"
+        
+        # Gmail creds
+        self.gmail_email, self.gmail_password = load_gmail_creds()
+        
+        # State
+        self.running = True
+        self.notification_id = None
+        
+        # Setup signal handlers
+        signal.signal(signal.SIGINT, self._signal_handler)
+        signal.signal(signal.SIGTERM, self._signal_handler)
+    
+    def _signal_handler(self, signum, frame):
+        """Handle Ctrl-C gracefully."""
+        print("\n\nShutting down...")
+        self.running = False
+    
+    def _topic_exists(self):
+        """Check if topic exists."""
+        result = run_gcloud(
+            ["gcloud", "pubsub", "topics", "describe", self.topic_name, 
+             "--project", self.project_id],
+            check=False
+        )
+        return result.returncode == 0
+    
+    def _subscription_exists(self):
+        """Check if subscription exists."""
+        result = run_gcloud(
+            ["gcloud", "pubsub", "subscriptions", "describe", self.subscription_name,
+             "--project", self.project_id],
+            check=False
+        )
+        return result.returncode == 0
+    
+    def _create_topic(self):
+        """Create Pub/Sub topic."""
+        run_gcloud([
+            "gcloud", "pubsub", "topics", "create", self.topic_name,
+            "--project", self.project_id
+        ])
+        
+        # Grant GCS service account permission to publish to the topic
+        self._grant_gcs_publish_permission()
+    
+    def _grant_gcs_publish_permission(self):
+        """Grant GCS service account permission to publish to Pub/Sub topic."""
+        # Get GCS service account for this project
+        result = run_gcloud([
+            "gcloud", "storage", "service-agent",
+            "--project", self.project_id
+        ])
+        service_account = result.stdout.strip()
+        
+        if not service_account:
+            print(f"  Warning: Could not determine GCS service account", file=sys.stderr)
+            return
+        
+        # Grant pubsub.publisher role
+        run_gcloud([
+            "gcloud", "pubsub", "topics", "add-iam-policy-binding", self.topic_name,
+            "--member", f"serviceAccount:{service_account}",
+            "--role", "roles/pubsub.publisher",
+            "--project", self.project_id
+        ], capture_output=True)  # Suppress verbose output
+    
+    def _create_subscription(self):
+        """Create Pub/Sub subscription."""
+        run_gcloud([
+            "gcloud", "pubsub", "subscriptions", "create", self.subscription_name,
+            "--topic", self.topic_name,
+            "--project", self.project_id,
+            "--ack-deadline", "10",
+            "--message-retention-duration", "10m",
+        ])
+    
+    def _get_notification_id(self):
+        """Get notification ID if it exists for our topic."""
+        result = run_gcloud([
+            "gcloud", "storage", "buckets", "notifications", "list",
+            f"gs://{self.bucket_name}",
+            "--format=json"
+        ])
+        
+        if not result.stdout.strip():
+            return None
+        
+        notifications = json.loads(result.stdout)
+        for notif in notifications:
+            # Topic format: //pubsub.googleapis.com/projects/PROJECT/topics/TOPIC
+            topic_path = notif.get("topic", "")
+            if topic_path.endswith(f"/topics/{self.topic_name}"):
+                return notif.get("id")
+        
+        return None
+    
+    def _create_notification(self):
+        """Create GCS bucket notification."""
+        # Retry up to 3 times in case of transient failures
+        for attempt in range(3):
+            try:
+                run_gcloud([
+                    "gcloud", "storage", "buckets", "notifications", "create",
+                    f"gs://{self.bucket_name}",
+                    "--topic", self.topic_name,
+                    "--event-types", "OBJECT_FINALIZE",
+                    "--project", self.project_id
+                ])
+                return
+            except subprocess.CalledProcessError as e:
+                if attempt < 2:
+                    print(f"  Notification creation failed, retrying in 2s...", file=sys.stderr)
+                    time.sleep(2)
+                else:
+                    raise
+    
+    def setup(self):
+        """Setup Pub/Sub topic, subscription, and bucket notification."""
+        print(f"Project: {self.project_id}")
+        print(f"Bucket: {self.bucket_name}")
+        print(f"Topic: {self.topic_name}")
+        
+        # Check if topic exists, create if not
+        if self._topic_exists():
+            print(f"  Topic exists, reusing")
+            # Ensure GCS service account has permissions even on reuse
+            self._grant_gcs_publish_permission()
+        else:
+            print(f"  Creating topic...")
+            self._create_topic()
+            # Brief delay to let permissions propagate
+            time.sleep(1)
+        
+        # Check if subscription exists, create if not
+        if self._subscription_exists():
+            print(f"  Subscription exists, reusing")
+        else:
+            print(f"  Creating subscription...")
+            self._create_subscription()
+        
+        # Check if notification exists
+        self.notification_id = self._get_notification_id()
+        if self.notification_id:
+            print(f"  Bucket notification exists (id: {self.notification_id})")
+        else:
+            print(f"  Creating bucket notification...")
+            self._create_notification()
+            # Get the ID that was just created
+            self.notification_id = self._get_notification_id()
+            if self.notification_id:
+                print(f"  Bucket notification created (id: {self.notification_id})")
+        
+        # Drain any backlog
+        print(f"  Draining message backlog...")
+        self._drain_backlog()
+        
+        print(f"\nWatching {self.bucket_path}")
+        print(f"Alerts to: {self.phone}@{CARRIERS[self.carrier]}")
+        print(f"Press Ctrl-C to stop\n")
+    
+    def _drain_backlog(self):
+        """Pull and ack all existing messages to start fresh."""
+        try:
+            result = run_gcloud([
+                "gcloud", "pubsub", "subscriptions", "pull", self.subscription_name,
+                "--project", self.project_id,
+                "--limit", "1000",
+                "--auto-ack",
+                "--format=json"
+            ], check=False)
+            
+            if result.returncode == 0 and result.stdout.strip():
+                messages = json.loads(result.stdout)
+                if messages:
+                    print(f"    Drained {len(messages)} old messages")
+        except Exception:
+            pass  # No messages or error is fine
+    
+    def _pull_messages(self):
+        """Pull messages from subscription."""
+        result = run_gcloud([
+            "gcloud", "pubsub", "subscriptions", "pull", self.subscription_name,
+            "--project", self.project_id,
+            "--limit", "100",
+            "--auto-ack",
+            "--format=json"
+        ], check=False)
+        
+        if result.returncode != 0 or not result.stdout.strip():
+            return []
+        
+        try:
+            return json.loads(result.stdout)
+        except json.JSONDecodeError:
+            return []
+    
+    def _extract_folders(self, messages):
+        """Extract unique folder paths from Pub/Sub messages."""
+        folders = set()
+        for msg in messages:
+            # GCS notification format
+            message_data = msg.get("message", {})
+            attrs = message_data.get("attributes", {})
+            object_name = attrs.get("objectId", "")
+            
+            if not object_name:
+                continue
+            
+            # Extract folder path (everything except the filename)
+            if "/" in object_name:
+                folder_path = "/".join(object_name.split("/")[:-1]) + "/"
+                folder_url = f"gs://{self.bucket_name}/{folder_path}"
+                folders.add(folder_url)
+        
+        return folders
+    
+    def _send_alert(self, folders):
+        """Send SMS alert for new folders."""
+        count = len(folders)
+        folder_list = "\n".join(sorted(folders)[:10])
+        if count > 10:
+            folder_list += f"\n... and {count - 10} more"
+        
+        message = f"GCS: {count} new folder{'s' if count > 1 else ''}\n{folder_list}"
+        
+        print(f"NEW FOLDERS: {count}")
+        for path in sorted(folders):
+            print(f"  {path}")
+        
+        try:
+            send_sms(self.phone, self.carrier, message, self.gmail_email, self.gmail_password)
+            print(f"  → SMS sent")
+        except Exception as e:
+            print(f"  → SMS failed: {e}")
+    
+    def watch(self):
+        """Main watch loop with cooldown batching."""
+        cooldown_until = 0
+        pending_folders = set()
+        
+        while self.running:
+            try:
+                messages = self._pull_messages()
+                
+                if messages:
+                    folders = self._extract_folders(messages)
+                    
+                    if folders:
+                        pending_folders.update(folders)
+                        
+                        # Start cooldown if not already in one
+                        now = time.time()
+                        if now >= cooldown_until:
+                            cooldown_until = now + COOLDOWN_SECONDS
+                            print(f"  Batching for {COOLDOWN_SECONDS}s...")
+                
+                # Check if cooldown expired and we have pending folders
+                now = time.time()
+                if pending_folders and now >= cooldown_until:
+                    self._send_alert(pending_folders)
+                    pending_folders.clear()
+                    cooldown_until = 0
+                
+                # Sleep between polls
+                time.sleep(POLL_INTERVAL)
+                
+            except Exception as e:
+                if self.running:
+                    print(f"Error: {e}")
+                    time.sleep(5)
+        
+        # Send any remaining pending folders before exit
+        if pending_folders:
+            self._send_alert(pending_folders)
+    
+    def cleanup(self):
+        """Remove bucket notification, subscription, and topic."""
+        print("\nCleaning up...")
+        
+        # Remove bucket notification
+        if self.notification_id:
+            try:
+                run_gcloud([
+                    "gcloud", "storage", "buckets", "notifications", "delete",
+                    self.notification_id,
+                    f"gs://{self.bucket_name}"
+                ])
+                print(f"  Removed bucket notification")
+            except Exception as e:
+                print(f"  Warning: failed to remove bucket notification: {e}")
+        
+        # Delete subscription
+        try:
+            run_gcloud([
+                "gcloud", "pubsub", "subscriptions", "delete", self.subscription_name,
+                "--project", self.project_id,
+                "--quiet"
+            ])
+            print(f"  Deleted subscription")
+        except Exception as e:
+            print(f"  Warning: failed to delete subscription: {e}")
+        
+        # Delete topic
+        try:
+            run_gcloud([
+                "gcloud", "pubsub", "topics", "delete", self.topic_name,
+                "--project", self.project_id,
+                "--quiet"
+            ])
+            print(f"  Deleted topic")
+        except Exception as e:
+            print(f"  Warning: failed to delete topic: {e}")
+        
+        print("Done")
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Real-time GCS bucket monitoring with SMS alerts",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  gcs-watch gs://my-bucket 2539510932 verizon
+  gcs-watch gs://my-bucket/path 5551234567 att
+
+Supported carriers: verizon, att, tmobile, sprint
+
+Uses:
+  - Gmail credentials from digester/.env
+  - GCP project from gcloud config
+  - Pub/Sub for real-time notifications (auto-cleanup on exit)
+
+Alerts on new folders appearing anywhere in the bucket.
+Batches notifications within 60s windows to avoid spam.
+
+No pip dependencies - uses gcloud CLI only.
+        """
+    )
+    
+    parser.add_argument("bucket", help="GCS bucket path (gs://...)")
+    parser.add_argument("phone", help="Phone number (digits only)")
+    parser.add_argument("carrier", choices=list(CARRIERS.keys()), 
+                       help="Carrier for SMS gateway")
+    
+    if len(sys.argv) == 1 or sys.argv[1] in ("-h", "--help"):
+        print("gcs-watch - Real-time GCS bucket monitoring with SMS alerts via Pub/Sub")
+        parser.print_help()
+        sys.exit(0)
+    
+    args = parser.parse_args()
+    
+    # Validate phone number
+    if not args.phone.isdigit():
+        print("Error: phone must be digits only", file=sys.stderr)
+        sys.exit(1)
+    
+    # Create watcher and run
+    watcher = PubSubWatcher(args.bucket, args.phone, args.carrier)
+    
+    try:
+        watcher.setup()
+        watcher.watch()
+    finally:
+        watcher.cleanup()
+
+
+if __name__ == "__main__":
+    main()
