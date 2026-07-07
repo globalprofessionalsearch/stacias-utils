@@ -201,12 +201,23 @@ class PubSubWatcher:
     
     def _create_notification(self):
         """Create GCS bucket notification."""
-        run_gcloud([
-            "gcloud", "storage", "buckets", "notifications", "create",
-            f"gs://{self.bucket_name}",
-            "--topic", self.topic_name,
-            "--event-types", "OBJECT_FINALIZE"
-        ])
+        # Retry up to 3 times in case of transient failures
+        for attempt in range(3):
+            try:
+                run_gcloud([
+                    "gcloud", "storage", "buckets", "notifications", "create",
+                    f"gs://{self.bucket_name}",
+                    "--topic", self.topic_name,
+                    "--event-types", "OBJECT_FINALIZE",
+                    "--project", self.project_id
+                ])
+                return
+            except subprocess.CalledProcessError as e:
+                if attempt < 2:
+                    print(f"  Notification creation failed, retrying in 2s...", file=sys.stderr)
+                    time.sleep(2)
+                else:
+                    raise
     
     def setup(self):
         """Setup Pub/Sub topic, subscription, and bucket notification."""
@@ -220,6 +231,8 @@ class PubSubWatcher:
         else:
             print(f"  Creating topic...")
             self._create_topic()
+            # Brief delay to let topic propagate
+            time.sleep(1)
         
         # Check if subscription exists, create if not
         if self._subscription_exists():
