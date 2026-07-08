@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # ============================================================
-# new-project.py — iTerm2 project workspace provisioner
+# workspace.py — iTerm2 project workspace provisioner
 # ============================================================
 
 import iterm2
@@ -16,9 +16,9 @@ import threading
 import time
 
 def usage():
-    print("Usage: new-project <project-name>")
+    print("Usage: workspace <project-name>")
     print("  Opens iTerm2 workspace centered on current directory")
-    print("  Example: new-project my-api")
+    print("  Example: workspace my-api")
     sys.exit(1)
 
 # ── Deterministic random ──────────────────────────────────────

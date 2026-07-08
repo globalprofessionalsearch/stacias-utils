@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ============================================================
-# new-project (shell wrapper)
+# workspace (shell wrapper)
 #
 # Finds iTerm2's bundled Python and runs the provisioner.
 # ============================================================
@@ -10,13 +10,13 @@ set -euo pipefail
 case "${1:-}" in
   -h|--help)
     cat <<'EOF'
-new-project - open an iTerm2 workspace centered on the current directory
+workspace - open an iTerm2 workspace centered on the current directory
 
-Usage: new-project [project-name]
+Usage: workspace [project-name]
 
   project-name  Name for the workspace. If omitted, you'll be prompted.
 
-  Example: new-project my-api
+  Example: workspace my-api
 EOF
     exit 0
     ;;
@@ -73,10 +73,10 @@ fi
 
 # Find the provisioner script (same directory as this wrapper)
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROVISIONER="$SCRIPT_DIR/new-project.py"
+PROVISIONER="$SCRIPT_DIR/workspace.py"
 
 if [[ ! -f "$PROVISIONER" ]]; then
-    echo "Error: new-project.py not found in $SCRIPT_DIR"
+    echo "Error: workspace.py not found in $SCRIPT_DIR"
     exit 1
 fi
 
