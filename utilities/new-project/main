@@ -8,17 +8,58 @@
 set -euo pipefail
 
 case "${1:-}" in
-  -h|--help|"")
+  -h|--help)
     cat <<'EOF'
 new-project - open an iTerm2 workspace centered on the current directory
 
-Usage: new-project <project-name>
+Usage: new-project [project-name]
+
+  project-name  Name for the workspace. If omitted, you'll be prompted.
 
   Example: new-project my-api
 EOF
     exit 0
     ;;
 esac
+
+# If no project name supplied, prompt interactively
+if [[ -z "${1:-}" ]]; then
+  current_dir="$(basename "$(pwd)")"
+  while true; do
+    echo "1) Use current directory name '${current_dir}'"
+    echo "2) Enter custom name"
+    echo "3) Quit"
+    echo
+    read -rp "Choice: " choice
+    case "$choice" in
+      1)
+        PROJECT_NAME="$current_dir"
+        break
+        ;;
+      2)
+        while true; do
+          read -rp "Enter project name: " custom_name
+          if [[ -n "$custom_name" ]]; then
+            PROJECT_NAME="$custom_name"
+            break 2
+          fi
+          echo "Project name cannot be empty. Try again or press Ctrl+C to cancel."
+          echo
+        done
+        ;;
+      3)
+        echo "Cancelled."
+        exit 0
+        ;;
+      *)
+        echo "Invalid choice. Please enter 1, 2, or 3."
+        echo
+        ;;
+    esac
+  done
+else
+  PROJECT_NAME="$1"
+fi
 
 # Find iTerm2's bundled Python runtime (note: path has a space)
 ITERM2_BASE="$HOME/Library/Application Support/iTerm2/iterm2env/versions"
@@ -40,4 +81,4 @@ if [[ ! -f "$PROVISIONER" ]]; then
 fi
 
 # Pass project name and current directory to provisioner
-exec "$ITERM2_PYTHON" "$PROVISIONER" "$1" "$(pwd)"
+exec "$ITERM2_PYTHON" "$PROVISIONER" "$PROJECT_NAME" "$(pwd)"
