@@ -1,11 +1,11 @@
 ---
 name: stacia-utils-contributing
-description: How to add or modify a utility, skill, or pi-subagents agent in Stacia's stacias-utils repo so it satisfies the enforced contracts. Use this whenever creating or editing a utility, skill, or agent, or when `summon lint` fails.
+description: How to add or modify a utility or agent skill in Stacia's stacias-utils repo so it satisfies the enforced contracts. Use this whenever creating or editing a utility or skill (including a skill's workflow read-only binding), or when `summon lint` fails.
 ---
 
 # Contributing to stacias-utils
 
-Stacia's `stacias-utils` repo holds three kinds of thing, each in its own
+Stacia's `stacias-utils` repo holds two kinds of thing, each in its own
 top-level directory, governed by enforced contracts. `summon lint` (run in
 CI and the pre-commit hook) rejects anything that breaks them. There is no
 metadata file to maintain — the help text and frontmatter are the contracts.
@@ -13,8 +13,10 @@ metadata file to maintain — the help text and frontmatter are the contracts.
 ```
 utilities/<name>/main         executable CLI tool
 skills/<name>/SKILL.md         harness-neutral agent skill
-agents/**/<stacia-name>.md    pi-subagents agent definition (harness-specific)
 ```
+
+A skill may additionally ship a workflow-tool `agentType` binding in its own
+dir (see below) — that is part of the skill, not a separate top-level kind.
 
 ## The utility contract
 
@@ -89,49 +91,26 @@ git add skills/stacia-my-skill
 git commit -m "feat: add stacia-my-skill skill"
 ```
 
-## The agent contract
+### Skill-owned workflow `agentType` bindings
 
-An agent is a [nicobailon `pi-subagents`](https://github.com/nicobailon/pi-subagents)
-agent definition: a single Markdown file with YAML frontmatter and a
-system-prompt body. Agents live anywhere under `agents/` — group them in
-subdirectories freely, since discovery is recursive:
+A skill that drives the pi-dynamic-workflows `workflow` tool may ship an
+`agentType` **binding**: a frontmatter-only Markdown file inside its own skill
+dir that binds a subagent's tool allow-list (and optionally model/prompt). The
+`workflow` tool resolves `agentType` names from `~/.pi/agents/`, so `summon
+setup` symlinks the binding there (user scope, so it applies in any repo).
 
-```
-agents/<group>/stacia-my-agent.md   # e.g. agents/code-review/stacia-review-tests.md
-```
-
-Each `*.md` under `agents/` (excluding `*.chain.md`) MUST:
-
-1. Open with a YAML frontmatter block (`---`).
-2. Set `name:` to a `kebab-case`, **`stacia-`-prefixed** value that **equals the
-   filename stem** (`stacia-review-tests` ⇄ `stacia-review-tests.md`).
-3. Set a non-empty `description:` (what `summon list` shows).
-4. Use a name unique across the whole `agents/` tree.
-
-The `stacia-` prefix and uniqueness stop these from shadowing other agents in
-the shared pi-subagents agent namespace. Everything else in the frontmatter is
-ordinary pi-subagents config (`tools`, `model`, `systemPromptMode`,
-`defaultContext`, …); the body is the agent's system prompt. Unlike skills,
-agents are **harness-specific by nature** (they target pi-subagents), so the
-harness-neutrality guideline does not apply.
-
-Discovery is **run-once**: `summon setup` prints a shell-rc line
-(`export PI_SUBAGENT_EXTRA_AGENT_DIRS="<repo>/agents"`) that pi-subagents scans
-recursively. Add an agent and it is discovered with no re-run, no symlink, no
-copy. Edits are live in place.
-
-```bash
-mkdir -p agents/my-group
-$EDITOR agents/my-group/stacia-my-agent.md   # name == stem, stacia-prefixed
-summon lint          # must pass
-git add agents/my-group
-git commit -m "feat: add stacia-my-agent agent"
-```
+The code-review skill ships one such binding,
+`skills/stacia-code-review/stacia-review-readonly.md`, that grants only read/search
+tools — this is what makes its review fan-out tool-level read-only. `summon lint`
+enforces that binding: it must open with frontmatter, carry a `stacia-`-prefixed
+`name:`, and declare a `tools:` field containing only non-mutating tools
+(`read, grep, find, ls, ffgrep, fffind`). `summon setup` installs it; there is no
+separate top-level directory — the binding lives with the skill it serves.
 
 ## Reserved names
 
-A utility, skill, or agent may not be named: `list`, `lint`, `commit-lint`,
-`setup`, `help`, or `summon` (these are dispatcher builtins).
+A utility or skill may not be named: `list`, `lint`, `commit-lint`, `setup`,
+`help`, or `summon` (these are dispatcher builtins).
 
 ## Conventions
 

@@ -1,24 +1,21 @@
 #!/usr/bin/env bash
 # summon - discover and run Stacia's personal utilities and agent skills
 #
-# The repo holds three kinds of thing, each in its own top-level directory:
+# The repo holds two kinds of thing, each in its own top-level directory:
 #
 #   utilities/<name>/main       an executable whose `--help` prints, on line 1,
 #                               a man-page-style synopsis: "<name> - <desc>"
 #   skills/<name>/SKILL.md       an agent skill, namespaced with the `stacia-`
 #                               prefix; its frontmatter `name`/`description`
 #                               are the contract.
-#   agents/**/<stacia-name>.md  a nicobailon pi-subagents agent definition; its
-#                               frontmatter `name` (== filename stem, `stacia-`
-#                               prefixed) and `description` are the contract.
 #
-# All three are self-describing: `summon list` harvests utility synopses from
-# `main --help` and skill/agent synopses from frontmatter, so there is nothing
-# to regenerate. `summon lint` enforces all three contracts (skills and agents
-# must be `stacia-`-prefixed). Harness-neutral skill content is a best practice
-# (not linted); agents are harness-specific (pi-subagents) by nature.
-# Agents are exposed to pi-subagents via PI_SUBAGENT_EXTRA_AGENT_DIRS (see
-# `summon setup`), scanned recursively, so adding one needs no re-run.
+# Both are self-describing: `summon list` harvests utility synopses from
+# `main --help` and skill synopses from frontmatter, so there is nothing to
+# regenerate. `summon lint` enforces both contracts (skills must be
+# `stacia-`-prefixed). Harness-neutral skill content is a best practice (not
+# linted). A skill may also ship a workflow-tool `agentType` binding in its own
+# dir (e.g. the code-review read-only binding); `summon setup` installs it into
+# ~/.pi/agents/ and `summon lint` enforces it is read-only.
 # Everything else at the repo root is infrastructure.
 #
 # Sugar: a leading run of filler words (a an the this that these those up me my
@@ -40,15 +37,14 @@ SELF_DIR="$(cd -P "$(dirname "$_self")" && pwd)"   # <repo>/summon
 REPO="$(dirname "$SELF_DIR")"
 UTIL_DIR="$REPO/utilities"   # executable utilities:    <name>/main
 SKILL_DIR="$REPO/skills"     # agent skills:            <name>/SKILL.md
-AGENT_DIR="$REPO/agents"     # pi-subagents agents:     **/<stacia-name>.md
 
 # Leading filler/incantation words stripped before dispatch (see main()).
 FILLER="a an the this that these those up me my some"
 # Names that can never be a utility or skill: builtins, filler words, dispatcher.
 RESERVED="list lint commit-lint setup help summon $FILLER"
 
-# Every skill and agent must be namespaced with this prefix so it can't shadow
-# (or be shadowed by) unrelated definitions in the shared harness directories.
+# Every skill must be namespaced with this prefix so it can't shadow (or be
+# shadowed by) unrelated definitions in the shared harness directories.
 SKILL_PREFIX="stacia-"
 # Umbrella symlink name used for pi's run-once install (pi recurses into it).
 PI_SKILLS_LINK="stacia-utils"
@@ -103,20 +99,16 @@ skill_field() {
   frontmatter_field "$SKILL_DIR/$1/SKILL.md" "$2"
 }
 
-# Print the paths of all agent definition files (*.md, excluding *.chain.md)
-# anywhere under agents/, sorted. pi-subagents discovers them recursively.
-agent_files() {
-  [[ -d "$AGENT_DIR" ]] || return 0
-  find "$AGENT_DIR" -type f -name '*.md' ! -name '*.chain.md' ! -name 'README.md' 2>/dev/null \
-    | LC_ALL=C sort
-}
-
-# The read-only tool allow-list every reviewer agent (stacia-review-*) must
-# stay within. The code-review fan-out's isolation guarantee rests on this, so
-# it is enforced by lint, not just asserted in prose. 'structured_output' is the
-# non-mutating result-contract tool pi-subagents injects for outputSchema; it is
-# allowed (and required for the schema to work) but is not a mutating tool.
-REVIEWER_TOOLS="read grep find ls structured_output"
+# The read-only tool allow-list the stacia-code-review workflow's agentType
+# binding must stay within. The fan-out's read-only guarantee rests on that file
+# granting no mutating tool, so it is enforced by lint, not just asserted in
+# prose. Every name here is non-mutating (read/search only); pi's real search
+# tools are ffgrep/fffind, the generic grep/find/ls are tolerated for portability.
+READONLY_TOOLS="read grep find ls ffgrep fffind"
+# The workflow read-only agentType binding this repo ships, and where `summon
+# setup` installs it so the `workflow` tool resolves it (user scope).
+REVIEW_RO_BINDING="$SKILL_DIR/stacia-code-review/stacia-review-readonly.md"
+PI_AGENTS_DIR="$HOME/.pi/agents"
 
 # ---------------------------------------------------------------------------
 # Builtins
@@ -137,7 +129,6 @@ Usage:
 
 Utilities: utilities/<name>/main (\`--help\` line 1 is "<name> - <desc>").
 Skills:    skills/<name>/SKILL.md (stacia-prefixed frontmatter contract).
-Agents:    agents/**/<stacia-name>.md (pi-subagents definitions; name == stem).
 Run \`summon list\`.
 EOF
 }
@@ -169,26 +160,6 @@ cmd_list() {
       printf '  %s - %s\n' "$name" "$desc"
     fi
   done < <(skills)
-
-  local agents_out
-  agents_out="$(agent_files)"
-  if [[ -n "$agents_out" ]]; then
-    echo
-    echo "Agents:"
-    local af stem aname adesc
-    while IFS= read -r af; do
-      [[ -n "$af" ]] || continue
-      stem="$(basename "$af" .md)"
-      aname="$(frontmatter_field "$af" name || true)"
-      adesc="$(frontmatter_field "$af" description || true)"
-      if [[ -z "$adesc" ]]; then
-        printf '  %-26s (no description; run: summon lint)\n' "${aname:-$stem}"
-        missing=1
-      else
-        printf '  %s - %s\n' "${aname:-$stem}" "$adesc"
-      fi
-    done <<< "$agents_out"
-  fi
 
   return $missing
 }
@@ -278,61 +249,36 @@ cmd_lint() {
     fi
   done
 
-  # Every *.md under agents/ (recursively, excluding *.chain.md) must be a
-  # conforming, stacia-prefixed agent definition with a unique name == stem.
-  local af stem aname adesc seen_agents=" "
-  while IFS= read -r af; do
-    [[ -n "$af" ]] || continue
-    stem="$(basename "$af" .md)"
-
-    if [[ "$(head -n1 "$af")" != "---" ]]; then
-      err "LINT: agent $stem: $af must open with a YAML frontmatter block (---)"; fail=1; continue
+  # The stacia-code-review workflow's read-only agentType binding: if present, it
+  # must be a valid, stacia-prefixed definition granting only non-mutating tools.
+  # The fan-out's read-only guarantee depends on this, so enforce it here.
+  if [[ -e "$REVIEW_RO_BINDING" ]]; then
+    if [[ "$(head -n1 "$REVIEW_RO_BINDING")" != "---" ]]; then
+      err "LINT: review binding: $REVIEW_RO_BINDING must open with a YAML frontmatter block (---)"; fail=1
     fi
-    aname="$(frontmatter_field "$af" name || true)"
-    adesc="$(frontmatter_field "$af" description || true)"
-
-    if [[ -z "$aname" ]]; then
-      err "LINT: agent $stem: frontmatter 'name:' must be non-empty ($af)"; fail=1
+    local bname btools tool
+    bname="$(frontmatter_field "$REVIEW_RO_BINDING" name || true)"
+    btools="$(frontmatter_field "$REVIEW_RO_BINDING" tools || true)"
+    if [[ "$bname" != "$SKILL_PREFIX"?* ]]; then
+      err "LINT: review binding: frontmatter 'name:' must be '$SKILL_PREFIX'-prefixed (got: ${bname:-<empty>})"; fail=1
+    fi
+    # The workflow tool only honors an array (`tools: [a, b]`); a bare comma
+    # string parses as a scalar and is silently ignored (no restriction), so
+    # require the flow-array form and strip its brackets before splitting.
+    if [[ -z "$btools" ]]; then
+      err "LINT: review binding: must declare a read-only 'tools:' field (${READONLY_TOOLS// /, })"; fail=1
+    elif [[ "$btools" != \[*\] ]]; then
+      err "LINT: review binding: 'tools:' must be a YAML array (tools: [${READONLY_TOOLS// /, }]) — a comma string is ignored by the workflow tool"; fail=1
     else
-      if [[ ! "$aname" =~ $kebab ]]; then
-        err "LINT: agent $aname: name must be kebab-case ([a-z0-9] and single hyphens)"; fail=1
-      fi
-      if [[ "$aname" != "$SKILL_PREFIX"?* ]]; then
-        err "LINT: agent $aname: name must be prefixed with '$SKILL_PREFIX' ($af)"; fail=1
-      fi
-      if [[ "$aname" != "$stem" ]]; then
-        err "LINT: agent $aname: frontmatter 'name:' must equal the filename stem '$stem' ($af)"; fail=1
-      fi
-      case " $RESERVED " in *" $aname "*)
-        err "LINT: agent $aname: reserved name (clashes with a summon builtin)"; fail=1 ;;
-      esac
-      case "$seen_agents" in *" $aname "*)
-        err "LINT: agent $aname: duplicate name (must be unique across agents/)"; fail=1 ;;
-      esac
-      seen_agents="$seen_agents$aname "
-
-      # Reviewer agents power the read-only code-review fan-out; their isolation
-      # guarantee depends on a tools allow-list, so enforce it (don't just trust
-      # the prose). Other agents may declare any tools they need.
-      if [[ "$aname" == stacia-review-* ]]; then
-        local atools tool
-        atools="$(frontmatter_field "$af" tools || true)"
-        if [[ -z "$atools" ]]; then
-          err "LINT: agent $aname: reviewer must declare a read-only 'tools:' field (${REVIEWER_TOOLS// /, })"; fail=1
-        else
-          for tool in ${atools//,/ }; do
-            case " $REVIEWER_TOOLS " in
-              *" $tool "*) ;;
-              *) err "LINT: agent $aname: tool '$tool' not allowed; reviewers are read-only (${REVIEWER_TOOLS// /, } only)"; fail=1 ;;
-            esac
-          done
-        fi
-      fi
+      btools="${btools#\[}"; btools="${btools%\]}"
+      for tool in ${btools//,/ }; do
+        case " $READONLY_TOOLS " in
+          *" $tool "*) ;;
+          *) err "LINT: review binding: tool '$tool' not allowed; the binding must be read-only (${READONLY_TOOLS// /, } only)"; fail=1 ;;
+        esac
+      done
     fi
-    if [[ -z "$adesc" ]]; then
-      err "LINT: agent $stem: frontmatter 'description:' must be non-empty ($af)"; fail=1
-    fi
-  done < <(agent_files)
+  fi
 
   # The dispatcher must obey its own contract too.
   local s
@@ -340,7 +286,7 @@ cmd_lint() {
   [[ "$s" == "summon - "* ]] || { err "LINT: summon: own --help line 1 malformed"; fail=1; }
 
   if [[ $fail -eq 0 ]]; then
-    echo "lint OK ($(utils | grep -c . || true) utilities, $(skills | grep -c . || true) skills, $(agent_files | grep -c . || true) agents)"
+    echo "lint OK ($(utils | grep -c . || true) utilities, $(skills | grep -c . || true) skills)"
   fi
   return $fail
 }
@@ -368,9 +314,12 @@ EOF
 }
 
 # ---------------------------------------------------------------------------
-# One-shot setup: hooks + agent skills + PATH/agent-dir shell-rc hints. Idempotent.
-# Agents need no symlink/copy: the printed PI_SUBAGENT_EXTRA_AGENT_DIRS env line
-# exposes the whole agents/ tree to pi-subagents recursively, run-once.
+# One-shot setup: hooks + skills + the workflow read-only binding + shell-rc
+# hints. Idempotent.
+#  - Skills: a single umbrella symlink exposes skills/ to pi recursively.
+#  - Workflow binding: the code-review skill's read-only agentType
+#    (stacia-review-readonly.md) is symlinked into ~/.pi/agents/ so the
+#    pi-dynamic-workflows `workflow` tool resolves it (user scope, any repo).
 # ---------------------------------------------------------------------------
 cmd_setup() {
   git -C "$REPO" config core.hooksPath .githooks
@@ -392,8 +341,18 @@ cmd_setup() {
   ln -sfn "$SKILL_DIR" "$pi/$PI_SKILLS_LINK"
   echo "✓ pi: skills linked once ($PI_SKILLS_LINK -> skills/); new skills auto-discovered"
 
+  # --- workflow read-only binding: symlink the code-review skill's agentType
+  # definition into ~/.pi/agents/, where the pi-dynamic-workflows `workflow` tool
+  # resolves agentType names at user scope (so it applies in any repo under
+  # review). This is what makes the review fan-out tool-level read-only.
+  if [[ -e "$REVIEW_RO_BINDING" ]]; then
+    mkdir -p "$PI_AGENTS_DIR"
+    ln -sfn "$REVIEW_RO_BINDING" "$PI_AGENTS_DIR/$(basename "$REVIEW_RO_BINDING")"
+    echo "✓ workflow: read-only binding linked ($(basename "$REVIEW_RO_BINDING") -> ~/.pi/agents/)"
+  fi
+
   # --- claude: Claude Code is no longer a wired harness (the code-review skill
-  # now hard-requires the pi-only subagent tool + outputSchema). Prune any
+  # now requires the pi-only `workflow` tool from pi-dynamic-workflows). Prune any
   # repo-owned symlinks a prior `summon setup` planted into ~/.claude/skills so
   # Claude doesn't keep silently loading a now-incompatible skill. One-time.
   local claude="$HOME/.claude/skills" pruned=0
@@ -409,18 +368,13 @@ cmd_setup() {
   fi
   [[ $pruned -eq 0 ]] && echo "✓ claude: nothing to prune (no repo-owned links)"
 
-  echo "✓ agents: exposed to pi-subagents via PI_SUBAGENT_EXTRA_AGENT_DIRS (run-once; see below)"
-
   cat <<EOF
 
-Add these lines to your shell rc (once):
+Add this line to your shell rc (once):
 
   export PATH="$REPO/bin:\$PATH"
-  export PI_SUBAGENT_EXTRA_AGENT_DIRS="$AGENT_DIR"
 
-The first puts \`summon\` on PATH. The second exposes every agent under
-agents/ to pi-subagents (nicobailon), scanned recursively — run-once: new
-agents are auto-discovered with no re-run.
+That puts \`summon\` on PATH.
 
 Then: summon list
 EOF

@@ -2,10 +2,10 @@
 # summon/test - negative + positive coverage for `summon lint`.
 #
 # CI only runs `summon lint` against the repo's own (valid) tree, so a
-# regression that weakens a rule, or a malformed/duplicate agent, would keep CI
-# green. This harness builds throwaway fixture repos under a temp dir, points a
-# copy of `summon/main` at each, and asserts the linter's exit code (and, for
-# failures, the message). Run: ./summon/test  (or: bash summon/test).
+# regression that weakens a rule would keep CI green. This harness builds
+# throwaway fixture repos under a temp dir, points a copy of `summon/main` at
+# each, and asserts the linter's exit code (and, for failures, the message).
+# Run: ./summon/test  (or: bash summon/test).
 set -uo pipefail
 
 SELF_DIR="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -15,12 +15,13 @@ pass=0 fail=0
 ok()   { printf '  ok   - %s\n' "$1"; pass=$((pass+1)); }
 bad()  { printf '  FAIL - %s\n' "$1"; fail=$((fail+1)); }
 
-# Build a minimal, fully-valid fixture repo in $1 (utility + skill + agent),
-# all passing lint. Individual tests then mutate a copy to trip one rule.
+# Build a minimal, fully-valid fixture repo in $1: a utility, an ordinary skill,
+# and the code-review skill carrying a valid read-only workflow binding. All
+# pass lint. Individual tests then mutate a copy to trip one rule.
 seed_repo() {
   local root="$1"
   mkdir -p "$root/summon" "$root/utilities/good-tool" \
-           "$root/skills/stacia-good-skill" "$root/agents/code-review"
+           "$root/skills/stacia-good-skill" "$root/skills/stacia-code-review"
   cp "$MAIN" "$root/summon/main"; chmod +x "$root/summon/main"
 
   cat > "$root/utilities/good-tool/main" <<'EOF'
@@ -38,22 +39,29 @@ description: A valid fixture skill.
 body
 EOF
 
-  agent_file "$root" stacia-review-correctness "read, grep, find, ls" \
-    "Read-only correctness reviewer fixture"
+  cat > "$root/skills/stacia-code-review/SKILL.md" <<'EOF'
+---
+name: stacia-code-review
+description: A valid fixture code-review skill.
+---
+body
+EOF
+
+  # Valid read-only workflow agentType binding (YAML array of non-mutating tools).
+  write_binding "$root" stacia-review-readonly "[read, ffgrep, fffind]"
 }
 
-# agent_file <root> <stem> <tools-or-omit> <description>
-# Writes agents/code-review/<stem>.md. Pass "" tools to omit the field.
-agent_file() {
-  local root="$1" stem="$2" tools="$3" desc="$4" f="$1/agents/code-review/$2.md"
+# write_binding <root> <name-or-empty> <tools-value-or-empty>
+# Writes skills/stacia-code-review/stacia-review-readonly.md. Pass "" for name
+# or tools to omit that frontmatter line.
+write_binding() {
+  local root="$1" name="$2" tools="$3" f="$1/skills/stacia-code-review/stacia-review-readonly.md"
   {
     echo "---"
-    echo "name: $stem"
-    echo "description: $desc"
+    [[ -n "$name" ]] && echo "name: $name"
+    echo "description: Read-only binding fixture."
     [[ -n "$tools" ]] && echo "tools: $tools"
-    echo "systemPromptMode: replace"
     echo "---"
-    echo "persona body"
   } > "$f"
 }
 
@@ -89,64 +97,48 @@ new_repo() { local r; r="$(mktemp -d "$TMP/repo.XXXXXX")"; seed_repo "$r"; print
 
 echo "summon lint fixtures:"
 
-# Baseline: the seeded repo is valid.
+# Baseline: the seeded repo (incl. a valid read-only binding) is valid.
 r="$(new_repo)"; expect_pass "valid repo passes" "$r"
 
-# --- agent rules ---
+# --- utility rule (spot check the linter still fires at all) ---
 r="$(new_repo)"
-sed -i.bak '/^name: stacia-review-correctness$/d' "$r/agents/code-review/stacia-review-correctness.md"
-expect_fail "agent missing name" "$r" "'name:' must be non-empty"
+sed -i.bak 's/good-tool - a valid fixture tool/no leading synopsis/' "$r/utilities/good-tool/main"
+expect_fail "utility bad --help synopsis" "$r" "line 1 of --help must be"
+
+# --- skill rules (spot checks) ---
+r="$(new_repo)"
+sed -i.bak '/^description: A valid fixture skill\.$/d' "$r/skills/stacia-good-skill/SKILL.md"
+expect_fail "skill missing description" "$r" "'description:' must be non-empty"
 
 r="$(new_repo)"
-mv "$r/agents/code-review/stacia-review-correctness.md" "$r/agents/code-review/stacia-review-renamed.md"
-expect_fail "agent name != filename stem" "$r" "must equal the filename stem"
+mv "$r/skills/stacia-good-skill" "$r/skills/good-skill"
+sed -i.bak 's/^name: stacia-good-skill$/name: good-skill/' "$r/skills/good-skill/SKILL.md"
+expect_fail "skill missing stacia- prefix" "$r" "must be prefixed with 'stacia-'"
+
+# --- read-only workflow binding rules (the security invariant) ---
+r="$(new_repo)"
+write_binding "$r" stacia-review-readonly "read, ffgrep, fffind"   # comma string, not an array
+expect_fail "binding tools as comma string" "$r" "must be a YAML array"
 
 r="$(new_repo)"
-agent_file "$r" review-noprefix "read, grep, find, ls" "missing stacia- prefix"
-# name in frontmatter must match stem; give it a non-prefixed name == stem
-expect_fail "agent missing stacia- prefix" "$r" "must be prefixed with 'stacia-'"
+write_binding "$r" stacia-review-readonly "[read, write, bash]"    # mutating tools in the array
+expect_fail "binding with mutating tool (write)" "$r" "not allowed; the binding must be read-only"
 
 r="$(new_repo)"
-# Two distinct files declaring the same name (stem differs, so only the name
-# collision trips). agent_file keeps name == stem, so override name afterward.
-agent_file "$r" stacia-review-dupe "read, grep, find, ls" "second file, same name"
-sed -i.bak 's/^name: .*/name: stacia-review-correctness/' "$r/agents/code-review/stacia-review-dupe.md"
-rm -f "$r/agents/code-review/stacia-review-dupe.md.bak"
-expect_fail "agent duplicate name" "$r" "duplicate name"
+write_binding "$r" stacia-review-readonly ""                       # tools omitted
+expect_fail "binding missing tools field" "$r" "must declare a read-only 'tools:' field"
 
 r="$(new_repo)"
-sed -i.bak '/^description: /d' "$r/agents/code-review/stacia-review-correctness.md"
-expect_fail "agent missing description" "$r" "'description:' must be non-empty"
+write_binding "$r" review-readonly "[read, ffgrep, fffind]"        # name without stacia- prefix
+expect_fail "binding name missing stacia- prefix" "$r" "must be 'stacia-'-prefixed"
 
 r="$(new_repo)"
-# strip the leading frontmatter delimiter
-sed -i.bak '1d' "$r/agents/code-review/stacia-review-correctness.md"
-expect_fail "agent no frontmatter block" "$r" "must open with a YAML frontmatter block"
-
-# --- reviewer read-only tools rule (the security invariant) ---
-r="$(new_repo)"
-agent_file "$r" stacia-review-correctness "read, grep, write" "reviewer with mutating tool"
-expect_fail "reviewer with disallowed tool (write)" "$r" "not allowed; reviewers are read-only"
+sed -i.bak '1d' "$r/skills/stacia-code-review/stacia-review-readonly.md"   # strip frontmatter delimiter
+expect_fail "binding no frontmatter block" "$r" "must open with a YAML frontmatter block"
 
 r="$(new_repo)"
-# structured_output is the non-mutating result-contract tool; it must be allowed
-# (the code-review fan-out's outputSchema is unreachable without it).
-agent_file "$r" stacia-review-correctness "read, grep, find, ls, structured_output" "reviewer with structured_output"
-expect_pass "reviewer may declare structured_output" "$r"
-
-r="$(new_repo)"
-agent_file "$r" stacia-review-correctness "" "reviewer missing tools field"
-expect_fail "reviewer missing tools field" "$r" "must declare a read-only 'tools:' field"
-
-r="$(new_repo)"
-# a non-reviewer agent may declare any tools it likes
-agent_file "$r" stacia-build-helper "bash, write, edit" "non-reviewer agent, tools unrestricted"
-expect_pass "non-reviewer agent may use any tools" "$r"
-
-# --- README.md under agents/ is not treated as an agent ---
-r="$(new_repo)"
-echo "# Agents" > "$r/agents/code-review/README.md"
-expect_pass "agents/README.md is ignored by discovery" "$r"
+rm -f "$r/skills/stacia-code-review/stacia-review-readonly.md"     # binding is optional
+expect_pass "binding absent is allowed" "$r"
 
 echo
 printf 'summon/test: %d passed, %d failed\n' "$pass" "$fail"

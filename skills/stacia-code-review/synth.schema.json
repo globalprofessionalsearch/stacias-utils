@@ -1,29 +1,82 @@
 {
   "type": "object",
-  "required": ["repo", "summary", "findings"],
+  "required": [
+    "repo",
+    "summary",
+    "findings"
+  ],
   "additionalProperties": false,
   "properties": {
-    "repo": { "type": "string" },
-    "summary": { "type": "string" },
+    "repo": {
+      "type": "string"
+    },
+    "summary": {
+      "type": "string"
+    },
     "findings": {
       "type": "array",
       "items": {
         "type": "object",
-        "required": ["severity", "confidence", "theme", "perspectives", "location", "evidence", "finding", "rationale"],
+        "required": [
+          "severity",
+          "confidence",
+          "theme",
+          "perspectives",
+          "location",
+          "evidence",
+          "finding",
+          "rationale"
+        ],
         "additionalProperties": false,
         "properties": {
-          "severity":     { "enum": ["Blocker", "Major", "Minor", "Nit"] },
-          "confidence":   { "enum": ["High", "Medium", "Low"] },
-          "theme":        { "type": "string" },
+          "severity": {
+            "type": "string",
+            "enum": [
+              "Blocker",
+              "Major",
+              "Minor",
+              "Nit"
+            ]
+          },
+          "confidence": {
+            "type": "string",
+            "enum": [
+              "High",
+              "Medium",
+              "Low"
+            ]
+          },
+          "theme": {
+            "type": "string"
+          },
           "perspectives": {
             "type": "array",
-            "items": { "enum": ["correctness", "security", "performance", "api-contract", "tests"] }
+            "items": {
+              "type": "string",
+              "enum": [
+                "correctness",
+                "security",
+                "performance",
+                "api-contract",
+                "tests"
+              ]
+            }
           },
-          "location":     { "type": "string" },
-          "evidence":     { "type": "string" },
-          "finding":      { "type": "string" },
-          "rationale":    { "type": "string" },
-          "suggestion":   { "type": "string" }
+          "location": {
+            "type": "string"
+          },
+          "evidence": {
+            "type": "string"
+          },
+          "finding": {
+            "type": "string"
+          },
+          "rationale": {
+            "type": "string"
+          },
+          "suggestion": {
+            "type": "string"
+          }
         }
       }
     }

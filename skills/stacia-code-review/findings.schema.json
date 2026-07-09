@@ -1,27 +1,76 @@
 {
   "type": "object",
-  "required": ["perspective", "note", "findings"],
+  "required": [
+    "perspective",
+    "note",
+    "findings"
+  ],
   "additionalProperties": false,
   "properties": {
     "perspective": {
-      "enum": ["correctness", "security", "performance", "api-contract", "tests", "cross-repo"]
+      "type": "string",
+      "enum": [
+        "correctness",
+        "security",
+        "performance",
+        "api-contract",
+        "tests",
+        "cross-repo"
+      ]
     },
-    "note": { "type": "string" },
+    "note": {
+      "type": "string"
+    },
     "findings": {
       "type": "array",
       "items": {
         "type": "object",
-        "required": ["severity", "confidence", "perspective", "location", "evidence", "finding", "rationale"],
+        "required": [
+          "severity",
+          "confidence",
+          "perspective",
+          "location",
+          "evidence",
+          "finding",
+          "rationale"
+        ],
         "additionalProperties": false,
         "properties": {
-          "severity":    { "enum": ["Blocker", "Major", "Minor", "Nit"] },
-          "confidence":  { "enum": ["High", "Medium", "Low"] },
-          "perspective": { "type": "string" },
-          "location":    { "type": "string" },
-          "evidence":    { "type": "string" },
-          "finding":     { "type": "string" },
-          "rationale":   { "type": "string" },
-          "suggestion":  { "type": "string" }
+          "severity": {
+            "type": "string",
+            "enum": [
+              "Blocker",
+              "Major",
+              "Minor",
+              "Nit"
+            ]
+          },
+          "confidence": {
+            "type": "string",
+            "enum": [
+              "High",
+              "Medium",
+              "Low"
+            ]
+          },
+          "perspective": {
+            "type": "string"
+          },
+          "location": {
+            "type": "string"
+          },
+          "evidence": {
+            "type": "string"
+          },
+          "finding": {
+            "type": "string"
+          },
+          "rationale": {
+            "type": "string"
+          },
+          "suggestion": {
+            "type": "string"
+          }
         }
       }
     }
