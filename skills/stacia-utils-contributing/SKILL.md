@@ -107,13 +107,6 @@ enforces that binding: it must open with frontmatter, carry a `stacia-`-prefixed
 (`read, grep, find, ls, ffgrep, fffind`). `summon setup` installs it; there is no
 separate top-level directory — the binding lives with the skill it serves.
 
-> **Note:** this repo does not currently use
-> [nicobailon `pi-subagents`](https://github.com/nicobailon/pi-subagents). The
-> former `agents/` tree and its contract were removed when `stacia-code-review`
-> moved to the pi-dynamic-workflows `workflow` tool. If you want pi-subagents
-> agents in the future, re-introduce the `agents/` directory and its lint/setup
-> wiring at that point.
-
 ## Reserved names
 
 A utility or skill may not be named: `list`, `lint`, `commit-lint`, `setup`,

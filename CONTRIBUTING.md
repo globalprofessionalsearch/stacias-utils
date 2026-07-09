@@ -107,16 +107,10 @@ git add skills/stacia-my-skill
 git commit -m "feat: add stacia-my-skill skill"
 ```
 
-> **pi-subagents is not used here.** The former `agents/` tree (nicobailon
-> `pi-subagents` definitions) and its contract were removed when
-> `stacia-code-review` moved to the pi-dynamic-workflows `workflow` tool. To
-> use pi-subagents in the future, re-introduce the `agents/` directory and its
-> lint/setup wiring then.
-
 ## Reserved names
 
 `list`, `lint`, `commit-lint`, `setup`, `help`, `summon` — dispatcher builtins.
-No utility, skill, or agent may use them.
+No utility or skill may use them.
 
 ## What belongs here
 
