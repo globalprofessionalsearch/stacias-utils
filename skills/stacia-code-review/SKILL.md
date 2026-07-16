@@ -151,6 +151,8 @@ Do **not** rely on runtime file reads — the sandbox has no `fs`.
 - `orientation.schema.json` → `orientationSchema` (object literal)
 - `seam-map.schema.json` → `seamMapSchema` (object literal)
 - `reviewer-output.schema.json` → `reviewerSchema` (object literal)
+- `references/synthesizer.md` → `SYNTHESIZER_PERSONA`
+- `synthesis.schema.json` → `synthesisSchema` (object literal)
 
 ### Pass the change set as `args`
 
@@ -190,9 +192,11 @@ const REVIEWER_PERSONA = {           // references/reviewer-*.md
   'api-contract': `...`,
   tests: `...`,
 }
+const SYNTHESIZER_PERSONA = `...`    // references/synthesizer.md
 const orientationSchema = { /* orientation.schema.json */ }
 const seamMapSchema = { /* seam-map.schema.json */ }
 const reviewerSchema = { /* reviewer-output.schema.json */ }
+const synthesisSchema = { /* synthesis.schema.json */ }
 
 const PERSPECTIVES = ['correctness', 'security', 'performance', 'api-contract', 'tests']
 const K = 3  // max rounds per reviewer
@@ -276,7 +280,19 @@ const reviewResults = await parallel(
   PERSPECTIVES.map(p => () => runReviewer(p))
 )
 
-// ---- Synthesis phase: PENDING (Spec 3) ----
+// ---- Synthesis: consolidate, verdict, seam accounting ----
+phase('Synthesis')
+
+const synthesis = await agent(
+  `${SYNTHESIZER_PERSONA}\n\n---\n\n` +
+  `Charge: ${args.charge}\n\n` +
+  `Orientation:\n${seamMap.merged_orientation}\n\n` +
+  `Seam map:\n${JSON.stringify(seamMap.seams)}\n\n` +
+  `Reviewer outputs:\n${JSON.stringify(reviewResults)}\n\n` +
+  `Synthesize: consolidate findings (preserve priorities), produce charge verdict, ` +
+  `account for every seam (cleared/finding/under-explored), recommend follow-up if triggered.`,
+  { agentType: RO, tier: 'big', schema: synthesisSchema, label: 'synthesizer' }
+)
 
 return {
   run_dir: args.run_dir,
@@ -284,13 +300,36 @@ return {
   orientations: { a: orientationA, b: orientationB },
   seamMap: seamMap,
   reviews: reviewResults,
-  // synthesis results will be added in Spec 3
+  synthesis: synthesis
 }
 ```
 
-## 4. PENDING IMPLEMENTATION
+## 4. Persist and assemble the report (after the call)
 
-Synthesis phase is not yet implemented.
+The `workflow` result is a plain object. Now do the writes the sandbox couldn't —
+always via the helper, never the `write` tool.
+
+1. **Write synthesis** (the record): pipe the synthesis result as JSON:
+   ```
+   python3 <skill-dir>/code-review-workdir.py write-findings --run <run_dir> --slug synthesis
+   ```
+
+2. **Write the report**: render one markdown document from the synthesis:
+   ```
+   python3 <skill-dir>/code-review-workdir.py write-report --run <run_dir>
+   ```
+
+### Report shape
+
+The report is **charge-scoped** (not repo-scoped):
+
+1. **Header**: charge, verdict, one-line summary
+2. **Top Priorities**: Blockers and Majors only, with corroboration counts
+3. **All Findings**: grouped by severity, with location, evidence, rationale
+4. **Coverage Caveats**: under-explored seams, timeouts, any reviewer failures
+5. **Follow-up Recommendation**: if triggered, explain why
+
+Print the report path and `run_dir` to the user.
 
 ## Notes
 
