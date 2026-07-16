@@ -51,11 +51,10 @@ Report any preflight failure to the user before proceeding. Never fabricate a di
 
 ## 1. Establish scope (hard gate)
 
-The review is always defined relative to **a set of changes**. Determine it
-before anything else, and **do not run the workflow until scope is explicitly
-confirmed**. This gate is interactive, so it must stay in this orchestrator turn —
-scope cannot be resolved inside the sandboxed script (bundles need `gh`/`git`),
-so it is settled and bundled *before* the `workflow` call regardless.
+The review is defined by **a set of changes** and **a stated charge**. Both are
+required. Do not run the workflow until scope and charge are explicitly confirmed.
+
+### 1a. Determine the change set
 
 1. **If PRs are specified** (numbers/URLs): those PRs are the change set. Resolve
    each with `gh pr view <id> --json ...` and note repo, base, head.
@@ -77,14 +76,153 @@ Validate each repo before continuing — do not guess:
 - **Working tree state**: `git -C <path> status --porcelain` when reviewing
   uncommitted changes.
 
-Confirm the full scope (repos + refs/PRs/working tree) back to the user in one
-line and wait for agreement before continuing.
+### 1b. Require a charge (hard stop)
 
-## 2–4. PENDING IMPLEMENTATION
+A **charge** is a statement of what the work claims to accomplish. The review
+orients and critiques against this charge. **Do not proceed without one.**
 
-The bounded-context workflow (orientation → reconciliation → review → synthesis)
-is not yet implemented. See the architecture spec for the design:
-`_code_review/specs/spec-code-review-context-efficiency/`
+- If the user provided a charge (e.g., PR description, commit message, or explicit
+  statement), confirm it back to them.
+- If no charge is evident, **halt and ask**: "What does this change claim to
+  accomplish?" Accept any non-empty answer. A minimal charge ("fix the login bug")
+  is acceptable; absence is not.
+- **Never infer the charge from the diff.** The skill orients and critiques; it
+  does not invent intent.
+
+### 1c. Confirm scope
+
+Confirm the full scope (repos + refs/PRs/working tree + charge) back to the user
+in a brief summary and wait for agreement before continuing.
+
+## 2. Allocate the run directory and build per-repo bundles
+
+All run state lives in a central, cwd-independent directory owned by the bundled
+helper `code-review-workdir.py` (next to this `SKILL.md`) — never the current
+working directory. The helper owns every path, name, and `mkdir`, and performs
+every write; you never handle a filesystem path for output. Do not use the
+`write` tool for any run artifact — route it through the helper.
+
+Allocate the run **once** with the repo identifiers in scope:
+
+```
+python3 <skill-dir>/code-review-workdir.py init <repo> [<repo> ...]
+```
+
+It creates `${XDG_CACHE_HOME:-$HOME/.cache}/stacia-code-review/runs/<ts>-<id>/`
+with `bundles/`, `findings/`, a `report.md` target, and a `manifest.json`, then
+prints that manifest as JSON: per-repo `slug` + `bundle` + `findings`, the
+`run_dir`, `report`, `multi_repo`, and (multi-repo only) `cross_repo_findings`.
+**Keep the parsed manifest** — you pass its paths into the workflow `args` and
+into every later write.
+
+Then, for **each** repo, have the helper **capture and build** that repo's
+bundle. You do not assemble diff text yourself:
+
+```
+python3 <skill-dir>/code-review-workdir.py build-bundle \
+  --run <run_dir> --slug <slug> --repo-path <abs repo path> --source <spec>
+```
+
+`<spec>` is exactly one of (matching what step 1 confirmed):
+- `pr:<id>` — a GitHub PR (helper runs `gh pr diff` + `gh pr view`),
+- `range:<base>...<head>` — a committed ref range,
+- `worktree` / `worktree:all` — uncommitted, staged + unstaged,
+- `worktree:staged` — staged only.
+
+`build-bundle` captures the diff bytes itself and **fails loudly** if the command
+errors, the diff is empty, or it has no hunks — so a broken capture can never
+reach a reviewer.
+
+## 3. The `workflow` call: Comprehension phase
+
+Run **one** `workflow` call. The first phase is **Comprehension**: two orienteers
+run in parallel, then a reconciler merges their outputs into a seam map.
+
+### Inline these into the script (authoring time)
+
+Read each file below and paste its contents into the script as a string literal.
+Do **not** rely on runtime file reads — the sandbox has no `fs`.
+
+- `references/orienteer-claim-to-code.md` → `ORIENTEER_A_PERSONA`
+- `references/orienteer-code-to-claim.md` → `ORIENTEER_B_PERSONA`
+- `references/reconciler.md` → `RECONCILER_PERSONA`
+- `orientation.schema.json` → `orientationSchema` (object literal)
+- `seam-map.schema.json` → `seamMapSchema` (object literal)
+
+### Pass the change set as `args`
+
+Build `args` from the manifest + scope and pass it to the `workflow` tool:
+
+```json
+{
+  "run_dir": "<run_dir>",
+  "charge": "<the stated charge>",
+  "multi_repo": <bool>,
+  "repos": [ { "repo": "<name>", "slug": "<slug>", "bundle": "<bundle path>", "path": "<abs repo local path>" } ]
+}
+```
+
+### Comprehension phase script skeleton
+
+```js
+export const meta = {
+  name: 'stacia_code_review',
+  description: 'Bounded-context code review: orient, reconcile, review, synthesize',
+  phases: [
+    { title: 'Comprehension' },
+    { title: 'Review' },
+    { title: 'Synthesis' }
+  ],
+}
+
+const RO = 'stacia-review-readonly'
+const ORIENTEER_A_PERSONA = `...`    // references/orienteer-claim-to-code.md
+const ORIENTEER_B_PERSONA = `...`    // references/orienteer-code-to-claim.md
+const RECONCILER_PERSONA = `...`     // references/reconciler.md
+const orientationSchema = { /* orientation.schema.json */ }
+const seamMapSchema = { /* seam-map.schema.json */ }
+
+// ---- Comprehension: two orienteers in parallel, then reconcile ----
+phase('Comprehension')
+
+const allBundles = args.repos.map(r => r.bundle).join(', ')
+const bundleContext = args.repos.map(r => 
+  `Repo: ${r.repo}, bundle: ${r.bundle}, local path: ${r.path}`
+).join('\n')
+
+// Two orienteers run in parallel with different perspectives
+const [orientationA, orientationB] = await parallel([
+  () => agent(
+    `${ORIENTEER_A_PERSONA}\n\n---\n\nCharge: ${args.charge}\n\nChange set:\n${bundleContext}\n\nTrace how the change delivers the charge (outside-in).`,
+    { agentType: RO, tier: 'medium', schema: orientationSchema, label: 'orienteer-A' }
+  ),
+  () => agent(
+    `${ORIENTEER_B_PERSONA}\n\n---\n\nCharge: ${args.charge}\n\nChange set:\n${bundleContext}\n\nReconstruct what the change does, then reconcile against the charge (inside-out).`,
+    { agentType: RO, tier: 'medium', schema: orientationSchema, label: 'orienteer-B' }
+  )
+])
+
+// Reconciler merges the two orientations into a seam map
+const seamMap = await agent(
+  `${RECONCILER_PERSONA}\n\n---\n\nCharge: ${args.charge}\n\nOrienteer A (claim→code) output:\n${JSON.stringify(orientationA)}\n\nOrienteer B (code→claim) output:\n${JSON.stringify(orientationB)}\n\nMerge these into a unified orientation and seam map (3-12 seams).`,
+  { agentType: RO, tier: 'medium', schema: seamMapSchema, label: 'reconciler' }
+)
+
+// ---- Review phase: PENDING (Spec 2) ----
+// ---- Synthesis phase: PENDING (Spec 3) ----
+
+return {
+  run_dir: args.run_dir,
+  charge: args.charge,
+  orientations: { a: orientationA, b: orientationB },
+  seamMap: seamMap,
+  // review and synthesis results will be added in later specs
+}
+```
+
+## 4–5. PENDING IMPLEMENTATION
+
+Review and Synthesis phases are not yet implemented.
 
 ## Notes
 
@@ -98,3 +236,6 @@ is not yet implemented. See the architecture spec for the design:
   where the workflow tool resolves `agentType` names.
 - **Run state** lives under `${XDG_CACHE_HOME:-$HOME/.cache}/stacia-code-review/runs/`,
   managed by `code-review-workdir.py`.
+- **Charge is required.** The skill never infers intent from the diff. A review
+  is defined by exactly one charge; truly independent changes with no shared
+  charge are separate reviews.
