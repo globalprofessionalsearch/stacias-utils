@@ -133,176 +133,85 @@ python3 <skill-dir>/code-review-workdir.py build-bundle \
 errors, the diff is empty, or it has no hunks — so a broken capture can never
 reach a reviewer.
 
-## 3. The `workflow` call: Comprehension phase
+## 3. The `workflow` call
 
-Run **one** `workflow` call. The first phase is **Comprehension**: two orienteers
-run in parallel, then a reconciler merges their outputs into a seam map.
+Run **one** `workflow` call using the static workflow script. The orchestrator
+reads the script and all personas/schemas, then passes them to the workflow tool.
 
-### Inline these into the script (authoring time)
+### Read the static workflow script
 
-Read each file below and paste its contents into the script as a string literal.
-Do **not** rely on runtime file reads — the sandbox has no `fs`.
+```
+const script = read('<skill-dir>/workflow-script.js')
+```
 
-- `references/orienteer-claim-to-code.md` → `ORIENTEER_A_PERSONA`
-- `references/orienteer-code-to-claim.md` → `ORIENTEER_B_PERSONA`
-- `references/reconciler.md` → `RECONCILER_PERSONA`
-- `references/common-reviewer-rules.md` → `COMMON_RULES`
-- `references/reviewer-{correctness,security,performance,api-contract,tests}.md` → `REVIEWER_PERSONA[perspective]`
-- `orientation.schema.json` → `orientationSchema` (object literal)
-- `seam-map.schema.json` → `seamMapSchema` (object literal)
-- `reviewer-output.schema.json` → `reviewerSchema` (object literal)
-- `references/synthesizer.md` → `SYNTHESIZER_PERSONA`
-- `synthesis.schema.json` → `synthesisSchema` (object literal)
+The workflow script (`workflow-script.js`) is static, versioned, and testable.
+It contains all the orchestration logic: comprehension → review → synthesis.
 
-### Pass the change set as `args`
+### Read personas and schemas
 
-Build `args` from the manifest + scope and pass it to the `workflow` tool:
+The workflow sandbox has no `fs`, so the orchestrator must pre-read all personas
+and schemas and pass them in `args`:
+
+**Personas** (read as strings):
+- `references/orienteer-claim-to-code.md`
+- `references/orienteer-code-to-claim.md`
+- `references/reconciler.md`
+- `references/common-reviewer-rules.md`
+- `references/reviewer-{correctness,security,performance,api-contract,tests}.md`
+- `references/synthesizer.md`
+
+**Schemas** (read and parse as JSON):
+- `orientation.schema.json`
+- `seam-map.schema.json`
+- `reviewer-output.schema.json`
+- `synthesis.schema.json`
+
+### Build args
+
+Build `args` from the manifest + scope + personas + schemas:
 
 ```json
 {
   "run_dir": "<run_dir>",
   "charge": "<the stated charge>",
   "multi_repo": <bool>,
-  "repos": [ { "repo": "<name>", "slug": "<slug>", "bundle": "<bundle path>", "path": "<abs repo local path>" } ]
+  "repos": [ { "repo": "<name>", "slug": "<slug>", "bundle": "<bundle path>", "path": "<abs repo local path>" } ],
+  "personas": {
+    "orienteerA": "<contents of orienteer-claim-to-code.md>",
+    "orienteerB": "<contents of orienteer-code-to-claim.md>",
+    "reconciler": "<contents of reconciler.md>",
+    "commonRules": "<contents of common-reviewer-rules.md>",
+    "reviewers": {
+      "correctness": "<contents of reviewer-correctness.md>",
+      "security": "<contents of reviewer-security.md>",
+      "performance": "<contents of reviewer-performance.md>",
+      "api-contract": "<contents of reviewer-api-contract.md>",
+      "tests": "<contents of reviewer-tests.md>"
+    },
+    "synthesizer": "<contents of synthesizer.md>"
+  },
+  "schemas": {
+    "orientation": { /* parsed orientation.schema.json */ },
+    "seamMap": { /* parsed seam-map.schema.json */ },
+    "reviewer": { /* parsed reviewer-output.schema.json */ },
+    "synthesis": { /* parsed synthesis.schema.json */ }
+  }
 }
 ```
 
-### Workflow script skeleton
+### Call the workflow
 
 ```js
-export const meta = {
-  name: 'stacia_code_review',
-  description: 'Bounded-context code review: orient, reconcile, review, synthesize',
-  phases: [
-    { title: 'Comprehension' },
-    { title: 'Review' },
-    { title: 'Synthesis' }
-  ],
-}
-
-const RO = 'stacia-review-readonly'
-const ORIENTEER_A_PERSONA = `...`    // references/orienteer-claim-to-code.md
-const ORIENTEER_B_PERSONA = `...`    // references/orienteer-code-to-claim.md
-const RECONCILER_PERSONA = `...`     // references/reconciler.md
-const COMMON_RULES = `...`           // references/common-reviewer-rules.md
-const REVIEWER_PERSONA = {           // references/reviewer-*.md
-  correctness: `...`,
-  security: `...`,
-  performance: `...`,
-  'api-contract': `...`,
-  tests: `...`,
-}
-const SYNTHESIZER_PERSONA = `...`    // references/synthesizer.md
-const orientationSchema = { /* orientation.schema.json */ }
-const seamMapSchema = { /* seam-map.schema.json */ }
-const reviewerSchema = { /* reviewer-output.schema.json */ }
-const synthesisSchema = { /* synthesis.schema.json */ }
-
-const PERSPECTIVES = ['correctness', 'security', 'performance', 'api-contract', 'tests']
-const K = 3  // max rounds per reviewer
-const ROUND_TIMEOUT = 60000  // 60s per round
-
-// ---- Comprehension: two orienteers in parallel, then reconcile ----
-phase('Comprehension')
-
-const allBundles = args.repos.map(r => r.bundle).join(', ')
-const bundleContext = args.repos.map(r => 
-  `Repo: ${r.repo}, bundle: ${r.bundle}, local path: ${r.path}`
-).join('\n')
-
-const [orientationA, orientationB] = await parallel([
-  () => agent(
-    `${ORIENTEER_A_PERSONA}\n\n---\n\nCharge: ${args.charge}\n\nChange set:\n${bundleContext}\n\nTrace how the change delivers the charge (outside-in).`,
-    { agentType: RO, tier: 'medium', schema: orientationSchema, label: 'orienteer-A' }
-  ),
-  () => agent(
-    `${ORIENTEER_B_PERSONA}\n\n---\n\nCharge: ${args.charge}\n\nChange set:\n${bundleContext}\n\nReconstruct what the change does, then reconcile against the charge (inside-out).`,
-    { agentType: RO, tier: 'medium', schema: orientationSchema, label: 'orienteer-B' }
-  )
-])
-
-const seamMap = await agent(
-  `${RECONCILER_PERSONA}\n\n---\n\nCharge: ${args.charge}\n\nOrienteer A (claim→code) output:\n${JSON.stringify(orientationA)}\n\nOrienteer B (code→claim) output:\n${JSON.stringify(orientationB)}\n\nMerge these into a unified orientation and seam map (3-12 seams).`,
-  { agentType: RO, tier: 'medium', schema: seamMapSchema, label: 'reconciler' }
-)
-
-// ---- Review: K-round loop per perspective, parallel across perspectives ----
-phase('Review')
-
-// K-round reviewer function
-async function runReviewer(perspective) {
-  let findingsSoFar = []
-  let result = null
-  
-  for (let round = 1; round <= K; round++) {
-    const isLastRound = round === K
-    const prompt = `${COMMON_RULES}\n\n---\n\n${REVIEWER_PERSONA[perspective]}\n\n---\n\n` +
-      `Charge: ${args.charge}\n\n` +
-      `Orientation:\n${seamMap.merged_orientation}\n\n` +
-      `Seam map:\n${JSON.stringify(seamMap.seams)}\n\n` +
-      `Round ${round} of ${K}${isLastRound ? ' (FINAL - must produce write-up)' : ''}\n\n` +
-      `Change set:\n${bundleContext}\n\n` +
-      (findingsSoFar.length > 0 ? `Findings so far:\n${JSON.stringify(findingsSoFar)}\n\n` : '') +
-      `Review the change from the ${perspective} perspective. Focus on high-priority seams.`
-    
-    result = await agent(prompt, {
-      agentType: RO,
-      tier: 'medium',
-      schema: reviewerSchema,
-      label: `${perspective}:${round}`,
-      agentTimeoutMs: ROUND_TIMEOUT
-    })
-    
-    if (!result) {
-      // Agent failed/timed out - return partial results with low confidence
-      return {
-        perspective,
-        findings: findingsSoFar.map(f => ({ ...f, confidence: 'low' })),
-        spillover: true,
-        moreExploration: false,
-        note: `Review incomplete - agent failed on round ${round}`
-      }
-    }
-    
-    findingsSoFar = result.findings || []
-    
-    // Exit early if reviewer signals no more exploration needed
-    if (!result.moreExploration || isLastRound) {
-      return result
-    }
-  }
-  
-  return result
-}
-
-// Run all perspectives in parallel
-const reviewResults = await parallel(
-  PERSPECTIVES.map(p => () => runReviewer(p))
-)
-
-// ---- Synthesis: consolidate, verdict, seam accounting ----
-phase('Synthesis')
-
-const synthesis = await agent(
-  `${SYNTHESIZER_PERSONA}\n\n---\n\n` +
-  `Charge: ${args.charge}\n\n` +
-  `Orientation:\n${seamMap.merged_orientation}\n\n` +
-  `Seam map:\n${JSON.stringify(seamMap.seams)}\n\n` +
-  `Reviewer outputs:\n${JSON.stringify(reviewResults)}\n\n` +
-  `Synthesize: consolidate findings (preserve priorities), produce charge verdict, ` +
-  `account for every seam (cleared/finding/under-explored), recommend follow-up if triggered.`,
-  { agentType: RO, tier: 'big', schema: synthesisSchema, label: 'synthesizer' }
-)
-
-return {
-  run_dir: args.run_dir,
-  charge: args.charge,
-  orientations: { a: orientationA, b: orientationB },
-  seamMap: seamMap,
-  reviews: reviewResults,
-  synthesis: synthesis
-}
+const result = await workflow({
+  script: script,
+  args: JSON.stringify(args),
+  agentRetries: 1,
+  concurrency: 6
+})
 ```
+
+The static workflow script handles all phases: Comprehension → Review → Synthesis.
+See `workflow-script.js` for the implementation.
 
 ## 4. Persist and assemble the report (after the call)
 
