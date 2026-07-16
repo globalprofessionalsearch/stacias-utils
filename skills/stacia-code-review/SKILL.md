@@ -146,8 +146,11 @@ Do **not** rely on runtime file reads — the sandbox has no `fs`.
 - `references/orienteer-claim-to-code.md` → `ORIENTEER_A_PERSONA`
 - `references/orienteer-code-to-claim.md` → `ORIENTEER_B_PERSONA`
 - `references/reconciler.md` → `RECONCILER_PERSONA`
+- `references/common-reviewer-rules.md` → `COMMON_RULES`
+- `references/reviewer-{correctness,security,performance,api-contract,tests}.md` → `REVIEWER_PERSONA[perspective]`
 - `orientation.schema.json` → `orientationSchema` (object literal)
 - `seam-map.schema.json` → `seamMapSchema` (object literal)
+- `reviewer-output.schema.json` → `reviewerSchema` (object literal)
 
 ### Pass the change set as `args`
 
@@ -162,7 +165,7 @@ Build `args` from the manifest + scope and pass it to the `workflow` tool:
 }
 ```
 
-### Comprehension phase script skeleton
+### Workflow script skeleton
 
 ```js
 export const meta = {
@@ -179,8 +182,21 @@ const RO = 'stacia-review-readonly'
 const ORIENTEER_A_PERSONA = `...`    // references/orienteer-claim-to-code.md
 const ORIENTEER_B_PERSONA = `...`    // references/orienteer-code-to-claim.md
 const RECONCILER_PERSONA = `...`     // references/reconciler.md
+const COMMON_RULES = `...`           // references/common-reviewer-rules.md
+const REVIEWER_PERSONA = {           // references/reviewer-*.md
+  correctness: `...`,
+  security: `...`,
+  performance: `...`,
+  'api-contract': `...`,
+  tests: `...`,
+}
 const orientationSchema = { /* orientation.schema.json */ }
 const seamMapSchema = { /* seam-map.schema.json */ }
+const reviewerSchema = { /* reviewer-output.schema.json */ }
+
+const PERSPECTIVES = ['correctness', 'security', 'performance', 'api-contract', 'tests']
+const K = 3  // max rounds per reviewer
+const ROUND_TIMEOUT = 60000  // 60s per round
 
 // ---- Comprehension: two orienteers in parallel, then reconcile ----
 phase('Comprehension')
@@ -190,7 +206,6 @@ const bundleContext = args.repos.map(r =>
   `Repo: ${r.repo}, bundle: ${r.bundle}, local path: ${r.path}`
 ).join('\n')
 
-// Two orienteers run in parallel with different perspectives
 const [orientationA, orientationB] = await parallel([
   () => agent(
     `${ORIENTEER_A_PERSONA}\n\n---\n\nCharge: ${args.charge}\n\nChange set:\n${bundleContext}\n\nTrace how the change delivers the charge (outside-in).`,
@@ -202,13 +217,65 @@ const [orientationA, orientationB] = await parallel([
   )
 ])
 
-// Reconciler merges the two orientations into a seam map
 const seamMap = await agent(
   `${RECONCILER_PERSONA}\n\n---\n\nCharge: ${args.charge}\n\nOrienteer A (claim→code) output:\n${JSON.stringify(orientationA)}\n\nOrienteer B (code→claim) output:\n${JSON.stringify(orientationB)}\n\nMerge these into a unified orientation and seam map (3-12 seams).`,
   { agentType: RO, tier: 'medium', schema: seamMapSchema, label: 'reconciler' }
 )
 
-// ---- Review phase: PENDING (Spec 2) ----
+// ---- Review: K-round loop per perspective, parallel across perspectives ----
+phase('Review')
+
+// K-round reviewer function
+async function runReviewer(perspective) {
+  let findingsSoFar = []
+  let result = null
+  
+  for (let round = 1; round <= K; round++) {
+    const isLastRound = round === K
+    const prompt = `${COMMON_RULES}\n\n---\n\n${REVIEWER_PERSONA[perspective]}\n\n---\n\n` +
+      `Charge: ${args.charge}\n\n` +
+      `Orientation:\n${seamMap.merged_orientation}\n\n` +
+      `Seam map:\n${JSON.stringify(seamMap.seams)}\n\n` +
+      `Round ${round} of ${K}${isLastRound ? ' (FINAL - must produce write-up)' : ''}\n\n` +
+      `Change set:\n${bundleContext}\n\n` +
+      (findingsSoFar.length > 0 ? `Findings so far:\n${JSON.stringify(findingsSoFar)}\n\n` : '') +
+      `Review the change from the ${perspective} perspective. Focus on high-priority seams.`
+    
+    result = await agent(prompt, {
+      agentType: RO,
+      tier: 'medium',
+      schema: reviewerSchema,
+      label: `${perspective}:${round}`,
+      agentTimeoutMs: ROUND_TIMEOUT
+    })
+    
+    if (!result) {
+      // Agent failed/timed out - return partial results with low confidence
+      return {
+        perspective,
+        findings: findingsSoFar.map(f => ({ ...f, confidence: 'low' })),
+        spillover: true,
+        moreExploration: false,
+        note: `Review incomplete - agent failed on round ${round}`
+      }
+    }
+    
+    findingsSoFar = result.findings || []
+    
+    // Exit early if reviewer signals no more exploration needed
+    if (!result.moreExploration || isLastRound) {
+      return result
+    }
+  }
+  
+  return result
+}
+
+// Run all perspectives in parallel
+const reviewResults = await parallel(
+  PERSPECTIVES.map(p => () => runReviewer(p))
+)
+
 // ---- Synthesis phase: PENDING (Spec 3) ----
 
 return {
@@ -216,13 +283,14 @@ return {
   charge: args.charge,
   orientations: { a: orientationA, b: orientationB },
   seamMap: seamMap,
-  // review and synthesis results will be added in later specs
+  reviews: reviewResults,
+  // synthesis results will be added in Spec 3
 }
 ```
 
-## 4–5. PENDING IMPLEMENTATION
+## 4. PENDING IMPLEMENTATION
 
-Review and Synthesis phases are not yet implemented.
+Synthesis phase is not yet implemented.
 
 ## Notes
 

@@ -1,0 +1,71 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ReviewerOutput",
+  "description": "Output from a perspective reviewer: prioritized findings + spillover signal",
+  "type": "object",
+  "required": ["perspective", "findings", "spillover", "moreExploration"],
+  "properties": {
+    "perspective": {
+      "type": "string",
+      "enum": ["correctness", "security", "performance", "api-contract", "tests"],
+      "description": "The reviewer's perspective"
+    },
+    "findings": {
+      "type": "array",
+      "description": "Prioritized findings (≤6), ordered by severity: Blocker > Major > Minor > Nit",
+      "maxItems": 6,
+      "items": {
+        "type": "object",
+        "required": ["severity", "confidence", "location", "evidence", "finding", "rationale"],
+        "properties": {
+          "severity": {
+            "type": "string",
+            "enum": ["Blocker", "Major", "Minor", "Nit"],
+            "description": "Impact severity"
+          },
+          "confidence": {
+            "type": "string",
+            "enum": ["high", "medium", "low"],
+            "description": "Confidence in the finding. Lower if exploration was cut short."
+          },
+          "location": {
+            "type": "object",
+            "required": ["file", "line"],
+            "properties": {
+              "file": { "type": "string", "description": "File path (repo-relative)" },
+              "line": { "type": "integer", "description": "Line number" }
+            }
+          },
+          "evidence": {
+            "type": "string",
+            "description": "Quoted code or specific observation"
+          },
+          "finding": {
+            "type": "string",
+            "description": "What is wrong"
+          },
+          "rationale": {
+            "type": "string",
+            "description": "Why it matters"
+          },
+          "suggestion": {
+            "type": "string",
+            "description": "How to fix (optional)"
+          }
+        }
+      }
+    },
+    "spillover": {
+      "type": "boolean",
+      "description": "True if likely more significant issues remain beyond the 6 reported. False if lens adequately covered."
+    },
+    "moreExploration": {
+      "type": "boolean",
+      "description": "True if the reviewer wants another round to explore high-value seams. False if done or diminishing returns."
+    },
+    "note": {
+      "type": "string",
+      "description": "Optional note about coverage, confidence, or areas not fully explored"
+    }
+  }
+}

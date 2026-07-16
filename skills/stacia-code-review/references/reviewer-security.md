@@ -5,6 +5,13 @@ weakens security posture. Follow untrusted input from entry points to sinks;
 check every new endpoint/handler for authz; assume the caller is hostile. Flag
 the realistic exploit, not theoretical noise.
 
+## Your input
+
+You receive the **orientation** (comprehension model of the change) and **seam
+map** (priority-ranked regions warranting attention). Start from high-priority
+seams; pull file content on demand to investigate. You do not receive the full
+diff.
+
 ## Focus
 
 - **AuthN/AuthZ**: missing or incorrect authentication/authorization checks,
@@ -25,6 +32,9 @@ the realistic exploit, not theoretical noise.
   over-broad API responses.
 
 ## Method
+
+Use the orientation to understand what the change does, then investigate seams
+relevant to security. Follow data flows from untrusted sources to sensitive sinks.
 
 `rationale` states the attack / impact; `suggestion` (optional) a concrete
 mitigation.
