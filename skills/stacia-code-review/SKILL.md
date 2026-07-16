@@ -111,7 +111,7 @@ python3 <skill-dir>/code-review-workdir.py init <repo> [<repo> ...]
 It creates `${XDG_CACHE_HOME:-$HOME/.cache}/stacia-code-review/runs/<ts>-<id>/`
 with `bundles/`, `findings/`, a `report.md` target, and a `manifest.json`, then
 prints that manifest as JSON: per-repo `slug` + `bundle` + `findings`, the
-`run_dir`, `report`, `multi_repo`, and (multi-repo only) `cross_repo_findings`.
+`run_dir`, `report`, and `multi_repo`.
 **Keep the parsed manifest** — you pass its paths into the workflow `args` and
 into every later write.
 

@@ -24,6 +24,11 @@ export const meta = {
 // Parse args if passed as string
 const a = typeof args === 'string' ? JSON.parse(args) : args
 
+// Sanitize charge for prompt injection safety - escape newlines and markdown separators
+const safeCharge = a.charge
+  .replace(/\n/g, ' ')
+  .replace(/---/g, '—')
+
 const RO = 'stacia-review-readonly'
 const PERSPECTIVES = ['correctness', 'security', 'performance', 'api-contract', 'tests']
 const K = 3  // max rounds per reviewer
@@ -41,17 +46,17 @@ const bundleContext = a.repos.map(r =>
 
 const [orientationA, orientationB] = await parallel([
   () => agent(
-    `${personas.orienteerA}\n\n---\n\nCharge: ${a.charge}\n\nChange set:\n${bundleContext}\n\nTrace how the change delivers the charge (outside-in).`,
+    `${personas.orienteerA}\n\n---\n\nCharge: ${safeCharge}\n\nChange set:\n${bundleContext}\n\nTrace how the change delivers the charge (outside-in).`,
     { agentType: RO, tier: 'medium', schema: schemas.orientation, label: 'orienteer-A' }
   ),
   () => agent(
-    `${personas.orienteerB}\n\n---\n\nCharge: ${a.charge}\n\nChange set:\n${bundleContext}\n\nReconstruct what the change does, then reconcile against the charge (inside-out).`,
+    `${personas.orienteerB}\n\n---\n\nCharge: ${safeCharge}\n\nChange set:\n${bundleContext}\n\nReconstruct what the change does, then reconcile against the charge (inside-out).`,
     { agentType: RO, tier: 'medium', schema: schemas.orientation, label: 'orienteer-B' }
   )
 ])
 
 const seamMap = await agent(
-  `${personas.reconciler}\n\n---\n\nCharge: ${a.charge}\n\nOrienteer A (claim→code) output:\n${JSON.stringify(orientationA)}\n\nOrienteer B (code→claim) output:\n${JSON.stringify(orientationB)}\n\nMerge these into a unified orientation and seam map (3-12 seams).`,
+  `${personas.reconciler}\n\n---\n\nCharge: ${safeCharge}\n\nOrienteer A (claim→code) output:\n${JSON.stringify(orientationA)}\n\nOrienteer B (code→claim) output:\n${JSON.stringify(orientationB)}\n\nMerge these into a unified orientation and seam map (3-12 seams).`,
   { agentType: RO, tier: 'medium', schema: schemas.seamMap, label: 'reconciler' }
 )
 
@@ -65,7 +70,7 @@ async function runReviewer(perspective) {
   for (let round = 1; round <= K; round++) {
     const isLastRound = round === K
     const prompt = `${personas.commonRules}\n\n---\n\n${personas.reviewers[perspective]}\n\n---\n\n` +
-      `Charge: ${a.charge}\n\n` +
+      `Charge: ${safeCharge}\n\n` +
       `Orientation:\n${seamMap.merged_orientation}\n\n` +
       `Seam map:\n${JSON.stringify(seamMap.seams)}\n\n` +
       `Round ${round} of ${K}${isLastRound ? ' (FINAL - must produce write-up)' : ''}\n\n` +
@@ -82,9 +87,11 @@ async function runReviewer(perspective) {
     })
     
     if (!result) {
+      // Agent failed/timed out - keep existing findings, mark spillover
+      // Don't degrade confidence of findings from successful previous rounds
       return {
         perspective,
-        findings: findingsSoFar.map(f => ({ ...f, confidence: 'low' })),
+        findings: findingsSoFar,
         spillover: true,
         moreExploration: false,
         note: `Review incomplete - agent failed on round ${round}`
@@ -110,7 +117,7 @@ phase('Synthesis')
 
 const synthesis = await agent(
   `${personas.synthesizer}\n\n---\n\n` +
-  `Charge: ${a.charge}\n\n` +
+  `Charge: ${safeCharge}\n\n` +
   `Orientation:\n${seamMap.merged_orientation}\n\n` +
   `Seam map:\n${JSON.stringify(seamMap.seams)}\n\n` +
   `Reviewer outputs:\n${JSON.stringify(reviewResults)}\n\n` +

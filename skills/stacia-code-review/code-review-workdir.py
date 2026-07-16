@@ -14,7 +14,6 @@ Layout (base = ${XDG_CACHE_HOME:-$HOME/.cache}/stacia-code-review):
         manifest.json            # the run's path map (written by init)
         bundles/<slug>.md        # one diff bundle per repo
         findings/<slug>.json     # raw per-perspective reviewer results per repo
-        findings/cross-repo.json # cross-repo reviewer result (multi-repo only)
         report.md                # final assembled report
 
 Subcommands
@@ -29,7 +28,6 @@ Subcommands
             worktree[:all|:staged]  uncommitted changes (all = staged+unstaged)
     write-bundle    --run <dir> --slug <slug>     (raw bundle on stdin; fallback)
     write-findings  --run <dir> --slug <slug>     (JSON on stdin; validated)
-    write-cross-findings --run <dir>              (JSON on stdin; validated)
     write-report    --run <dir>                   (content on stdin)
 
 Every write/build command resolves its destination from the run's manifest.json,
@@ -295,8 +293,6 @@ def cmd_init(args) -> int:
             for repo, slug in repos
         ],
     }
-    if multi:
-        manifest["cross_repo_findings"] = str(findings_dir / "cross-repo.json")
     (run_dir / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
     json.dump(manifest, sys.stdout, indent=2)
     sys.stdout.write("\n")
@@ -363,13 +359,6 @@ def cmd_write_findings(args) -> int:
     return _write_json(target, f"findings for {args.slug!r}")
 
 
-def cmd_write_cross_findings(args) -> int:
-    _, manifest = load_manifest(args.run)
-    if not manifest.get("multi_repo"):
-        return die("this run is single-repo; there is no cross-repo findings target")
-    return _write_json(Path(manifest["cross_repo_findings"]), "cross-repo findings")
-
-
 def cmd_write_report(args) -> int:
     _, manifest = load_manifest(args.run)
     Path(manifest["report"]).write_text(read_stdin())
@@ -405,10 +394,6 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--run", required=True)
     p.add_argument("--slug", required=True)
     p.set_defaults(func=cmd_write_findings)
-
-    p = sub.add_parser("write-cross-findings", help="Write the cross-repo findings JSON (stdin).")
-    p.add_argument("--run", required=True)
-    p.set_defaults(func=cmd_write_cross_findings)
 
     p = sub.add_parser("write-report", help="Write the final report (stdin).")
     p.add_argument("--run", required=True)
