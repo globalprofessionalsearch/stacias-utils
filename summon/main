@@ -104,7 +104,7 @@ skill_field() {
 # granting no mutating tool, so it is enforced by lint, not just asserted in
 # prose. Every name here is non-mutating (read/search only); pi's real search
 # tools are ffgrep/fffind, the generic grep/find/ls are tolerated for portability.
-READONLY_TOOLS="read grep find ls ffgrep fffind"
+READONLY_TOOLS="read grep find ls ffgrep fffind structured_output"
 # The workflow read-only agentType binding this repo ships, and where `summon
 # setup` installs it so the `workflow` tool resolves it (user scope).
 REVIEW_RO_BINDING="$SKILL_DIR/stacia-code-review/stacia-review-readonly.md"
