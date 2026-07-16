@@ -11,9 +11,7 @@
     },
     "seams": {
       "type": "array",
-      "description": "Priority-ranked list of seams (3-12). Seams are regions warranting reviewer attention: unclear alignment or orienteer disagreement.",
-      "minItems": 3,
-      "maxItems": 12,
+      "description": "Priority-ranked list of seams. Bounds set by config.reconciler.minSeams/maxSeams. Seams are regions warranting reviewer attention: unclear alignment or orienteer disagreement.",
       "items": {
         "type": "object",
         "required": ["id", "priority", "type", "region", "files", "rationale"],

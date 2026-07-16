@@ -30,12 +30,14 @@ const safeCharge = a.charge
   .replace(/---/g, '—')
 
 const RO = 'stacia-review-readonly'
-const PERSPECTIVES = ['correctness', 'security', 'performance', 'api-contract', 'tests']
-const K = 3  // max rounds per reviewer
-const ROUND_TIMEOUT = 60000  // 60s per round
 
 // Extract from args (orchestrator pre-reads these)
-const { personas, schemas } = a
+const { personas, schemas, config } = a
+
+// Workflow config (scoped)
+const K = config.workflow.maxRounds
+const ROUND_TIMEOUT = config.workflow.roundTimeoutMs
+const PERSPECTIVES = config.reviewer.perspectives
 
 // ---- Comprehension: two orienteers in parallel, then reconcile ----
 phase('Comprehension')
@@ -56,7 +58,7 @@ const [orientationA, orientationB] = await parallel([
 ])
 
 const seamMap = await agent(
-  `${personas.reconciler}\n\n---\n\nCharge: ${safeCharge}\n\nOrienteer A (claim→code) output:\n${JSON.stringify(orientationA)}\n\nOrienteer B (code→claim) output:\n${JSON.stringify(orientationB)}\n\nMerge these into a unified orientation and seam map (3-12 seams).`,
+  `${personas.reconciler}\n\n---\n\nCharge: ${safeCharge}\n\nSeam bounds: ${config.reconciler.minSeams}-${config.reconciler.maxSeams} seams.\n\nOrienteer A (claim→code) output:\n${JSON.stringify(orientationA)}\n\nOrienteer B (code→claim) output:\n${JSON.stringify(orientationB)}\n\nMerge these into a unified orientation and seam map.`,
   { agentType: RO, tier: 'medium', schema: schemas.seamMap, label: 'reconciler' }
 )
 
@@ -71,6 +73,7 @@ async function runReviewer(perspective) {
     const isLastRound = round === K
     const prompt = `${personas.commonRules}\n\n---\n\n${personas.reviewers[perspective]}\n\n---\n\n` +
       `Charge: ${safeCharge}\n\n` +
+      `Max findings: ${config.reviewer.maxFindings}\n\n` +
       `Orientation:\n${seamMap.merged_orientation}\n\n` +
       `Seam map:\n${JSON.stringify(seamMap.seams)}\n\n` +
       `Round ${round} of ${K}${isLastRound ? ' (FINAL - must produce write-up)' : ''}\n\n` +
@@ -118,6 +121,7 @@ phase('Synthesis')
 const synthesis = await agent(
   `${personas.synthesizer}\n\n---\n\n` +
   `Charge: ${safeCharge}\n\n` +
+  `Follow-up threshold: ≥${config.synthesis.followUpThreshold} Major/Blocker findings triggers recommendation.\n\n` +
   `Orientation:\n${seamMap.merged_orientation}\n\n` +
   `Seam map:\n${JSON.stringify(seamMap.seams)}\n\n` +
   `Reviewer outputs:\n${JSON.stringify(reviewResults)}\n\n` +

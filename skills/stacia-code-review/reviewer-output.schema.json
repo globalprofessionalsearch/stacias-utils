@@ -12,8 +12,7 @@
     },
     "findings": {
       "type": "array",
-      "description": "Prioritized findings (≤6), ordered by severity: Blocker > Major > Minor > Nit",
-      "maxItems": 6,
+      "description": "Prioritized findings, ordered by severity: Blocker > Major > Minor > Nit. Limit set by config.reviewer.maxFindings.",
       "items": {
         "type": "object",
         "required": ["severity", "confidence", "location", "evidence", "finding", "rationale"],

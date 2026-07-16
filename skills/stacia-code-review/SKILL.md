@@ -147,10 +147,13 @@ const script = read('<skill-dir>/workflow-script.js')
 The workflow script (`workflow-script.js`) is static, versioned, and testable.
 It contains all the orchestration logic: comprehension → review → synthesis.
 
-### Read personas and schemas
+### Read config, personas, and schemas
 
-The workflow sandbox has no `fs`, so the orchestrator must pre-read all personas
-and schemas and pass them in `args`:
+The workflow sandbox has no `fs`, so the orchestrator must pre-read config,
+personas, and schemas and pass them in `args`:
+
+**Config** (read and parse as JSON):
+- `config.json` — tunable constants (rounds, timeouts, thresholds)
 
 **Personas** (read as strings):
 - `references/orienteer-claim-to-code.md`
@@ -168,7 +171,7 @@ and schemas and pass them in `args`:
 
 ### Build args
 
-Build `args` from the manifest + scope + personas + schemas:
+Build `args` from the manifest + scope + config + personas + schemas:
 
 ```json
 {
@@ -176,6 +179,7 @@ Build `args` from the manifest + scope + personas + schemas:
   "charge": "<the stated charge>",
   "multi_repo": <bool>,
   "repos": [ { "repo": "<name>", "slug": "<slug>", "bundle": "<bundle path>", "path": "<abs repo local path>" } ],
+  "config": { /* parsed config.json */ },
   "personas": {
     "orienteerA": "<contents of orienteer-claim-to-code.md>",
     "orienteerB": "<contents of orienteer-code-to-claim.md>",
