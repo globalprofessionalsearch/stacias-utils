@@ -169,6 +169,22 @@ personas, and schemas and pass them in `args`:
 - `reviewer-output.schema.json`
 - `synthesis.schema.json`
 
+### Inject config into schemas
+
+After reading schemas, inject config values into schema bounds for runtime
+enforcement:
+
+```js
+// Inject seam bounds
+schemas.seamMap.properties.seams.minItems = config.reconciler.minSeams
+schemas.seamMap.properties.seams.maxItems = config.reconciler.maxSeams
+
+// Inject max findings
+schemas.reviewer.properties.findings.maxItems = config.reviewer.maxFindings
+```
+
+This ensures bounds are both config-driven AND schema-enforced at runtime.
+
 ### Build args
 
 Build `args` from the manifest + scope + config + personas + schemas:
