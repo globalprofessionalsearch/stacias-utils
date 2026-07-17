@@ -27,7 +27,7 @@ Two things, returned as structured JSON:
    note the divergence without resolving it. This model is the shared context
    that downstream reviewers will use to orient themselves.
 
-2. **Seam map** — A priority-ranked list of **3 to 12 seams**. A seam is a
+2. **Seam map** — A priority-ranked list of seams (bounds set by config; see prompt). A seam is a
    region that warrants reviewer attention. Seams are derived from:
    - **Disagreement**: the two orienteers reached different conclusions
    - **Unclear alignment**: both orienteers (or one) marked a region as unclear

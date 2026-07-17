@@ -18,7 +18,7 @@ pull file content on demand via `read`/`ffgrep`/`fffind` to investigate seams.
 
 ## Round awareness
 
-You may run up to **3 rounds** (K=3). Each round:
+You may run up to **K rounds** (K set by config; see prompt). Each round:
 1. You receive the orientation, seam map, round number, and findings so far
 2. You investigate seams relevant to your perspective
 3. You return findings + whether you want more exploration
@@ -49,7 +49,7 @@ Set `moreExploration: false`.
 
 ## Output constraints
 
-- **≤6 findings**: return at most 6 findings, prioritized by severity
+- **≤N findings**: return at most N findings (N set by config; see prompt), prioritized by severity
   (Blocker > Major > Minor > Nit). If you found more than 6 issues, keep the
   most severe and set `spillover: true`.
 - **Spillover flag** (required): `true` if you believe more significant issues
@@ -65,7 +65,7 @@ Return a JSON object conforming to the reviewer-output schema. Do not wrap it
 in prose or fences.
 
 - Set `perspective` to match your persona.
-- `findings`: array of ≤6 findings, each with severity, confidence, location,
+- `findings`: array of ≤N findings (N from config), each with severity, confidence, location,
   evidence, finding, rationale, and optional suggestion.
 - `spillover`: boolean (required).
 - `moreExploration`: boolean (required).
