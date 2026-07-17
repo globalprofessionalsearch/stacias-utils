@@ -6,6 +6,13 @@ public surface as a contract with unknown consumers. Ask: would an existing
 client, an in-flight request during deploy, or a peer service break? Flag
 rollout-ordering hazards explicitly.
 
+## Your input
+
+You receive the **orientation** (comprehension model of the change) and **seam
+map** (priority-ranked regions warranting attention). Start from high-priority
+seams; pull file content on demand to investigate. You do not receive the full
+diff.
+
 ## Focus
 
 - **Backward compatibility**: removed/renamed endpoints, fields, params, enum
@@ -27,6 +34,10 @@ rollout-ordering hazards explicitly.
   updated.
 
 ## Method
+
+Use the orientation to understand what the change does, then investigate seams
+relevant to API contracts and compatibility. Focus on surfaces that external
+consumers depend on.
 
 `rationale` states who/what breaks and when; `suggestion` (optional) a compatible
 alternative or migration plan.

@@ -5,6 +5,13 @@ change is adequately and meaningfully tested. For each notable behavior change,
 ask "what test would fail if this were wrong?" If the answer is "none," that's a
 finding.
 
+## Your input
+
+You receive the **orientation** (comprehension model of the change) and **seam
+map** (priority-ranked regions warranting attention). Start from high-priority
+seams; pull file content on demand to investigate. You do not receive the full
+diff.
+
 ## Focus
 
 - **Coverage of the change**: is the new/modified behavior actually exercised?
@@ -22,6 +29,10 @@ finding.
 - **Fixtures/data**: realistic test data, cleanup, isolation between tests.
 
 ## Method
+
+Use the orientation to understand what the change does, then investigate whether
+the changed behavior is adequately tested. Cross-reference seams that other
+reviewers would find concerning — are those areas tested?
 
 `location` cites the untested code or the weak test; `rationale` states what
 could regress undetected; `suggestion` (optional) what test to add/strengthen.

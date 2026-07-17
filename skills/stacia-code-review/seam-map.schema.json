@@ -1,0 +1,63 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "SeamMap",
+  "description": "Reconciled orientation from two orienteers: merged model + priority-ranked seams (3-12)",
+  "type": "object",
+  "required": ["merged_orientation", "seams"],
+  "properties": {
+    "merged_orientation": {
+      "type": "string",
+      "description": "Bounded prose model synthesizing both orienteer perspectives. Describes how the change works, not how well."
+    },
+    "seams": {
+      "type": "array",
+      "description": "Priority-ranked list of seams. Seams are regions warranting reviewer attention: unclear alignment or orienteer disagreement. Orchestrator injects minItems/maxItems from config.",
+      "items": {
+        "type": "object",
+        "required": ["id", "priority", "type", "region", "files", "rationale"],
+        "properties": {
+          "id": {
+            "type": "integer",
+            "description": "Unique seam identifier (1-indexed)"
+          },
+          "priority": {
+            "type": "string",
+            "enum": ["high", "medium", "low"],
+            "description": "Review priority. High = disagreement or both unclear. Medium = one unclear. Low = clear but worth noting."
+          },
+          "type": {
+            "type": "string",
+            "enum": ["disagreement", "unclear", "notable"],
+            "description": "Seam type: disagreement (orienteers differ), unclear (alignment uncertain), notable (clear but architecturally interesting)"
+          },
+          "region": {
+            "type": "string",
+            "description": "Short descriptive name for this seam"
+          },
+          "files": {
+            "type": "array",
+            "description": "Files involved in this seam",
+            "items": {
+              "type": "object",
+              "required": ["file", "line"],
+              "properties": {
+                "file": {
+                  "type": "string",
+                  "description": "File path (repo-relative)"
+                },
+                "line": {
+                  "type": "integer",
+                  "description": "Primary line number"
+                }
+              }
+            }
+          },
+          "rationale": {
+            "type": "string",
+            "description": "Why this seam warrants attention"
+          }
+        }
+      }
+    }
+  }
+}

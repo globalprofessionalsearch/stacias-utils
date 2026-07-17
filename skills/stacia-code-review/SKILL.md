@@ -1,20 +1,18 @@
 ---
 name: stacia-code-review
-description: Orchestrated multi-perspective code review of a change set, optionally spanning multiple repositories. Fans out parallel read-only reviewer subagents (correctness, security, performance, api-contract, tests, cross-repo) via a single pi-dynamic-workflows `workflow` call, adversarially verifies the high-severity findings, then synthesizes per repo (one report per repo, a separate cross-repo analysis, and an overall top-priorities triage). Use when asked to review a PR, a set of PRs, a branch range, or uncommitted changes — especially when the work spans more than one repo.
+description: Orchestrated multi-perspective code review of a change set, optionally spanning multiple repositories. Uses a bounded-context architecture with orientation, reconciliation, and perspective review phases. Use when asked to review a PR, a set of PRs, a branch range, or uncommitted changes.
 ---
 
 # Code Review (orchestrator)
 
 You are the **orchestrator**. You establish the change set under review, then run
 a single **`workflow`** call (the pi-dynamic-workflows tool) that fans out to
-specialized read-only reviewer subagents in parallel, adversarially verifies the
-high-severity findings, and synthesizes per repo. You persist the artifacts and
-assemble the final report around that call.
+specialized read-only subagents. You persist the artifacts and assemble the final
+report around that call.
 
 This skill targets the **`workflow` tool from `@quintinshaw/pi-dynamic-workflows`**
-(`agent()`, `parallel()`, `phase()`, `verify`-style stages, per-agent `schema`,
-`tier`, and `agentType`). It replaces an earlier pi-subagents implementation. The
-run-directory helper `code-review-workdir.py` is unchanged and harness-neutral.
+(`agent()`, `parallel()`, `phase()`, per-agent `schema`, `tier`, and `agentType`).
+The run-directory helper `code-review-workdir.py` handles all filesystem I/O.
 
 ## Why the work is split around the workflow call
 
@@ -25,14 +23,10 @@ A `workflow` script runs in a Node **vm sandbox**: no `fs`, no `require`, no
   preflight, the interactive scope gate, `init`, and `build-bundle` per repo
   (all the `gh`/`git`/filesystem I/O the helper does).
 - **The single `workflow` call** — pure fan-out: subagents *read* the on-disk
-  bundles (their `agentType` grants `read`/`ffgrep`/`fffind`), review → verify →
-  synthesize, and the script **returns a compact JSON value**. It writes nothing.
+  bundles (their `agentType` grants `read`/`ffgrep`/`fffind`), and the script
+  **returns a compact JSON value**. It writes nothing.
 - **Orchestrator turn, after the call** — persist findings + report via the
   helper (which the sandbox could not call) and print the paths.
-
-This matches the extension's intended shape ("intermediate results stay in
-variables… returns only the result") and makes the read-only guarantee concrete:
-the script cannot write, and every subagent is tool-restricted via `agentType`.
 
 ## 0. Preflight
 
@@ -42,12 +36,11 @@ step 1 once candidates are known.
 - **`workflow` tool present**: this skill drives pi-dynamic-workflows. If the
   `workflow` tool is unavailable, stop and tell the user the extension isn't
   installed (`pi install npm:@quintinshaw/pi-dynamic-workflows`, then `/reload`).
-- **Read-only `agentType` installed**: the reviewer/verify/synth subagents bind
-  their read-only toolset through `~/.pi/agents/stacia-review-readonly.md`. Check
-  it exists (`ls ~/.pi/agents/stacia-review-readonly.md`). If absent, tell the
-  user to run `summon setup` (it symlinks the binding from this skill dir) — do
-  not silently create it. Without it, the fan-out has no tool-level read-only
-  enforcement.
+- **Read-only `agentType` installed**: the subagents bind their read-only toolset
+  through `~/.pi/agents/stacia-review-readonly.md`. Check it exists
+  (`ls ~/.pi/agents/stacia-review-readonly.md`). If absent, tell the user to run
+  `summon setup` (it symlinks the binding from this skill dir) — do not silently
+  create it.
 - **`gh` available & authed**: `gh auth status`. If it fails or `gh` is missing,
   you cannot resolve PRs — fall back to branch-range or working-tree diffs and
   tell the user.
@@ -58,11 +51,10 @@ Report any preflight failure to the user before proceeding. Never fabricate a di
 
 ## 1. Establish scope (hard gate)
 
-The review is always defined relative to **a set of changes**. Determine it
-before anything else, and **do not run the workflow until scope is explicitly
-confirmed**. This gate is interactive, so it must stay in this orchestrator turn —
-scope cannot be resolved inside the sandboxed script (bundles need `gh`/`git`),
-so it is settled and bundled *before* the `workflow` call regardless.
+The review is defined by **a set of changes** and **a stated charge**. Both are
+required. Do not run the workflow until scope and charge are explicitly confirmed.
+
+### 1a. Determine the change set
 
 1. **If PRs are specified** (numbers/URLs): those PRs are the change set. Resolve
    each with `gh pr view <id> --json ...` and note repo, base, head.
@@ -84,8 +76,23 @@ Validate each repo before continuing — do not guess:
 - **Working tree state**: `git -C <path> status --porcelain` when reviewing
   uncommitted changes.
 
-Confirm the full scope (repos + refs/PRs/working tree) back to the user in one
-line and wait for agreement before continuing.
+### 1b. Require a charge (hard stop)
+
+A **charge** is a statement of what the work claims to accomplish. The review
+orients and critiques against this charge. **Do not proceed without one.**
+
+- If the user provided a charge (e.g., PR description, commit message, or explicit
+  statement), confirm it back to them.
+- If no charge is evident, **halt and ask**: "What does this change claim to
+  accomplish?" Accept any non-empty answer. A minimal charge ("fix the login bug")
+  is acceptable; absence is not.
+- **Never infer the charge from the diff.** The skill orients and critiques; it
+  does not invent intent.
+
+### 1c. Confirm scope
+
+Confirm the full scope (repos + refs/PRs/working tree + charge) back to the user
+in a brief summary and wait for agreement before continuing.
 
 ## 2. Allocate the run directory and build per-repo bundles
 
@@ -104,7 +111,7 @@ python3 <skill-dir>/code-review-workdir.py init <repo> [<repo> ...]
 It creates `${XDG_CACHE_HOME:-$HOME/.cache}/stacia-code-review/runs/<ts>-<id>/`
 with `bundles/`, `findings/`, a `report.md` target, and a `manifest.json`, then
 prints that manifest as JSON: per-repo `slug` + `bundle` + `findings`, the
-`run_dir`, `report`, `multi_repo`, and (multi-repo only) `cross_repo_findings`.
+`run_dir`, `report`, and `multi_repo`.
 **Keep the parsed manifest** — you pass its paths into the workflow `args` and
 into every later write.
 
@@ -124,254 +131,148 @@ python3 <skill-dir>/code-review-workdir.py build-bundle \
 
 `build-bundle` captures the diff bytes itself and **fails loudly** if the command
 errors, the diff is empty, or it has no hunks — so a broken capture can never
-reach a reviewer. It annotates every changed file with churn, post-change LOC, and
-an **advisory confidence ceiling** (larger file → lower ceiling), and inlines each
-file's diff (omitting only diffs too large to inline, with a pointer to the file).
-One repo per bundle is deliberate: a reviewer handles a single repo far more
-reliably than a combined bundle. `write-bundle` (raw stdin) remains a guarded
-fallback, but **prefer `build-bundle`**.
+reach a reviewer.
 
-## 3. The `workflow` call (fan-out → verify → synthesize)
+## 3. The `workflow` call
 
-Run **one** `workflow` call. Its script inlines the personas and schemas (read
-from this skill dir at authoring time — the sandbox can't read them at runtime),
-reads the change set from `args`, and returns a compact JSON result. Subagents
-read the bundles off disk via their read-only `agentType`.
+Run **one** `workflow` call using the static workflow script. The orchestrator
+reads the script and all personas/schemas, then passes them to the workflow tool.
 
-### Inline these into the script (authoring time)
+### Read the static workflow script
 
-Read each file below and paste its contents into the script as a string / object
-literal. Do **not** rely on runtime file reads — the sandbox has no `fs`.
+```
+const script = read('<skill-dir>/workflow-script.js')
+```
 
-- `references/common-reviewer-rules.md` → `COMMON` (prepended to every perspective)
-- `references/reviewer-{correctness,security,performance,api-contract,tests,cross-repo}.md`
-  → the six persona strings
-- `references/verify.md` → `VERIFY_PERSONA`
-- `references/synth.md` → `SYNTH_PERSONA`
-- `findings.schema.json` → `findingsSchema` (object literal)
-- `synth.schema.json` → `synthSchema` (object literal)
+The workflow script (`workflow-script.js`) is static and versioned.
+It contains all the orchestration logic: comprehension → review → synthesis.
 
-### Pass the change set as `args`
+### Read config, personas, and schemas
 
-Build `args` from the manifest + scope and pass it to the `workflow` tool:
+The workflow sandbox has no `fs`, so the orchestrator must pre-read config,
+personas, and schemas and pass them in `args`:
+
+**Config** (read, parse, and validate):
+- `config.json` — tunable constants (rounds, timeouts, thresholds)
+- `config.schema.json` — validate config against this schema; fail fast on invalid config
+
+**Personas** (read as strings):
+- `references/orienteer-claim-to-code.md`
+- `references/orienteer-code-to-claim.md`
+- `references/reconciler.md`
+- `references/common-reviewer-rules.md`
+- `references/reviewer-{correctness,security,performance,api-contract,tests}.md`
+- `references/synthesizer.md`
+
+**Schemas** (read and parse as JSON):
+- `orientation.schema.json`
+- `seam-map.schema.json`
+- `reviewer-output.schema.json`
+- `synthesis.schema.json`
+
+### Inject config into schemas
+
+After reading schemas, inject config values into schema bounds for runtime
+enforcement:
+
+```js
+// Inject seam bounds
+schemas.seamMap.properties.seams.minItems = config.reconciler.minSeams
+schemas.seamMap.properties.seams.maxItems = config.reconciler.maxSeams
+
+// Inject max findings
+schemas.reviewer.properties.findings.maxItems = config.reviewer.maxFindings
+```
+
+This ensures bounds are both config-driven AND schema-enforced at runtime.
+
+### Build args
+
+Build `args` from the manifest + scope + config + personas + schemas:
 
 ```json
 {
   "run_dir": "<run_dir>",
+  "charge": "<the stated charge>",
   "multi_repo": <bool>,
-  "repos": [ { "repo": "<name>", "slug": "<slug>", "bundle": "<bundle path>", "path": "<abs repo local path>" } ]
+  "repos": [ { "repo": "<name>", "slug": "<slug>", "bundle": "<bundle path>", "path": "<abs repo local path>" } ],
+  "config": { /* parsed config.json */ },
+  "personas": {
+    "orienteerA": "<contents of orienteer-claim-to-code.md>",
+    "orienteerB": "<contents of orienteer-code-to-claim.md>",
+    "reconciler": "<contents of reconciler.md>",
+    "commonRules": "<contents of common-reviewer-rules.md>",
+    "reviewers": {
+      "correctness": "<contents of reviewer-correctness.md>",
+      "security": "<contents of reviewer-security.md>",
+      "performance": "<contents of reviewer-performance.md>",
+      "api-contract": "<contents of reviewer-api-contract.md>",
+      "tests": "<contents of reviewer-tests.md>"
+    },
+    "synthesizer": "<contents of synthesizer.md>"
+  },
+  "schemas": {
+    "orientation": { /* parsed orientation.schema.json */ },
+    "seamMap": { /* parsed seam-map.schema.json */ },
+    "reviewer": { /* parsed reviewer-output.schema.json */ },
+    "synthesis": { /* parsed synthesis.schema.json */ }
+  }
 }
 ```
 
-### Roles, tiers, and read-only binding
-
-Every `agent()` call passes `agentType: 'stacia-review-readonly'` (tool-level
-read-only: `read`/`ffgrep`/`fffind` only) plus the inlined persona as the prompt.
-Route by role: **reviewers → `tier: 'medium'`**, **verifiers → `tier: 'medium'`**,
-**synth → `tier: 'big'`**. Give every `agent()` a short unique `label`.
-
-The verify stage is **hand-rolled** (not the built-in `verify()` helper) so its
-subagents are also tool-restricted and evidence-grounded: each verifier opens the
-cited file and confirms the quoted evidence exists there. Run the `workflow` tool
-with `agentRetries: 1` (recoverable fan-out failures) and `concurrency: 6`.
-
-### Script skeleton
+### Call the workflow
 
 ```js
-export const meta = {
-  name: 'stacia_code_review',
-  description: 'Multi-perspective code review: fan out, verify, synthesize per repo',
-  phases: [{ title: 'Review' }, { title: 'Verify' }, { title: 'Synthesize' }, { title: 'Completeness' }],
-}
-
-const RO = 'stacia-review-readonly'
-const COMMON = `...`                 // references/common-reviewer-rules.md
-const PERSONA = {                    // references/reviewer-*.md
-  correctness: `...`, security: `...`, performance: `...`,
-  'api-contract': `...`, tests: `...`,
-}
-const CROSS_PERSONA = `...`          // references/reviewer-cross-repo.md
-const VERIFY_PERSONA = `...`         // references/verify.md
-const SYNTH_PERSONA = `...`          // references/synth.md
-const findingsSchema = { /* findings.schema.json */ }
-const synthSchema = { /* synth.schema.json */ }
-const verifySchema = { type: 'object', properties: { real: { type: 'boolean' }, reason: { type: 'string' } }, required: ['real'] }
-
-const PERSPECTIVES = ['correctness', 'security', 'performance', 'api-contract', 'tests']
-const isHigh = (f) => f && (f.severity === 'Blocker' || f.severity === 'Major')
-
-// ---- Review: every perspective, every repo, in parallel ----
-phase('Review')
-const reviewJobs = []
-for (const r of args.repos) {
-  for (const p of PERSPECTIVES) {
-    reviewJobs.push({ slug: r.slug, repo: r.repo, perspective: p, cross: false,
-      run: () => agent(`${COMMON}\n\n---\n\n${PERSONA[p]}\n\n---\n\nReview the change set in bundle \`${r.bundle}\` (repo \`${r.repo}\`, local path \`${r.path}\`). Open files under the local path for context as needed.`,
-        { agentType: RO, tier: 'medium', schema: findingsSchema, label: `${r.slug}:${p}` }) })
-  }
-}
-if (args.multi_repo) {
-  const bundles = args.repos.map((r) => r.bundle).join(', ')
-  reviewJobs.push({ slug: 'cross-repo', repo: 'cross-repo', perspective: 'cross-repo', cross: true,
-    run: () => agent(`${COMMON}\n\n---\n\n${CROSS_PERSONA}\n\n---\n\nReview the cross-repo change set across all bundles: ${bundles}.`,
-      { agentType: RO, tier: 'medium', schema: findingsSchema, label: 'cross-repo' }) })
-}
-const reviewResults = await parallel(reviewJobs.map((j) => j.run))
-// bucket per repo (results align with reviewJobs order); track failed perspectives
-const perRepo = {}       // slug -> { repo, perspectives: [{perspective, note, findings[]}], failed: [] }
-let crossResult = null
-for (const r of args.repos) perRepo[r.slug] = { repo: r.repo, perspectives: [], failed: [] }
-reviewJobs.forEach((j, i) => {
-  const res = reviewResults[i]
-  if (j.cross) { crossResult = res; return }
-  if (res && Array.isArray(res.findings)) perRepo[j.slug].perspectives.push(res)
-  else perRepo[j.slug].failed.push(j.perspective)
+const result = await workflow({
+  script: script,
+  args: JSON.stringify(args),
+  agentRetries: config.workflow.agentRetries,
+  concurrency: config.workflow.concurrency
 })
-
-// ---- Verify: adversarially ground every Blocker/Major (+ cross-repo highs) ----
-phase('Verify')
-const verifyFinding = async (f, ctx) => {
-  const claim = `${VERIFY_PERSONA}\n\n---\n\nCandidate finding (JSON):\n${JSON.stringify(f)}\n\nContext: bundle \`${ctx.bundle}\`${ctx.path ? `, repo local path \`${ctx.path}\`` : ''}. Open the cited file and confirm the quoted evidence exists at that location.`
-  const votes = (await parallel([1, 2].map((n) => () =>
-    agent(claim, { agentType: RO, tier: 'medium', schema: verifySchema, label: `verify ${ctx.slug} ${n}` })))).filter(Boolean)
-  const real = votes.filter((v) => v && v.real).length
-  return votes.length > 0 && real / votes.length >= 0.5   // unverifiable (no votes) -> drop
-}
-for (const r of args.repos) {
-  const ctx = { slug: r.slug, bundle: r.bundle, path: r.path }
-  const bucket = perRepo[r.slug]
-  bucket.dropped = []
-  for (const pr of bucket.perspectives) {
-    const kept = []
-    for (const f of pr.findings) {
-      if (!isHigh(f)) { kept.push(f); continue }          // only high-sev is verified
-      if (await verifyFinding(f, ctx)) kept.push(f)
-      else bucket.dropped.push(f)
-    }
-    pr.findings = kept
-  }
-}
-if (crossResult && Array.isArray(crossResult.findings)) {
-  const allBundles = args.repos.map((r) => r.bundle).join(', ')
-  const ctx = { slug: 'cross-repo', bundle: allBundles, path: null }
-  const kept = []
-  for (const f of crossResult.findings) {
-    if (!isHigh(f)) { kept.push(f); continue }
-    if (await verifyFinding(f, ctx)) kept.push(f)
-  }
-  crossResult.findings = kept
-}
-
-// ---- Synthesize: one big-tier synth per repo (dedup/theme/prioritize) ----
-phase('Synthesize')
-const synthJobs = args.repos.map((r) => () =>
-  agent(`${SYNTH_PERSONA}\n\n---\n\nRepo: \`${r.repo}\`. Bundle: \`${r.bundle}\`. Local path: \`${r.path}\`.\n\nPer-perspective findings (already verified for Blocker/Major):\n${JSON.stringify(perRepo[r.slug].perspectives)}`,
-    { agentType: RO, tier: 'big', schema: synthSchema, label: `synth:${r.slug}` }))
-const synthResults = await parallel(synthJobs)
-
-// ---- Completeness: a final "what did we under-review" critic per repo ----
-phase('Completeness')
-const completeness = await parallel(args.repos.map((r, i) => () =>
-  completenessCheck({ repo: r.repo, perspectives: PERSPECTIVES, failed: perRepo[r.slug].failed },
-    synthResults[i] ?? { note: 'synth produced no result' })))
-
-return {
-  run_dir: args.run_dir,
-  multi_repo: args.multi_repo,
-  repos: args.repos.map((r, i) => ({
-    repo: r.repo, slug: r.slug,
-    synth: synthResults[i] ?? null,
-    rawPerspectives: perRepo[r.slug].perspectives,
-    droppedByVerify: perRepo[r.slug].dropped ?? [],
-    failedPerspectives: perRepo[r.slug].failed,
-    completeness: completeness[i] ?? null,
-  })),
-  crossRepo: crossResult ?? null,
-}
 ```
 
-Notes on the script:
-- `parallel()` takes **thunks** (`() => agent(...)`), and returns results in input
-  order — that alignment is how results are bucketed back to `(repo, perspective)`.
-- A failed `agent()` returns `null`; guard for it (a failed perspective is
-  recorded in `failedPerspectives`, not silently dropped).
-- Only **Blocker/Major** (and cross-repo highs) are verified — the expensive
-  false-positive cases. Minor/Nit pass straight to synth, which still clamps the
-  confidence ceiling.
-- `completenessCheck` is the extension's built-in critic; it runs at the session
-  default tier with default tools (read-only by the nature of its task). It's a
-  "what's missing" signal for the report header, not a gate.
+The static workflow script handles all phases: Comprehension → Review → Synthesis.
+See `workflow-script.js` for the implementation.
 
 ## 4. Persist and assemble the report (after the call)
 
 The `workflow` result is a plain object. Now do the writes the sandbox couldn't —
-always via the helper, never the `write` tool. Redact secret-like values in
-evidence (prefix + length, never the full credential) before persisting.
+always via the helper, never the `write` tool.
 
-1. **Per-repo findings** (the record): for each repo, pipe its `synth` result
-   (plus `droppedByVerify` / `failedPerspectives` for the audit trail) as JSON:
+1. **Write synthesis** (the record): pipe the synthesis result as JSON:
    ```
-   python3 <skill-dir>/code-review-workdir.py write-findings --run <run_dir> --slug <slug>   # JSON on stdin
+   python3 <skill-dir>/code-review-workdir.py write-findings --run <run_dir> --slug synthesis
    ```
-2. **Cross-repo findings** (multi-repo only): pipe `crossRepo` as JSON:
+
+2. **Write the report**: render one markdown document from the synthesis:
    ```
-   python3 <skill-dir>/code-review-workdir.py write-cross-findings --run <run_dir>   # JSON on stdin
+   python3 <skill-dir>/code-review-workdir.py write-report --run <run_dir>
    ```
-3. **The report**: render one markdown document and store it:
-   ```
-   python3 <skill-dir>/code-review-workdir.py write-report --run <run_dir>   # markdown on stdin
-   ```
-   Print the returned path and the `run_dir` to the user so artifacts are findable.
 
 ### Report shape
 
-**Multi-repo** — three components, in this order:
+The report is **charge-scoped** (not repo-scoped):
 
-1. **Top Priorities** — Blockers and Majors **only**, ranked, each labelled with
-   its repo or `cross-repo`. **Cross-repo findings sort first**, then by severity
-   (Blocker → Major), then confidence. A triage list — never Minor/Nit here.
-2. **Per-repo sections** — one per repo, each opening with that repo's synth
-   `summary` line, then its findings grouped by `theme` and ordered Blocker →
-   Major → Minor → Nit (location + evidence + rationale + suggestion).
-3. **Cross-repo** — the (verified) cross-repo findings, same finding shape.
+1. **Header**: charge, verdict, one-line summary
+2. **Top Priorities**: Blockers and Majors only, with corroboration counts
+3. **All Findings**: grouped by severity, with location, evidence, rationale
+4. **Coverage Caveats**: under-explored seams, timeouts, any reviewer failures
+5. **Follow-up Recommendation**: if triggered, explain why
 
-**Single-repo** — collapse to one report (no Top Priorities, no Cross-repo): the
-synth `summary` as the header, then its grouped findings ordered by severity.
-
-The summary header carries: scope (repos + refs/PRs), the fact that Blocker/Major
-findings were adversarially verified, any `failedPerspectives`, and each repo's
-`completeness.missing` items (as caveats). Note any repo whose `synth` was `null`
-rather than dropping it.
+Print the report path and `run_dir` to the user.
 
 ## Notes
 
-- **Read-only by construction.** Every subagent (reviewer, verifier, synth) binds
+- **Read-only by construction.** Every subagent binds
   `agentType: 'stacia-review-readonly'`, whose frontmatter grants only
   `read, ffgrep, fffind` — no `edit`, `write`, or `bash`. The workflow script
   itself runs in a sandbox with no `fs`/`bash`, so it cannot mutate anything
   either. The orchestrator never edits code as part of a review.
 - **The read-only binding must be installed.** `summon setup` symlinks
   `skills/stacia-code-review/stacia-review-readonly.md` into `~/.pi/agents/`,
-  where the workflow tool resolves `agentType` names (user scope, so it applies
-  regardless of which repo is under review). If preflight finds it missing, stop
-  and have the user run `summon setup`.
-- **The personas are the source of truth** under `references/`; edit them there.
-  They are inlined into the script at authoring time because the vm sandbox can't
-  read files at runtime — re-inline after editing.
+  where the workflow tool resolves `agentType` names.
 - **Run state** lives under `${XDG_CACHE_HOME:-$HOME/.cache}/stacia-code-review/runs/`,
-  allocated, captured, and written by `code-review-workdir.py` (a private helper,
-  not a PATH utility): `init` allocates + records a `manifest.json`; `build-bundle`
-  runs `gh`/`git` itself (so the model never handles diff bytes) and annotates each
-  file with a size-derived confidence ceiling; `write-findings` /
-  `write-cross-findings` / `write-report` (and the `write-bundle` fallback) resolve
-  every destination from the manifest and validate input. Old run dirs persist
-  until manually cleaned.
-- **The file-size confidence ceiling is advisory**: the bundle surfaces it,
-  reviewers calibrate down and never exceed it, the verifier grounds high-severity
-  findings in the actual file, and synth clamps any finding that still exceeds its
-  ceiling. Nothing is mechanically blocked — a large file just lowers attainable
-  confidence.
-- If `gh` is unavailable or a PR can't be resolved, fall back to branch-range or
-  working-tree diffs and tell the user.
-- Keep each per-repo bundle reasonably scoped; for very large changes the helper
-  omits oversized per-file diffs and reviewers open files on demand.
+  managed by `code-review-workdir.py`.
+- **Charge is required.** The skill never infers intent from the diff. A review
+  is defined by exactly one charge; truly independent changes with no shared
+  charge are separate reviews.
