@@ -24,10 +24,14 @@ export const meta = {
 // Parse args if passed as string
 const a = typeof args === 'string' ? JSON.parse(args) : args
 
-// Sanitize charge for prompt injection safety - escape newlines and markdown separators
+// Sanitize charge for prompt injection safety
+// Escape: newlines, markdown separators, code fences, backticks
 const safeCharge = a.charge
   .replace(/\n/g, ' ')
+  .replace(/\r/g, '')
   .replace(/---/g, '—')
+  .replace(/```/g, "'''")
+  .replace(/`/g, "'")
 
 const RO = 'stacia-review-readonly'
 
