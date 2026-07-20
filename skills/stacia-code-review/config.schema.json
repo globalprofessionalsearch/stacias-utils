@@ -52,7 +52,7 @@
           "minItems": 1,
           "items": {
             "type": "string",
-            "enum": ["correctness", "security", "performance", "api-contract", "tests"]
+            "enum": ["correctness", "security", "performance", "api-contract", "tests", "adr"]
           },
           "description": "Review perspectives to run"
         }

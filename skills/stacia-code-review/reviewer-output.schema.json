@@ -7,7 +7,7 @@
   "properties": {
     "perspective": {
       "type": "string",
-      "enum": ["correctness", "security", "performance", "api-contract", "tests"],
+      "enum": ["correctness", "security", "performance", "api-contract", "tests", "adr"],
       "description": "The reviewer's perspective"
     },
     "findings": {

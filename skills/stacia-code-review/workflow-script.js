@@ -76,9 +76,16 @@ async function runReviewer(perspective) {
   
   for (let round = 1; round <= K; round++) {
     const isLastRound = round === K
+    
+    // ADR reviewer gets ADR context; other reviewers don't
+    const adrContext = (perspective === 'adr' && a.adrs && a.adrs.length > 0)
+      ? `ADR context (${a.adrs.length} accepted ADRs):\n${JSON.stringify(a.adrs.map(adr => ({ id: adr.id, title: adr.title, content: adr.content })))}\n\n`
+      : (perspective === 'adr' ? 'ADR context: No ADRs provided.\n\n' : '')
+    
     const prompt = `${personas.commonRules}\n\n---\n\n${personas.reviewers[perspective]}\n\n---\n\n` +
       `Charge: ${safeCharge}\n\n` +
       `Max findings: ${config.reviewer.maxFindings}\n\n` +
+      adrContext +
       `Orientation:\n${seamMap.merged_orientation}\n\n` +
       `Seam map:\n${JSON.stringify(seamMap.seams)}\n\n` +
       `Round ${round} of ${K}${isLastRound ? ' (FINAL - must produce write-up)' : ''}\n\n` +

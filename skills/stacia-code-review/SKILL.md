@@ -94,6 +94,24 @@ orients and critiques against this charge. **Do not proceed without one.**
 Confirm the full scope (repos + refs/PRs/working tree + charge) back to the user
 in a brief summary and wait for agreement before continuing.
 
+### 1d. ADR locations (optional)
+
+After confirming scope, ask: **"Where should I look for relevant ADRs?"**
+
+Examples of valid responses:
+- `github.com/org/adrs/docs/adr` — a GitHub path (fetched via `gh api`)
+- `docs/adr` — a local path in the repo under review
+- `github.com/org/adrs/docs/adr + docs/adr` — multiple locations
+- `none` or skip — no ADR compliance checking
+
+If the user provides locations:
+1. The `adr` perspective will be included in the review
+2. You will fetch ADRs from those locations before the workflow call
+
+If the user skips or says "none":
+1. Remove `adr` from the perspectives list for this run
+2. Skip ADR fetching
+
 ## 2. Allocate the run directory and build per-repo bundles
 
 All run state lives in a central, cwd-independent directory owned by the bundled
@@ -161,7 +179,7 @@ personas, and schemas and pass them in `args`:
 - `references/orienteer-code-to-claim.md`
 - `references/reconciler.md`
 - `references/common-reviewer-rules.md`
-- `references/reviewer-{correctness,security,performance,api-contract,tests}.md`
+- `references/reviewer-{correctness,security,performance,api-contract,tests,adr}.md`
 - `references/synthesizer.md`
 - `references/verifier.md`
 
@@ -171,6 +189,36 @@ personas, and schemas and pass them in `args`:
 - `reviewer-output.schema.json`
 - `synthesis.schema.json`
 - `verifier-output.schema.json`
+
+### Fetch ADRs (if locations provided)
+
+If the user provided ADR locations in step 1d, fetch them before building args:
+
+**For GitHub paths** (e.g., `github.com/org/repo/docs/adr`):
+```bash
+# List ADR files
+gh api repos/<org>/<repo>/contents/<path> --jq '.[].name'
+
+# Read each .md file
+gh api repos/<org>/<repo>/contents/<path>/<filename> --jq '.content' | base64 -d
+```
+
+**For local paths** (e.g., `docs/adr` in a repo under review):
+```bash
+ls <repo-path>/<adr-path>/*.md
+read <repo-path>/<adr-path>/<filename>
+```
+
+**Filter to accepted ADRs**: Parse frontmatter and include only those with
+`status: accepted`. Proposed, deprecated, and superseded ADRs are not binding.
+
+Collect ADRs into an array of objects:
+```json
+[
+  { "id": "0001", "title": "...", "status": "accepted", "content": "<full md>" },
+  ...
+]
+```
 
 ### Inject config into schemas
 
@@ -209,11 +257,13 @@ Build `args` from the manifest + scope + config + personas + schemas:
       "security": "<contents of reviewer-security.md>",
       "performance": "<contents of reviewer-performance.md>",
       "api-contract": "<contents of reviewer-api-contract.md>",
-      "tests": "<contents of reviewer-tests.md>"
+      "tests": "<contents of reviewer-tests.md>",
+      "adr": "<contents of reviewer-adr.md>"
     },
     "synthesizer": "<contents of synthesizer.md>",
     "verifier": "<contents of verifier.md>"
   },
+  "adrs": [ /* array of accepted ADRs, or empty if none/skipped */ ],
   "schemas": {
     "orientation": { /* parsed orientation.schema.json */ },
     "seamMap": { /* parsed seam-map.schema.json */ },
