@@ -17,7 +17,8 @@ export const meta = {
   phases: [
     { title: 'Comprehension' },
     { title: 'Review' },
-    { title: 'Synthesis' }
+    { title: 'Synthesis' },
+    { title: 'Verification' }
   ],
 }
 
@@ -134,11 +135,69 @@ const synthesis = await agent(
   { agentType: RO, tier: 'big', schema: schemas.synthesis, label: 'synthesizer' }
 )
 
+// ---- Verification: confirm Blocker/Major findings ----
+phase('Verification')
+
+// Filter to only Blocker and Major findings
+const findingsToVerify = (synthesis.consolidated_findings || []).filter(
+  f => f.severity === 'Blocker' || f.severity === 'Major'
+)
+
+// Fan out parallel verifiers, one per finding
+const verificationResults = await parallel(
+  findingsToVerify.map((finding, idx) => () => agent(
+    `${personas.verifier}\n\n---\n\n` +
+    `Change set:\n${bundleContext}\n\n` +
+    `Finding to verify:\n${JSON.stringify(finding, null, 2)}\n\n` +
+    `Verify this finding. Read the actual code at the cited location.`,
+    { agentType: RO, tier: 'medium', schema: schemas.verifier, label: `verify:${idx}` }
+  ))
+)
+
+// Apply verification results
+const verifiedFindings = []
+const dismissedFindings = []
+
+findingsToVerify.forEach((finding, idx) => {
+  const result = verificationResults[idx]
+  if (!result) {
+    // Verifier failed - retain finding with low confidence
+    verifiedFindings.push({ ...finding, confidence: 'low', verification: 'unverified' })
+  } else if (result.outcome === 'dismiss') {
+    dismissedFindings.push({ ...finding, verification: 'dismissed', dismissal_reason: result.explanation })
+  } else if (result.outcome === 'correct') {
+    // Apply corrections
+    const corrected = { ...finding, ...result.corrections, verification: 'corrected' }
+    if (result.corrections?.location) corrected.location = result.corrections.location
+    verifiedFindings.push(corrected)
+  } else {
+    // retain
+    verifiedFindings.push({ ...finding, verification: 'confirmed' })
+  }
+})
+
+// Rebuild consolidated findings: verified Blocker/Major + unverified Minor/Nit
+const minorAndNits = (synthesis.consolidated_findings || []).filter(
+  f => f.severity !== 'Blocker' && f.severity !== 'Major'
+)
+const finalFindings = [...verifiedFindings, ...minorAndNits]
+
 return {
   run_dir: a.run_dir,
   charge: a.charge,
   orientations: { a: orientationA, b: orientationB },
   seamMap: seamMap,
   reviews: reviewResults,
-  synthesis: synthesis
+  synthesis: {
+    ...synthesis,
+    consolidated_findings: finalFindings,
+    dismissed_findings: dismissedFindings,
+    verification_stats: {
+      verified: findingsToVerify.length,
+      confirmed: verifiedFindings.filter(f => f.verification === 'confirmed').length,
+      corrected: verifiedFindings.filter(f => f.verification === 'corrected').length,
+      dismissed: dismissedFindings.length,
+      unverified: verifiedFindings.filter(f => f.verification === 'unverified').length
+    }
+  }
 }

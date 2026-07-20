@@ -15,6 +15,7 @@ Layout (base = ${XDG_CACHE_HOME:-$HOME/.cache}/stacia-code-review):
         bundles/<slug>.md        # one diff bundle per repo
         findings/<slug>.json     # raw per-perspective reviewer results per repo
         report.md                # final assembled report
+        report.html              # HTML wrapper (renders report.md client-side)
 
 Subcommands
 -----------
@@ -282,9 +283,16 @@ def cmd_init(args) -> int:
 
     repos = unique_slugs(args.repos)
     multi = len(repos) > 1
+    # Copy HTML template to run directory
+    template_src = Path(__file__).parent / "report-template.html"
+    report_html = run_dir / "report.html"
+    if template_src.exists():
+        report_html.write_text(template_src.read_text())
+
     manifest = {
         "run_dir": str(run_dir),
         "report": str(run_dir / "report.md"),
+        "report_html": str(report_html),
         "multi_repo": multi,
         "repos": [
             {"repo": repo, "slug": slug,
@@ -363,6 +371,8 @@ def cmd_write_report(args) -> int:
     _, manifest = load_manifest(args.run)
     Path(manifest["report"]).write_text(read_stdin())
     print(manifest["report"])
+    if manifest.get("report_html"):
+        print(manifest["report_html"])
     return 0
 
 

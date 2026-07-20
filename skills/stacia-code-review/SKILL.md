@@ -163,12 +163,14 @@ personas, and schemas and pass them in `args`:
 - `references/common-reviewer-rules.md`
 - `references/reviewer-{correctness,security,performance,api-contract,tests}.md`
 - `references/synthesizer.md`
+- `references/verifier.md`
 
 **Schemas** (read and parse as JSON):
 - `orientation.schema.json`
 - `seam-map.schema.json`
 - `reviewer-output.schema.json`
 - `synthesis.schema.json`
+- `verifier-output.schema.json`
 
 ### Inject config into schemas
 
@@ -209,13 +211,15 @@ Build `args` from the manifest + scope + config + personas + schemas:
       "api-contract": "<contents of reviewer-api-contract.md>",
       "tests": "<contents of reviewer-tests.md>"
     },
-    "synthesizer": "<contents of synthesizer.md>"
+    "synthesizer": "<contents of synthesizer.md>",
+    "verifier": "<contents of verifier.md>"
   },
   "schemas": {
     "orientation": { /* parsed orientation.schema.json */ },
     "seamMap": { /* parsed seam-map.schema.json */ },
     "reviewer": { /* parsed reviewer-output.schema.json */ },
-    "synthesis": { /* parsed synthesis.schema.json */ }
+    "synthesis": { /* parsed synthesis.schema.json */ },
+    "verifier": { /* parsed verifier-output.schema.json */ }
   }
 }
 ```
@@ -259,7 +263,9 @@ The report is **charge-scoped** (not repo-scoped):
 4. **Coverage Caveats**: under-explored seams, timeouts, any reviewer failures
 5. **Follow-up Recommendation**: if triggered, explain why
 
-Print the report path and `run_dir` to the user.
+Print the report path (`report.md`), the HTML viewer path (`report.html`), and
+`run_dir` to the user. The HTML file renders the markdown client-side and can be
+opened directly in a browser.
 
 ## Notes
 
