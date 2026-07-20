@@ -94,7 +94,7 @@ orients and critiques against this charge. **Do not proceed without one.**
 Confirm the full scope (repos + refs/PRs/working tree + charge) back to the user
 in a brief summary and wait for agreement before continuing.
 
-### 1d. ADR locations (optional)
+### 1d. ADR locations
 
 After confirming scope, ask: **"Where should I look for relevant ADRs?"**
 

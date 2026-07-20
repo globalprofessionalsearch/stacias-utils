@@ -78,9 +78,15 @@ async function runReviewer(perspective) {
     const isLastRound = round === K
     
     // ADR reviewer gets ADR context; other reviewers don't
-    const adrContext = (perspective === 'adr' && a.adrs && a.adrs.length > 0)
-      ? `ADR context (${a.adrs.length} accepted ADRs):\n${JSON.stringify(a.adrs.map(adr => ({ id: adr.id, title: adr.title, content: adr.content })))}\n\n`
-      : (perspective === 'adr' ? 'ADR context: No ADRs provided.\n\n' : '')
+    let adrContext = ''
+    if (perspective === 'adr') {
+      if (a.adrs && a.adrs.length > 0) {
+        const adrSummary = a.adrs.map(adr => ({ id: adr.id, title: adr.title, content: adr.content }))
+        adrContext = `ADR context (${a.adrs.length} accepted ADRs):\n${JSON.stringify(adrSummary)}\n\n`
+      } else {
+        adrContext = 'ADR context: No ADRs provided.\n\n'
+      }
+    }
     
     const prompt = `${personas.commonRules}\n\n---\n\n${personas.reviewers[perspective]}\n\n---\n\n` +
       `Charge: ${safeCharge}\n\n` +
