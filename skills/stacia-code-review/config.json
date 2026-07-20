@@ -7,7 +7,7 @@
   },
   "reviewer": {
     "maxFindings": 6,
-    "perspectives": ["correctness", "security", "performance", "api-contract", "tests"]
+    "perspectives": ["correctness", "security", "performance", "api-contract", "tests", "adr"]
   },
   "reconciler": {
     "minSeams": 3,
