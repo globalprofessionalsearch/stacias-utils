@@ -106,11 +106,22 @@ Examples of valid responses:
 
 If the user provides locations:
 1. The `adr` perspective will be included in the review
-2. You will fetch ADRs from those locations before the workflow call
+2. You will fetch ADRs from those locations and stage them into the context
+   store (step 2) before the workflow call
 
 If the user skips or says "none":
 1. Remove `adr` from the perspectives list for this run
 2. Skip ADR fetching
+
+### 1e. Any other large context
+
+ADRs are one case of a general need: **any large reference material a reviewer
+should know** (specs, PRDs, design docs, style guides, prior review notes,
+fetched pages, oversized PR bodies). Do not inline such material into `args` by
+value. Stage it into the run's **context store** (step 2) and pass only the
+catalog of paths; subagents `read` what they need. The only things that stay
+inline are the small, static personas and schemas the workflow *script body*
+itself composes.
 
 ## 2. Allocate the run directory and build per-repo bundles
 
@@ -127,9 +138,10 @@ python3 <skill-dir>/code-review-workdir.py init <repo> [<repo> ...]
 ```
 
 It creates `${XDG_CACHE_HOME:-$HOME/.cache}/stacia-code-review/runs/<ts>-<id>/`
-with `bundles/`, `findings/`, a `report.md` target, and a `manifest.json`, then
-prints that manifest as JSON: per-repo `slug` + `bundle` + `findings`, the
-`run_dir`, `report`, and `multi_repo`.
+with `bundles/`, `context/`, `findings/`, a `report.md` target, and a
+`manifest.json`, then prints that manifest as JSON: per-repo `slug` + `bundle` +
+`findings`, the `run_dir`, `report`, `multi_repo`, and an initially-empty
+`context` catalog.
 **Keep the parsed manifest** — you pass its paths into the workflow `args` and
 into every later write.
 
@@ -150,6 +162,23 @@ python3 <skill-dir>/code-review-workdir.py build-bundle \
 `build-bundle` captures the diff bytes itself and **fails loudly** if the command
 errors, the diff is empty, or it has no hunks — so a broken capture can never
 reach a reviewer.
+
+### Stage large context (context store)
+
+The bundle is the by-reference channel for diffs. The **context store** is the
+same channel for everything else. For each piece of large reference material,
+resolve the source yourself, then pipe the bytes to the helper:
+
+```
+<resolve source> | python3 <skill-dir>/code-review-workdir.py add-context \
+  --run <run_dir> --kind <kind> --id <id> --title <title> [--ext md]
+```
+
+It writes `context/<kind>/<id>.<ext>`, records `{id,kind,title,path}` in the
+manifest's `context` catalog, and prints the path. Re-parse the manifest (or
+collect the printed entries) so you can pass the catalog into the workflow
+`args`. **Never** place content by an outside-supplied path or use the `write`
+tool — route every write through the helper.
 
 ## 3. The `workflow` call
 
@@ -190,9 +219,10 @@ personas, and schemas and pass them in `args`:
 - `synthesis.schema.json`
 - `verifier-output.schema.json`
 
-### Fetch ADRs (if locations provided)
+### Fetch and stage ADRs (if locations provided)
 
-If the user provided ADR locations in step 1d, fetch them before building args:
+If the user provided ADR locations in step 1d, fetch them and stage each into
+the context store (`kind: adr`) before building args:
 
 **For GitHub paths** (e.g., `github.com/org/repo/docs/adr`):
 ```bash
@@ -212,13 +242,16 @@ read <repo-path>/<adr-path>/<filename>
 **Filter to accepted ADRs**: Parse frontmatter and include only those with
 `status: accepted`. Proposed, deprecated, and superseded ADRs are not binding.
 
-Collect ADRs into an array of objects:
-```json
-[
-  { "id": "0001", "title": "...", "status": "accepted", "content": "<full md>" },
-  ...
-]
+Stage each accepted ADR into the context store (do not inline its body):
+```bash
+<read/decode the ADR markdown> | python3 <skill-dir>/code-review-workdir.py \
+  add-context --run <run_dir> --kind adr --id 0001 --title "Short title"
 ```
+
+After staging, re-read `manifest.json`; its `context` catalog now holds
+`{id,kind,title,path}` for every staged item. Pass that catalog as `context` in
+the workflow `args` (paths only — the workflow injects the catalog into prompts
+and subagents `read` the bodies).
 
 ### Inject config into schemas
 
@@ -246,6 +279,7 @@ Build `args` from the manifest + scope + config + personas + schemas:
   "charge": "<the stated charge>",
   "multi_repo": <bool>,
   "repos": [ { "repo": "<name>", "slug": "<slug>", "bundle": "<bundle path>", "path": "<abs repo local path>" } ],
+  "context": [ { "id": "0001", "kind": "adr", "title": "...", "path": "<context path>" } ],
   "config": { /* parsed config.json */ },
   "personas": {
     "orienteerA": "<contents of orienteer-claim-to-code.md>",
@@ -263,7 +297,6 @@ Build `args` from the manifest + scope + config + personas + schemas:
     "synthesizer": "<contents of synthesizer.md>",
     "verifier": "<contents of verifier.md>"
   },
-  "adrs": [ /* array of accepted ADRs, or empty if none/skipped */ ],
   "schemas": {
     "orientation": { /* parsed orientation.schema.json */ },
     "seamMap": { /* parsed seam-map.schema.json */ },

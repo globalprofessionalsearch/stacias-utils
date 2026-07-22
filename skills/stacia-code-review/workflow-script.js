@@ -51,13 +51,31 @@ const bundleContext = a.repos.map(r =>
   `Repo: ${r.repo}, bundle: ${r.bundle}, local path: ${r.path}`
 ).join('\n')
 
+// ---- Context catalog: reference material staged on disk by the orchestrator ----
+// Large context never travels through args by value. The catalog lists paths;
+// subagents read them on demand with their read-only tools.
+const contextCatalog = a.context || []
+
+function catalogNote(kinds) {
+  const items = kinds
+    ? contextCatalog.filter(c => kinds.includes(c.kind))
+    : contextCatalog
+  if (!items.length) return ''
+  return 'Reference material (read the paths relevant to your task on demand; ' +
+    'do not assume their contents):\n' +
+    items.map(c => `- [${c.kind}] ${c.id} — ${c.title}: ${c.path}`).join('\n') +
+    '\n\n'
+}
+
+const orientContext = catalogNote()
+
 const [orientationA, orientationB] = await parallel([
   () => agent(
-    `${personas.orienteerA}\n\n---\n\nCharge: ${safeCharge}\n\nChange set:\n${bundleContext}\n\nTrace how the change delivers the charge (outside-in).`,
+    `${personas.orienteerA}\n\n---\n\nCharge: ${safeCharge}\n\n${orientContext}Change set:\n${bundleContext}\n\nTrace how the change delivers the charge (outside-in).`,
     { agentType: RO, tier: 'medium', schema: schemas.orientation, label: 'orienteer-A' }
   ),
   () => agent(
-    `${personas.orienteerB}\n\n---\n\nCharge: ${safeCharge}\n\nChange set:\n${bundleContext}\n\nReconstruct what the change does, then reconcile against the charge (inside-out).`,
+    `${personas.orienteerB}\n\n---\n\nCharge: ${safeCharge}\n\n${orientContext}Change set:\n${bundleContext}\n\nReconstruct what the change does, then reconcile against the charge (inside-out).`,
     { agentType: RO, tier: 'medium', schema: schemas.orientation, label: 'orienteer-B' }
   )
 ])
@@ -77,21 +95,20 @@ async function runReviewer(perspective) {
   for (let round = 1; round <= K; round++) {
     const isLastRound = round === K
     
-    // ADR reviewer gets ADR context; other reviewers don't
-    let adrContext = ''
+    // Every reviewer gets the full context catalog (paths only) and reads what
+    // is relevant. The ADR reviewer additionally gets an explicit ADR framing.
+    let reviewerContext = catalogNote()
     if (perspective === 'adr') {
-      if (a.adrs && a.adrs.length > 0) {
-        const adrSummary = a.adrs.map(adr => ({ id: adr.id, title: adr.title, content: adr.content }))
-        adrContext = `ADR context (${a.adrs.length} accepted ADRs):\n${JSON.stringify(adrSummary)}\n\n`
-      } else {
-        adrContext = 'ADR context: No ADRs provided.\n\n'
-      }
+      const adrItems = contextCatalog.filter(c => c.kind === 'adr')
+      reviewerContext = adrItems.length
+        ? `ADR context: ${adrItems.length} accepted ADR(s) staged below. Read each path to check compliance.\n\n` + catalogNote(['adr'])
+        : 'ADR context: No ADRs provided.\n\n'
     }
     
     const prompt = `${personas.commonRules}\n\n---\n\n${personas.reviewers[perspective]}\n\n---\n\n` +
       `Charge: ${safeCharge}\n\n` +
       `Max findings: ${config.reviewer.maxFindings}\n\n` +
-      adrContext +
+      reviewerContext +
       `Orientation:\n${seamMap.merged_orientation}\n\n` +
       `Seam map:\n${JSON.stringify(seamMap.seams)}\n\n` +
       `Round ${round} of ${K}${isLastRound ? ' (FINAL - must produce write-up)' : ''}\n\n` +

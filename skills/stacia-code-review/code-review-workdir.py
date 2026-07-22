@@ -13,6 +13,7 @@ Layout (base = ${XDG_CACHE_HOME:-$HOME/.cache}/stacia-code-review):
     runs/<UTC-timestamp>-<shortid>/
         manifest.json            # the run's path map (written by init)
         bundles/<slug>.md        # one diff bundle per repo
+        context/<kind>/<id>.<ext># reference material, read by subagents on demand
         findings/<slug>.json     # raw per-perspective reviewer results per repo
         report.md                # final assembled report
         report.html              # HTML wrapper (renders report.md client-side)
@@ -27,6 +28,10 @@ Subcommands
             pr:<id>                 a GitHub PR (via gh)
             range:<base>...<head>   a committed ref range
             worktree[:all|:staged]  uncommitted changes (all = staged+unstaged)
+    add-context --run <dir> --kind <k> --id <id> --title <t> [--ext <ext>]
+        Stage reference material (body on stdin) into the run's context store
+        and record it in the manifest catalog. Subagents read it by path on
+        demand -- large context never travels through workflow args by value.
     write-bundle    --run <dir> --slug <slug>     (raw bundle on stdin; fallback)
     write-findings  --run <dir> --slug <slug>     (JSON on stdin; validated)
     write-report    --run <dir>                   (content on stdin)
@@ -51,6 +56,12 @@ from pathlib import Path
 SIZE_HIGH_MAX = 800     # post-change LOC at/under which High confidence is allowed
 SIZE_MED_MAX = 2000     # at/under which Medium is the ceiling; above this -> Low
 INLINE_MAX_DIFF_LINES = 1000  # per-file diff hunks larger than this are not inlined
+
+
+def safe_filename(name: str) -> str:
+    """Filesystem-safe token for a context id/kind (no slashes, no surprises)."""
+    token = re.sub(r"[^a-zA-Z0-9._-]+", "-", str(name)).strip("-_.")
+    return token or "item"
 
 
 def slugify(name: str) -> str:
@@ -278,8 +289,10 @@ def cmd_init(args) -> int:
         run_name += "-" + slugify(args.label)
     run_dir = base_dir() / "runs" / run_name
     bundles_dir, findings_dir = run_dir / "bundles", run_dir / "findings"
+    context_dir = run_dir / "context"
     bundles_dir.mkdir(parents=True, exist_ok=True)
     findings_dir.mkdir(parents=True, exist_ok=True)
+    context_dir.mkdir(parents=True, exist_ok=True)
 
     repos = unique_slugs(args.repos)
     multi = len(repos) > 1
@@ -294,6 +307,7 @@ def cmd_init(args) -> int:
         "report": str(run_dir / "report.md"),
         "report_html": str(report_html),
         "multi_repo": multi,
+        "context": [],
         "repos": [
             {"repo": repo, "slug": slug,
              "bundle": str(bundles_dir / f"{slug}.md"),
@@ -332,6 +346,27 @@ def cmd_build_bundle(args) -> int:
     bundle = assemble_bundle(args.slug, repo_path, args.source, meta_md, files, base_ref)
     Path(entry["bundle"]).write_text(bundle)
     print(entry["bundle"])
+    return 0
+
+
+def cmd_add_context(args) -> int:
+    run_dir, manifest = load_manifest(args.run)
+    body = read_stdin()
+    kind = safe_filename(args.kind)
+    cid = safe_filename(args.id)
+    ext = safe_filename(args.ext).lstrip(".") or "md"
+    dest_dir = run_dir / "context" / kind
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    dest = dest_dir / f"{cid}.{ext}"
+    dest.write_text(body)
+    entry = {"id": args.id, "kind": args.kind, "title": args.title, "path": str(dest)}
+    catalog = manifest.setdefault("context", [])
+    # replace any prior entry with the same (kind, id); otherwise append
+    catalog[:] = [c for c in catalog
+                  if not (c.get("kind") == args.kind and c.get("id") == args.id)]
+    catalog.append(entry)
+    (run_dir / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
+    print(str(dest))
     return 0
 
 
@@ -394,6 +429,15 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--source", required=True,
                    help="pr:<id> | range:<base>...<head> | worktree[:all|:staged]")
     p.set_defaults(func=cmd_build_bundle)
+
+    p = sub.add_parser("add-context",
+                       help="Stage reference material (stdin) into the context store.")
+    p.add_argument("--run", required=True)
+    p.add_argument("--kind", required=True, help="category, e.g. adr, spec, doc")
+    p.add_argument("--id", required=True, help="stable id, used as the filename")
+    p.add_argument("--title", required=True, help="human-readable title")
+    p.add_argument("--ext", default="md", help="file extension (default: md)")
+    p.set_defaults(func=cmd_add_context)
 
     p = sub.add_parser("write-bundle", help="Write a pre-built bundle from stdin (fallback).")
     p.add_argument("--run", required=True)
