@@ -70,15 +70,26 @@ def slugify(name: str) -> str:
     return slug or "repo"
 
 
+# Slugs not available to repos: write-findings routes this slug to the
+# top-level findings/synthesis.json (the reviewer synthesis output), not to
+# a per-repo findings file. A repo whose basename slugifies to "synthesis"
+# must not be allowed to collide with -- and overwrite -- that file. The TS
+# side agrees: it writes synthesis via slug "synthesis".
+RESERVED_SLUGS = {"synthesis"}
+
+
 def unique_slugs(repos):
     seen, result = {}, []
     for repo in repos:
-        slug = slugify(repo)
-        if slug in seen:
-            seen[slug] += 1
-            slug = f"{slug}-{seen[slug]}"
+        base = slugify(repo)
+        # A base slug that collides with a reserved name is disambiguated the
+        # same way a repeated repo slug is: suffix with an incrementing count.
+        if base in seen or base in RESERVED_SLUGS:
+            seen[base] = seen.get(base, 0) + 1
+            slug = f"{base}-{seen[base]}"
         else:
-            seen[slug] = 1
+            seen[base] = 1
+            slug = base
         result.append((repo, slug))
     return result
 

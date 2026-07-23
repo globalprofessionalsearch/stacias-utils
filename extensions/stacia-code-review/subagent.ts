@@ -63,6 +63,7 @@ export async function runSubagent(spec: SubagentSpec): Promise<Any | null> {
 	a.lastEventAt = Date.now();
 
 	const holder: { session: Any; result: Any } = { session: null, result: null };
+	let attempts = 0;
 
 	const submit = defineTool({
 		name: "submit_result",
@@ -72,11 +73,12 @@ export async function runSubagent(spec: SubagentSpec): Promise<Any | null> {
 			"validation errors, correct the fields and call submit_result again.",
 		parameters: toTypebox(schema),
 		execute: async (_id: string, params: Any) => {
-			a.attempts += 1;
+			attempts += 1;
+			a.attempts = attempts;
 			const errs = validate(params, schema);
 			if (errs.length) {
 				monitor.pushEvent(a, `submit rejected: ${errs[0]}`);
-				if (a.attempts >= maxAttempts) {
+				if (attempts >= maxAttempts) {
 					monitor.pushEvent(a, "submit attempts exhausted");
 					// stop the turn; coordinator treats a null result as failure
 					queueMicrotask(() => holder.session?.abort?.());
@@ -90,33 +92,35 @@ export async function runSubagent(spec: SubagentSpec): Promise<Any | null> {
 		},
 	});
 
-	const { session } = await createAgentSession({
-		cwd,
-		model,
-		modelRuntime: rt,
-		tools: ["read", "grep", "find", "ls", "submit_result"],
-		customTools: [submit],
-		resourceLoader: bareLoader(systemPrompt),
-		sessionManager: SessionManager.inMemory(cwd),
-		settingsManager: SettingsManager.inMemory({ compaction: { enabled: false } }),
-	});
-	holder.session = session;
-	monitor.subscribe(a, session);
-
 	let timedOut = false;
-	const timer = setTimeout(() => {
-		timedOut = true;
-		session.abort?.();
-	}, timeoutMs);
+	let timer: ReturnType<typeof setTimeout> | undefined;
 
 	try {
+		const { session } = await createAgentSession({
+			cwd,
+			model,
+			modelRuntime: rt,
+			tools: ["read", "grep", "find", "ls", "submit_result"],
+			customTools: [submit],
+			resourceLoader: bareLoader(systemPrompt),
+			sessionManager: SessionManager.inMemory(cwd),
+			settingsManager: SettingsManager.inMemory({ compaction: { enabled: false } }),
+		});
+		holder.session = session;
+		monitor.subscribe(a, session);
+
+		timer = setTimeout(() => {
+			timedOut = true;
+			session.abort?.();
+		}, timeoutMs);
+
 		await session.prompt(userPrompt);
 	} catch (e) {
 		a.fail = e instanceof Error ? e.message : String(e);
 		monitor.pushEvent(a, `error: ${a.fail}`);
 	} finally {
 		clearTimeout(timer);
-		session.dispose?.();
+		holder.session?.dispose?.();
 	}
 
 	if ((a.state as string) === "killed") {
@@ -134,6 +138,6 @@ export async function runSubagent(spec: SubagentSpec): Promise<Any | null> {
 		return holder.result;
 	}
 	a.state = "failed";
-	a.fail = a.fail ?? `no conforming submit_result after ${a.attempts} attempt(s)`;
+	a.fail = a.fail ?? `no conforming submit_result after ${attempts} attempt(s)`;
 	return null;
 }

@@ -22,7 +22,7 @@ type Any = any;
 
 const RepoParam = Type.Object({
 	path: Type.String({ description: "Absolute local path to the git repo" }),
-	source: Type.String({ description: "Change set: pr:<id> | range:<base>...<head> | worktree | worktree:staged" }),
+	source: Type.String({ description: "Change set: pr:<id> | range:<base>...<head> | worktree | worktree:all | worktree:staged" }),
 });
 const AdrParam = Type.Object({
 	id: Type.String({ description: "ADR id (used as filename), e.g. 0001" }),
@@ -35,12 +35,18 @@ const Params = Type.Object({
 	adrs: Type.Optional(Type.Array(AdrParam, { description: "Accepted ADRs to stage as review context." })),
 });
 
+// HTML-escape untrusted LLM-authored text before it's interpolated into report
+// markdown, which is later rendered to HTML (marked.parse -> innerHTML).
+function escapeHtml(v: Any): string {
+	return String(v ?? "").replace(/[&<>]/g, (c) => (c === "&" ? "&amp;" : c === "<" ? "&lt;" : "&gt;"));
+}
+
 function renderReport(charge: string, s: Any): string {
 	const bySev = (sev: string) => (s.consolidated_findings ?? []).filter((f: Any) => f.severity === sev);
 	const findingMd = (f: Any) =>
 		`- **${f.severity}** (${f.confidence ?? "?"}${f.verification ? `, ${f.verification}` : ""}) ` +
-		`\`${f.location?.file ?? "?"}:${f.location?.line ?? "?"}\`${f.corroborated_by ? ` — corroborated by ${f.corroborated_by.join(", ")}` : ""}\n` +
-		`  - ${f.finding}\n  - _why:_ ${f.rationale}${f.suggestion ? `\n  - _fix:_ ${f.suggestion}` : ""}`;
+		`\`${escapeHtml(f.location?.file ?? "?")}:${escapeHtml(f.location?.line ?? "?")}\`${f.corroborated_by ? ` — corroborated by ${f.corroborated_by.join(", ")}` : ""}\n` +
+		`  - ${escapeHtml(f.finding)}\n  - _why:_ ${escapeHtml(f.rationale)}${f.suggestion ? `\n  - _fix:_ ${escapeHtml(f.suggestion)}` : ""}${f.evidence ? `\n  - _evidence:_ ${escapeHtml(f.evidence)}` : ""}`;
 	const lines: string[] = [];
 	lines.push(`# Code Review\n`);
 	lines.push(`**Charge:** ${charge}\n`);
@@ -59,7 +65,13 @@ function renderReport(charge: string, s: Any): string {
 	const caveats = [...(s.caveats ?? []), ...underExplored.map((x: Any) => `Seam ${x.seam_id} under-explored${x.note ? `: ${x.note}` : ""}`), ...(s.coverage_notes ?? [])];
 	lines.push(caveats.length ? caveats.map((c: string) => `- ${c}`).join("\n") : "_None._");
 	if (s.follow_up_recommended) lines.push(`\n## Follow-up Recommended\n${s.follow_up_reason ?? ""}`);
-	if (s.dismissed_findings?.length) lines.push(`\n## Dismissed (${s.dismissed_findings.length})\n` + s.dismissed_findings.map((f: Any) => `- \`${f.location?.file}:${f.location?.line}\` — ${f.finding} (_${f.dismissal_reason}_)`).join("\n"));
+	if (s.dismissed_findings?.length)
+		lines.push(
+			`\n## Dismissed (${s.dismissed_findings.length})\n` +
+				s.dismissed_findings
+					.map((f: Any) => `- \`${escapeHtml(f.location?.file)}:${escapeHtml(f.location?.line)}\` — ${escapeHtml(f.finding)} (_${escapeHtml(f.dismissal_reason)}_)`)
+					.join("\n"),
+		);
 	return `${lines.join("\n")}\n`;
 }
 
@@ -110,6 +122,11 @@ export default function staciaCodeReview(pi: ExtensionAPI) {
 			const findings = synthesis.consolidated_findings ?? [];
 			const counts = ["Blocker", "Major", "Minor", "Nit"].map((s) => `${findings.filter((f: Any) => f.severity === s).length} ${s}`).join(" · ");
 			return { synthesis, counts, report, run_dir: manifest.run_dir };
+		} catch (err) {
+			// The run didn't finish normally — make sure in-flight sibling
+			// subagents don't keep spending tokens after we unwind.
+			monitor.cancelAll();
+			throw err;
 		} finally {
 			signal?.removeEventListener?.("abort", onAbort);
 			monitor.stop(ctx);
