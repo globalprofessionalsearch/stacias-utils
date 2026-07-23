@@ -135,44 +135,25 @@ export default function staciaCodeReview(pi: ExtensionAPI) {
 		},
 	});
 
-	// Interactive scope-gathering for the /stacia-code-review command.
-	async function gatherParams(ctx: Any, argStr: string): Promise<ReviewParams | null> {
-		const charge = (argStr?.trim() || (await ctx.ui.input("Charge — what does this change claim to accomplish?", "")) || "").trim();
-		if (!charge) {
-			ctx.ui.notify("code review: a charge is required", "warning");
-			return null;
-		}
-		const repoPath = (await ctx.ui.input("Repo path", ctx.cwd)) || ctx.cwd;
-		const kind = await ctx.ui.select("Change set", ["Uncommitted (worktree)", "Staged only", "Pull request", "Branch range"]);
-		if (!kind) return null;
-		let source = "worktree";
-		if (kind === "Staged only") source = "worktree:staged";
-		else if (kind === "Pull request") {
-			const id = await ctx.ui.input("PR number or URL", "");
-			if (!id) return null;
-			source = `pr:${id}`;
-		} else if (kind === "Branch range") {
-			const rng = await ctx.ui.input("Range base...head", "origin/main...HEAD");
-			if (!rng) return null;
-			source = `range:${rng}`;
-		}
-		return { charge, repos: [{ path: repoPath, source }], adrs: [] };
-	}
+	// The command is a thin trigger: it hands your free-form scope to the model,
+	// which does the natural-language scope gathering / validation / charge check
+	// (the original §1 behavior) and then calls the code_review tool. No menus, no
+	// baked-in assumptions about where the changes are.
+	const SCOPING_PROTOCOL =
+		"Establish the change set the review needs: which repo(s) and exactly what changed " +
+		"(specific PRs, a committed ref range base...head, or the uncommitted working tree — staged or staged+unstaged); " +
+		"resolve repo paths and verify refs exist; and confirm an explicit charge (what the change claims to accomplish) — " +
+		"never infer the charge from the diff. If anything is ambiguous or missing, ask one concise question at a time; " +
+		"otherwise proceed. Then call the code_review tool with the resolved repos (path + source spec) and the charge.";
 
 	pi.registerCommand("stacia-code-review", {
-		description: "Run a multi-perspective code review of a change set (prompts for scope + charge)",
-		handler: async (argStr: string, ctx: Any) => {
-			try {
-				const params = await gatherParams(ctx, argStr);
-				if (!params) return;
-				ctx.ui.notify("code review: starting… (press f8 to drill in, esc to cancel)", "info");
-				const controller = new AbortController();
-				const { synthesis, counts, report, run_dir } = await performReview(ctx, params, controller.signal);
-				ctx.ui.notify(`code review: ${synthesis.verdict} — ${counts}`, "info");
-				ctx.ui.notify(`report: ${report.split("\n")[0]}  (run ${run_dir})`, "info");
-			} catch (e) {
-				ctx.ui.notify(`code review failed: ${e instanceof Error ? e.message : String(e)}`, "error");
-			}
+		description: "Describe a code review in plain language; the model resolves scope + charge and runs it.",
+		handler: async (argStr: string, _ctx: Any) => {
+			const scope = (argStr ?? "").trim();
+			const msg = scope
+				? `Run a code review. Here is what I want reviewed, in my words: "${scope}".\n\n${SCOPING_PROTOCOL}`
+				: `I want to run a code review. ${SCOPING_PROTOCOL} Start by asking me what I want reviewed and its charge.`;
+			pi.sendUserMessage(msg);
 		},
 	});
 
