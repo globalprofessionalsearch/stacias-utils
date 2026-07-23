@@ -17,11 +17,10 @@
     "followUpThreshold": 4
   },
   "models": {
-    "default": null,
-    "orienteer": null,
-    "reconciler": null,
-    "reviewer": null,
-    "synthesizer": null,
-    "verifier": null
+    "orienteer": "anthropic/claude-sonnet-4-5",
+    "reconciler": "anthropic/claude-sonnet-4-5",
+    "reviewer": "anthropic/claude-sonnet-4-5",
+    "synthesizer": "anthropic/claude-opus-4-5",
+    "verifier": "anthropic/claude-sonnet-4-5"
   }
 }

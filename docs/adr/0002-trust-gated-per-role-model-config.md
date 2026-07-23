@@ -51,28 +51,27 @@ able to redirect subagent traffic to an attacker-chosen provider/model?
 
 ## Decision Outcome
 
-Chosen option: **trust-gated layered config**. Model configuration is layered,
-lowest to highest precedence:
+Chosen option: **trust-gated layered config**. Models live in the single
+extension config (see the consolidation) and are layered, lowest to highest
+precedence via `loadConfig` (`config.ts`, deep-merged):
 
-1. Bundled/host default — the host session's active model (`ctx.model`),
-   used as the ultimate fallback.
+1. Bundled defaults — `assets/config.json`, shipping an explicit `"provider/id"`
+   for every role (there is **no `default` key and no host-model fallback**).
 2. User file — `~/.pi/agent/stacia-code-review.json` (`getAgentDir()` +
    `CONFIG_NAME`). Always read.
 3. Project file — `<cwd>/.pi/stacia-code-review.json` (`CONFIG_DIR_NAME` +
-   `CONFIG_NAME`). Read **only if** `ctx.isProjectTrusted?.()` is true;
-   `loadModelConfig(cwd, projectTrusted)` skips it entirely otherwise.
+   `CONFIG_NAME`). Read **only if** `ctx.isProjectTrusted?.()` is true.
 
-Each file has the shape `{ "models": { "default"?: string, "<role>"?: string
-} }`, values `"provider/id"`. Layers are merged with `Object.assign`, so
-project values overwrite user values overwrite nothing (host model is a
-fallback, not a merge input).
+`models` has the shape `{ "<role>": "provider/id" }` for all five roles
+(`orienteer`, `reconciler`, `reviewer`, `synthesizer`, `verifier`); layers deep-
+merge so a higher layer overrides individual roles.
 
-Per-role resolution (`resolveModel`): `cfg.models[role] ?? cfg.models.default`
-→ if unset, use the host model; if set but malformed (no `/`) or unresolvable
-via `rt.getModel(provider, id)`, fall back to the host model and return a
-`note` string. `index.ts` calls `loadModelConfig(ctx.cwd, ctx.isProjectTrusted?.()
-?? false)` once per run; `coordinator.ts` calls `resolveModel` per role and
-collects any notes for surfacing to the user.
+Resolution is an **explicit, fail-fast requirement**. `loadConfig` runs
+`validateModels` and throws (listing every offender) if any role is unset,
+blank, or not `provider/id`. `resolveModel(role, cfg.models, rt)` throws if the
+configured id can't be resolved via `rt.getModel(provider, id)`. There is no
+silent fallback to a host/default model — the review runs only on models the
+config names.
 
 Project trust is the same trust gate pi already uses to decide whether a
 project's own `.pi/` config/extensions are allowed to run
@@ -88,10 +87,9 @@ stop — no partial trust, no prompt, no separate config surface to defend.
   has explicitly trusted that project.
 - Good: per-role tuning still works normally for Stacia's own trusted repos
   and always works via the user-level file regardless of project trust.
-- Good: if a configured model name is malformed or the provider/id can't be
-  resolved, the run degrades to the host model for that role rather than
-  failing, and a note is surfaced — misconfiguration is visible, not silent,
-  but also not fatal.
+- Good: misconfiguration is loud, not silent — an unset/blank/malformed role or
+  an unresolvable `provider/id` aborts the run with a message naming the role,
+  rather than silently reviewing on some arbitrary host model.
 - Neutral: the gate is coarse — it's the same trust bit as extension/config
   loading in general, not a review-specific trust decision. If pi's
   project-trust model changes, this feature inherits that change

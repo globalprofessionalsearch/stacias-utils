@@ -89,7 +89,6 @@ export default function staciaCodeReview(pi: ExtensionAPI) {
 	async function performReview(ctx: Any, params: ReviewParams, signal?: AbortSignal) {
 		if (!params.charge?.trim()) throw new Error("a charge is required (what the change claims to accomplish)");
 		if (!params.repos?.length) throw new Error("at least one repo is required");
-		if (!ctx.model) throw new Error("no active model");
 
 		const assets = loadAssets();
 		const repoIds = params.repos.map((r) => r.path.replace(/\/+$/, "").split("/").pop() || "repo");
@@ -115,8 +114,9 @@ export default function staciaCodeReview(pi: ExtensionAPI) {
 		const notes: string[] = [];
 		try {
 			const rt = await ModelRuntime.create();
+			// loadConfig fails fast if any role's model isn't an explicit provider/id
 			const config = loadConfig(ctx.cwd, ctx.isProjectTrusted?.() ?? false);
-			const synthesis = await runReview({ charge: params.charge, repos, manifest, assets, config, rt, hostModel: ctx.model, monitor, notes });
+			const synthesis = await runReview({ charge: params.charge, repos, manifest, assets, config, rt, monitor, notes });
 			await writeFindings(assets.helper, manifest.run_dir, "synthesis", JSON.stringify(synthesis, null, 2));
 			const report = await writeReport(assets.helper, manifest.run_dir, renderReport(params.charge, synthesis));
 			const findings = synthesis.consolidated_findings ?? [];

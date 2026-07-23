@@ -34,9 +34,8 @@ export interface ReviewInput {
 	assets: Assets;
 	config: Config;
 	rt: Any;
-	hostModel: Any;
 	monitor: Monitor;
-	notes: string[]; // model-resolution / coverage notes, appended in place
+	notes: string[]; // coverage notes (e.g. reviewer failures), appended in place
 }
 
 function sanitizeCharge(charge: string): string {
@@ -84,7 +83,7 @@ function mergeFindings(existing: Any[], incoming: Any[]): Any[] {
 }
 
 export async function runReview(input: ReviewInput): Promise<Any> {
-	const { assets, manifest, monitor, rt, hostModel, config: cfg, notes } = input;
+	const { assets, manifest, monitor, rt, config: cfg, notes } = input;
 	injectBounds(assets.schemas, cfg);
 	const charge = sanitizeCharge(input.charge);
 	const cwd = input.repos[0]?.path ?? process.cwd();
@@ -98,11 +97,7 @@ export async function runReview(input: ReviewInput): Promise<Any> {
 		if (monitor.cancelled) throw new Error("review cancelled by user");
 	};
 
-	const model = (role: Role) => {
-		const r = resolveModel(role, cfg.models, rt, hostModel);
-		if (r.note) notes.push(`${role}: ${r.note}`);
-		return r.model;
-	};
+	const model = (role: Role) => resolveModel(role, cfg.models, rt);
 	const bundleContext = untrusted(
 		"CHANGE SET CONTEXT",
 		input.repos.map((r) => `Repo: ${r.repo}, bundle (read this): ${r.bundle}, local path: ${r.path}`).join("\n"),

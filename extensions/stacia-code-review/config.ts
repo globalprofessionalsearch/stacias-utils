@@ -10,6 +10,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { CONFIG_DIR_NAME, getAgentDir } from "@earendil-works/pi-coding-agent";
+import { validateModels } from "./models.ts";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const BASE = path.join(HERE, "assets", "config.json");
@@ -20,7 +21,7 @@ export interface Config {
 	reviewer: { maxFindings: number; perspectives: string[] };
 	reconciler: { minSeams: number; maxSeams: number };
 	synthesis: { followUpThreshold: number };
-	models: Record<string, string | null>;
+	models: Record<string, string>; // per-role "provider/id"; all roles required (validated)
 }
 
 // biome-ignore lint/suspicious/noExplicitAny: arbitrary JSON being merged
@@ -58,5 +59,6 @@ export function loadConfig(cwd: string, trusted: boolean): Config {
 		if (project) cfg = deepMerge(cfg, project);
 	}
 
+	validateModels(cfg.models ?? {}); // fail fast: every role needs an explicit provider/id
 	return cfg as Config;
 }

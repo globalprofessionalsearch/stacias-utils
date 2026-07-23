@@ -61,8 +61,8 @@ caveats, never silently dropped).
 ## Config
 
 One config file governs the whole extension: tunables (`workflow`, `reviewer`,
-`reconciler`, `synthesis`) and models. Three layers, deep-merged low→high
-(`config.ts`):
+`reconciler`, `synthesis`) and per-role `models`. Three layers, deep-merged
+low→high (`config.ts`):
 
 1. **Shipped defaults** — `assets/config.json` (baked into the extension).
 2. **User override** — `~/.pi/agent/stacia-code-review.json`.
@@ -82,23 +82,28 @@ Shipped defaults (`assets/config.json`):
   "reviewer": { "maxFindings": 6, "perspectives": ["correctness", "security", "performance", "api-contract", "tests", "adr"] },
   "reconciler": { "minSeams": 3, "maxSeams": 12 },
   "synthesis": { "followUpThreshold": 4 },
-  "models": { "default": null, "orienteer": null, "reconciler": null, "reviewer": null, "synthesizer": null, "verifier": null }
+  "models": {
+    "orienteer": "anthropic/claude-sonnet-4-5",
+    "reconciler": "anthropic/claude-sonnet-4-5",
+    "reviewer": "anthropic/claude-sonnet-4-5",
+    "synthesizer": "anthropic/claude-opus-4-5",
+    "verifier": "anthropic/claude-sonnet-4-5"
+  }
 }
 ```
 
 ### Per-role models
 
-`models` maps role → `provider/id` (or `null`). Roles: `orienteer`,
-`reconciler`, `reviewer`, `synthesizer`, `verifier`, plus `default` as a
-fallback for any unset role. Resolution per agent (`models.ts`):
+`models` maps each role → an explicit `"provider/id"`. Roles: `orienteer`,
+`reconciler`, `reviewer` (one model for all six perspectives), `synthesizer`,
+`verifier`. **All roles are required. There is no `default` and no host-model
+fallback** — the review runs only on models you name.
 
-```
-models[role] → models.default → host session model
-```
-
-Zero-config (all `null`) uses the host model everywhere. An unresolvable
-`provider/id` (bad format, or model not found) falls back to the host model
-with a surfaced note rather than failing the run.
+Resolution is a **hard requirement, fail-fast**: `loadConfig` throws if any role
+is unset/blank/not `provider/id` (listing all offenders), and `resolveModel`
+throws if a configured id can't be found (bad provider/id or no auth). Change a
+role by overriding just that key in your user/project config; the shipped
+Anthropic set (sonnet, opus for synthesis) is only a default you can replace.
 
 ## Live monitor
 

@@ -93,14 +93,14 @@
     "models": {
       "type": "object",
       "additionalProperties": false,
-      "description": "Per-role model overrides. null = use host session model.",
+      "required": ["orienteer", "reconciler", "reviewer", "synthesizer", "verifier"],
+      "description": "Explicit model per agent role, as \"provider/id\". All roles required; there is no default and no host-model fallback.",
       "properties": {
-        "default": { "type": ["string", "null"], "description": "Fallback model for any role without its own override" },
-        "orienteer": { "type": ["string", "null"] },
-        "reconciler": { "type": ["string", "null"] },
-        "reviewer": { "type": ["string", "null"] },
-        "synthesizer": { "type": ["string", "null"] },
-        "verifier": { "type": ["string", "null"] }
+        "orienteer": { "type": "string", "description": "provider/id" },
+        "reconciler": { "type": "string", "description": "provider/id" },
+        "reviewer": { "type": "string", "description": "provider/id" },
+        "synthesizer": { "type": "string", "description": "provider/id" },
+        "verifier": { "type": "string", "description": "provider/id" }
       }
     }
   }
