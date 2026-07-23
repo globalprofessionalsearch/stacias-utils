@@ -99,16 +99,12 @@ skill_field() {
   frontmatter_field "$SKILL_DIR/$1/SKILL.md" "$2"
 }
 
-# The read-only tool allow-list the stacia-code-review workflow's agentType
-# binding must stay within. The fan-out's read-only guarantee rests on that file
-# granting no mutating tool, so it is enforced by lint, not just asserted in
-# prose. Every name here is non-mutating (read/search only); pi's real search
-# tools are ffgrep/fffind, the generic grep/find/ls are tolerated for portability.
-READONLY_TOOLS="read grep find ls ffgrep fffind structured_output"
-# The workflow read-only agentType binding this repo ships, and where `summon
-# setup` installs it so the `workflow` tool resolves it (user scope).
-REVIEW_RO_BINDING="$SKILL_DIR/stacia-code-review/stacia-review-readonly.md"
-PI_AGENTS_DIR="$HOME/.pi/agents"
+# The stacia-code-review coordinator is a pi EXTENSION (not a workflow-tool
+# skill anymore). `summon setup` symlinks it into ~/.pi/agent/extensions/ so pi
+# auto-discovers it in any project; read-only-ness is enforced inside the
+# extension (subagents are confined at the call site), not via an agentType file.
+REVIEW_EXTENSION="$REPO/extensions/stacia-code-review"
+PI_EXTENSIONS_DIR="$HOME/.pi/agent/extensions"
 
 # ---------------------------------------------------------------------------
 # Builtins
@@ -249,35 +245,10 @@ cmd_lint() {
     fi
   done
 
-  # The stacia-code-review workflow's read-only agentType binding: if present, it
-  # must be a valid, stacia-prefixed definition granting only non-mutating tools.
-  # The fan-out's read-only guarantee depends on this, so enforce it here.
-  if [[ -e "$REVIEW_RO_BINDING" ]]; then
-    if [[ "$(head -n1 "$REVIEW_RO_BINDING")" != "---" ]]; then
-      err "LINT: review binding: $REVIEW_RO_BINDING must open with a YAML frontmatter block (---)"; fail=1
-    fi
-    local bname btools tool
-    bname="$(frontmatter_field "$REVIEW_RO_BINDING" name || true)"
-    btools="$(frontmatter_field "$REVIEW_RO_BINDING" tools || true)"
-    if [[ "$bname" != "$SKILL_PREFIX"?* ]]; then
-      err "LINT: review binding: frontmatter 'name:' must be '$SKILL_PREFIX'-prefixed (got: ${bname:-<empty>})"; fail=1
-    fi
-    # The workflow tool only honors an array (`tools: [a, b]`); a bare comma
-    # string parses as a scalar and is silently ignored (no restriction), so
-    # require the flow-array form and strip its brackets before splitting.
-    if [[ -z "$btools" ]]; then
-      err "LINT: review binding: must declare a read-only 'tools:' field (${READONLY_TOOLS// /, })"; fail=1
-    elif [[ "$btools" != \[*\] ]]; then
-      err "LINT: review binding: 'tools:' must be a YAML array (tools: [${READONLY_TOOLS// /, }]) — a comma string is ignored by the workflow tool"; fail=1
-    else
-      btools="${btools#\[}"; btools="${btools%\]}"
-      for tool in ${btools//,/ }; do
-        case " $READONLY_TOOLS " in
-          *" $tool "*) ;;
-          *) err "LINT: review binding: tool '$tool' not allowed; the binding must be read-only (${READONLY_TOOLS// /, } only)"; fail=1 ;;
-        esac
-      done
-    fi
+  # The stacia-code-review coordinator extension: if present, it must have an
+  # index.ts entrypoint (pi discovers extensions/<name>/index.ts).
+  if [[ -d "$REVIEW_EXTENSION" && ! -f "$REVIEW_EXTENSION/index.ts" ]]; then
+    err "LINT: code-review extension: missing entrypoint ($REVIEW_EXTENSION/index.ts)"; fail=1
   fi
 
   # The dispatcher must obey its own contract too.
@@ -314,12 +285,11 @@ EOF
 }
 
 # ---------------------------------------------------------------------------
-# One-shot setup: hooks + skills + the workflow read-only binding + shell-rc
-# hints. Idempotent.
+# One-shot setup: hooks + skills + the code-review extension + shell-rc hints.
+# Idempotent.
 #  - Skills: a single umbrella symlink exposes skills/ to pi recursively.
-#  - Workflow binding: the code-review skill's read-only agentType
-#    (stacia-review-readonly.md) is symlinked into ~/.pi/agents/ so the
-#    pi-dynamic-workflows `workflow` tool resolves it (user scope, any repo).
+#  - Extension: the code-review coordinator extension is symlinked into
+#    ~/.pi/agent/extensions/ so pi auto-discovers it (user scope, any project).
 # ---------------------------------------------------------------------------
 cmd_setup() {
   git -C "$REPO" config core.hooksPath .githooks
@@ -341,14 +311,18 @@ cmd_setup() {
   ln -sfn "$SKILL_DIR" "$pi/$PI_SKILLS_LINK"
   echo "✓ pi: skills linked once ($PI_SKILLS_LINK -> skills/); new skills auto-discovered"
 
-  # --- workflow read-only binding: symlink the code-review skill's agentType
-  # definition into ~/.pi/agents/, where the pi-dynamic-workflows `workflow` tool
-  # resolves agentType names at user scope (so it applies in any repo under
-  # review). This is what makes the review fan-out tool-level read-only.
-  if [[ -e "$REVIEW_RO_BINDING" ]]; then
-    mkdir -p "$PI_AGENTS_DIR"
-    ln -sfn "$REVIEW_RO_BINDING" "$PI_AGENTS_DIR/$(basename "$REVIEW_RO_BINDING")"
-    echo "✓ workflow: read-only binding linked ($(basename "$REVIEW_RO_BINDING") -> ~/.pi/agents/)"
+  # --- code-review extension: symlink into ~/.pi/agent/extensions/ so pi
+  # auto-discovers it in every project. Read-only-ness is enforced inside the
+  # extension (subagents are confined at the call site).
+  if [[ -d "$REVIEW_EXTENSION" ]]; then
+    mkdir -p "$PI_EXTENSIONS_DIR"
+    ln -sfn "$REVIEW_EXTENSION" "$PI_EXTENSIONS_DIR/$(basename "$REVIEW_EXTENSION")"
+    echo "✓ pi: code-review extension linked ($(basename "$REVIEW_EXTENSION") -> ~/.pi/agent/extensions/)"
+  fi
+  # Prune the obsolete workflow read-only agentType binding a prior setup planted.
+  if [[ -L "$HOME/.pi/agents/stacia-review-readonly.md" ]]; then
+    rm -f "$HOME/.pi/agents/stacia-review-readonly.md"
+    echo "✓ pruned obsolete read-only binding (stacia-review-readonly.md)"
   fi
 
   # --- claude: Claude Code is no longer a wired harness (the code-review skill

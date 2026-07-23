@@ -70,16 +70,32 @@ def slugify(name: str) -> str:
     return slug or "repo"
 
 
+# Slugs not available to repos: write-findings routes this slug to the
+# top-level findings/synthesis.json (the reviewer synthesis output), not to
+# a per-repo findings file. A repo whose basename slugifies to "synthesis"
+# must not be allowed to collide with -- and overwrite -- that file. The TS
+# side agrees: it writes synthesis via slug "synthesis".
+RESERVED_SLUGS = {"synthesis"}
+
+
 def unique_slugs(repos):
-    seen, result = {}, []
+    # Disambiguate by the set of already-ASSIGNED FINAL slugs, not just base
+    # names -- a repo whose basename is literally "synthesis-1" must never
+    # collide with another repo ("synthesis") that got bumped to "synthesis-1"
+    # for hitting RESERVED_SLUGS. So each candidate is checked against every
+    # slug already handed out, not merely against its own base's collision
+    # count.
+    assigned = set()
+    result = []
     for repo in repos:
-        slug = slugify(repo)
-        if slug in seen:
-            seen[slug] += 1
-            slug = f"{slug}-{seen[slug]}"
-        else:
-            seen[slug] = 1
-        result.append((repo, slug))
+        base = slugify(repo)
+        candidate = base
+        suffix = 0
+        while candidate in assigned or candidate in RESERVED_SLUGS:
+            suffix += 1
+            candidate = f"{base}-{suffix}"
+        assigned.add(candidate)
+        result.append((repo, candidate))
     return result
 
 
@@ -121,16 +137,53 @@ def run_capture(cmd, cwd):
     return proc.stdout
 
 
-def git_show_loc(repo_path, ref, path):
-    """Line count of <ref>:<path>, or None if the object can't be resolved."""
+def git_cat_file_batch_loc(repo_path, specs):
+    """Batch line-count lookup for a list of "<ref>:<path>" specs, via a SINGLE
+    `git cat-file --batch` call instead of one `git show <ref>:<path>`
+    subprocess per file. Returns a list the same length as `specs`, positional
+    (git cat-file --batch answers each input line in order): each element is
+    the LOC of that blob, or None if the object couldn't be resolved (missing,
+    malformed record, git not found, etc.) -- exactly what a per-file `git show`
+    would have yielded on failure.
+    """
+    if not specs:
+        return []
+    input_bytes = ("\n".join(specs) + "\n").encode("utf-8", "surrogateescape")
     try:
-        proc = subprocess.run(["git", "show", f"{ref}:{path}"], cwd=repo_path,
-                              text=True, capture_output=True)
+        proc = subprocess.run(["git", "cat-file", "--batch"], cwd=repo_path,
+                              input=input_bytes, capture_output=True)
     except FileNotFoundError:
-        return None
-    if proc.returncode != 0:
-        return None
-    return proc.stdout.count("\n") + (0 if proc.stdout.endswith("\n") or not proc.stdout else 1)
+        return [None] * len(specs)
+    out = proc.stdout
+    results = []
+    idx = 0
+    for _ in specs:
+        # Each record starts with a header line: either "<oid> <type> <size>\n"
+        # followed by exactly <size> bytes of content and a trailing "\n", or
+        # "<object> missing\n" with no content.
+        nl = out.find(b"\n", idx)
+        if nl == -1:
+            results.append(None)
+            continue
+        parts = out[idx:nl].split(b" ")
+        idx = nl + 1
+        if len(parts) == 2 and parts[1] == b"missing":
+            results.append(None)
+            continue
+        if len(parts) != 3:
+            results.append(None)
+            continue
+        try:
+            size = int(parts[2])
+        except ValueError:
+            results.append(None)
+            continue
+        content = out[idx:idx + size]
+        idx += size
+        if out[idx:idx + 1] == b"\n":
+            idx += 1
+        results.append(content.count(b"\n") + (0 if content.endswith(b"\n") or not content else 1))
+    return results
 
 
 # --------------------------- diff parsing ---------------------------
@@ -228,9 +281,21 @@ def confidence_ceiling(total_loc, inlined):
 
 def assemble_bundle(slug, repo_path, source_spec, meta_md, files, base_ref):
     repo_abs = str(Path(repo_path).resolve())
+
+    # Batch-resolve the base-blob LOC for every file that needs one (i.e. not
+    # binary/added/deleted -- those are already known without a lookup) in a
+    # SINGLE `git cat-file --batch` pass instead of one subprocess per file.
+    lookup_pos = {}
+    specs = []
+    for i, f in enumerate(files):
+        if (not f["binary"]) and f["status"] not in ("added", "deleted"):
+            lookup_pos[i] = len(specs)
+            specs.append(f"{base_ref}:{f['path']}")
+    base_locs = git_cat_file_batch_loc(repo_path, specs)
+
     rows, sections = [], []
     tot_add = tot_del = 0
-    for f in files:
+    for i, f in enumerate(files):
         tot_add += f["adds"]
         tot_del += f["dels"]
         if f["binary"]:
@@ -238,7 +303,7 @@ def assemble_bundle(slug, repo_path, source_spec, meta_md, files, base_ref):
         elif f["status"] == "deleted":
             total_loc = 0
         else:
-            base_loc = 0 if f["status"] == "added" else git_show_loc(repo_path, base_ref, f["path"])
+            base_loc = 0 if f["status"] == "added" else base_locs[lookup_pos[i]]
             total_loc = None if base_loc is None else max(0, base_loc + f["adds"] - f["dels"])
         inlined = (not f["binary"]) and f["diff_lines"] <= INLINE_MAX_DIFF_LINES
         ceil = confidence_ceiling(total_loc, inlined)
@@ -397,8 +462,15 @@ def _write_json(target: Path, label: str) -> int:
 
 
 def cmd_write_findings(args) -> int:
-    _, manifest = load_manifest(args.run)
-    target = Path(_repo_entry(manifest, args.slug)["findings"])
+    run_dir, manifest = load_manifest(args.run)
+    # A repo slug writes to that repo's findings path; any other slug (e.g.
+    # 'synthesis') writes findings/<slug>.json under the run dir.
+    entry = next((e for e in manifest["repos"] if e["slug"] == args.slug), None)
+    if entry is not None:
+        target = Path(entry["findings"])
+    else:
+        target = run_dir / "findings" / f"{safe_filename(args.slug)}.json"
+        target.parent.mkdir(parents=True, exist_ok=True)
     return _write_json(target, f"findings for {args.slug!r}")
 
 

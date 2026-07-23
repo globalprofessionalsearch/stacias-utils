@@ -6,3 +6,6 @@ __pycache__/
 _bmad/
 _bmad_output/
 _code_review/
+
+# node deps (extension test harness)
+node_modules/

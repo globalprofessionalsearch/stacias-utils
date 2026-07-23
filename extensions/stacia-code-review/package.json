@@ -1,0 +1,15 @@
+{
+  "name": "stacia-code-review-extension",
+  "private": true,
+  "type": "module",
+  "description": "Custom pi coordinator extension for stacia-code-review (tests only; runtime deps come from the pi runtime).",
+  "scripts": {
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "vitest": "^2.1.9",
+    "jsdom": "^25.0.1",
+    "dompurify": "^3.4.12",
+    "marked": "^14.1.4"
+  }
+}

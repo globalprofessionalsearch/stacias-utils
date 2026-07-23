@@ -1,0 +1,33 @@
+{
+  "workflow": {
+    "maxRounds": 3,
+    "roundTimeoutMs": 60000,
+    "concurrency": 6,
+    "agentRetries": 1
+  },
+  "reviewer": {
+    "maxFindings": 6,
+    "perspectives": [
+      "correctness",
+      "security",
+      "performance",
+      "api-contract",
+      "tests",
+      "adr"
+    ]
+  },
+  "reconciler": {
+    "minSeams": 3,
+    "maxSeams": 12
+  },
+  "synthesis": {
+    "followUpThreshold": 4
+  },
+  "models": {
+    "orienteer": "anthropic/claude-sonnet-5",
+    "reconciler": "anthropic/claude-sonnet-5",
+    "reviewer": "anthropic/claude-sonnet-5",
+    "synthesizer": "anthropic/claude-opus-4-8",
+    "verifier": "anthropic/claude-sonnet-5"
+  }
+}

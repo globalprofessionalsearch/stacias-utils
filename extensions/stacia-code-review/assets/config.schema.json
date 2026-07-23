@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "stacia-code-review config",
   "type": "object",
-  "required": ["workflow", "reviewer", "reconciler", "synthesis"],
+  "required": ["workflow", "reviewer", "reconciler", "synthesis", "models"],
   "additionalProperties": false,
   "properties": {
     "workflow": {
@@ -88,6 +88,19 @@
           "maximum": 20,
           "description": "Major/Blocker count that triggers follow-up recommendation"
         }
+      }
+    },
+    "models": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["orienteer", "reconciler", "reviewer", "synthesizer", "verifier"],
+      "description": "Explicit model per agent role, as \"provider/id\". All roles required; there is no default and no host-model fallback.",
+      "properties": {
+        "orienteer": { "type": "string", "description": "provider/id" },
+        "reconciler": { "type": "string", "description": "provider/id" },
+        "reviewer": { "type": "string", "description": "provider/id" },
+        "synthesizer": { "type": "string", "description": "provider/id" },
+        "verifier": { "type": "string", "description": "provider/id" }
       }
     }
   }

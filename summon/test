@@ -15,9 +15,9 @@ pass=0 fail=0
 ok()   { printf '  ok   - %s\n' "$1"; pass=$((pass+1)); }
 bad()  { printf '  FAIL - %s\n' "$1"; fail=$((fail+1)); }
 
-# Build a minimal, fully-valid fixture repo in $1: a utility, an ordinary skill,
-# and the code-review skill carrying a valid read-only workflow binding. All
-# pass lint. Individual tests then mutate a copy to trip one rule.
+# Build a minimal, fully-valid fixture repo in $1: a utility, an ordinary
+# skill, and a code-review skill. All pass lint. Individual tests then
+# mutate a copy to trip one rule.
 seed_repo() {
   local root="$1"
   mkdir -p "$root/summon" "$root/utilities/good-tool" \
@@ -46,23 +46,6 @@ description: A valid fixture code-review skill.
 ---
 body
 EOF
-
-  # Valid read-only workflow agentType binding (YAML array of non-mutating tools).
-  write_binding "$root" stacia-review-readonly "[read, ffgrep, fffind]"
-}
-
-# write_binding <root> <name-or-empty> <tools-value-or-empty>
-# Writes skills/stacia-code-review/stacia-review-readonly.md. Pass "" for name
-# or tools to omit that frontmatter line.
-write_binding() {
-  local root="$1" name="$2" tools="$3" f="$1/skills/stacia-code-review/stacia-review-readonly.md"
-  {
-    echo "---"
-    [[ -n "$name" ]] && echo "name: $name"
-    echo "description: Read-only binding fixture."
-    [[ -n "$tools" ]] && echo "tools: $tools"
-    echo "---"
-  } > "$f"
 }
 
 # run_lint <root> -> sets RC and LINT_OUT
@@ -97,7 +80,7 @@ new_repo() { local r; r="$(mktemp -d "$TMP/repo.XXXXXX")"; seed_repo "$r"; print
 
 echo "summon lint fixtures:"
 
-# Baseline: the seeded repo (incl. a valid read-only binding) is valid.
+# Baseline: the seeded repo is valid.
 r="$(new_repo)"; expect_pass "valid repo passes" "$r"
 
 # --- utility rule (spot check the linter still fires at all) ---
@@ -114,31 +97,6 @@ r="$(new_repo)"
 mv "$r/skills/stacia-good-skill" "$r/skills/good-skill"
 sed -i.bak 's/^name: stacia-good-skill$/name: good-skill/' "$r/skills/good-skill/SKILL.md"
 expect_fail "skill missing stacia- prefix" "$r" "must be prefixed with 'stacia-'"
-
-# --- read-only workflow binding rules (the security invariant) ---
-r="$(new_repo)"
-write_binding "$r" stacia-review-readonly "read, ffgrep, fffind"   # comma string, not an array
-expect_fail "binding tools as comma string" "$r" "must be a YAML array"
-
-r="$(new_repo)"
-write_binding "$r" stacia-review-readonly "[read, write, bash]"    # mutating tools in the array
-expect_fail "binding with mutating tool (write)" "$r" "not allowed; the binding must be read-only"
-
-r="$(new_repo)"
-write_binding "$r" stacia-review-readonly ""                       # tools omitted
-expect_fail "binding missing tools field" "$r" "must declare a read-only 'tools:' field"
-
-r="$(new_repo)"
-write_binding "$r" review-readonly "[read, ffgrep, fffind]"        # name without stacia- prefix
-expect_fail "binding name missing stacia- prefix" "$r" "must be 'stacia-'-prefixed"
-
-r="$(new_repo)"
-sed -i.bak '1d' "$r/skills/stacia-code-review/stacia-review-readonly.md"   # strip frontmatter delimiter
-expect_fail "binding no frontmatter block" "$r" "must open with a YAML frontmatter block"
-
-r="$(new_repo)"
-rm -f "$r/skills/stacia-code-review/stacia-review-readonly.md"     # binding is optional
-expect_pass "binding absent is allowed" "$r"
 
 echo
 printf 'summon/test: %d passed, %d failed\n' "$pass" "$fail"
