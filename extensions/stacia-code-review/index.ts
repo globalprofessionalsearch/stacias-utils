@@ -63,8 +63,66 @@ function renderReport(charge: string, s: Any): string {
 	return `${lines.join("\n")}\n`;
 }
 
+interface ReviewParams {
+	charge: string;
+	repos: Array<{ path: string; source: string }>;
+	adrs?: Array<{ id: string; title: string; path: string }>;
+}
+
 export default function staciaCodeReview(pi: ExtensionAPI) {
 	let active: Monitor | null = null;
+
+	// Shared review core used by BOTH the code_review tool and the
+	// /stacia-code-review command. Returns the synthesis + written report path.
+	async function performReview(ctx: Any, params: ReviewParams, signal?: AbortSignal) {
+		if (!params.charge?.trim()) throw new Error("a charge is required (what the change claims to accomplish)");
+		if (!params.repos?.length) throw new Error("at least one repo is required");
+		if (!ctx.model) throw new Error("no active model");
+
+		const assets = loadAssets();
+		const repoIds = params.repos.map((r) => r.path.replace(/\/+$/, "").split("/").pop() || "repo");
+		const manifest: Manifest = await initRun(assets.helper, repoIds);
+		const repos: RepoInput[] = [];
+		for (let i = 0; i < params.repos.length; i++) {
+			const m = manifest.repos[i];
+			await buildBundle(assets.helper, manifest.run_dir, m.slug, params.repos[i].path, params.repos[i].source, signal);
+			repos.push({ repo: m.repo, slug: m.slug, bundle: m.bundle, path: params.repos[i].path });
+		}
+		for (const adr of params.adrs ?? []) {
+			const body = fs.readFileSync(adr.path, "utf8");
+			const staged = await addContext(assets.helper, manifest.run_dir, "adr", adr.id, adr.title, body);
+			manifest.context.push({ id: adr.id, kind: "adr", title: adr.title, path: staged });
+		}
+
+		const monitor = new Monitor();
+		active = monitor;
+		monitor.start(ctx);
+		const onAbort = () => {
+			for (const a of monitor.registry.values()) {
+				if (a.state === "running" || a.state === "queued") {
+					a.state = "killed";
+					a.session?.abort?.();
+				}
+			}
+		};
+		signal?.addEventListener?.("abort", onAbort);
+
+		const notes: string[] = [];
+		try {
+			const rt = await ModelRuntime.create();
+			const modelConfig = loadModelConfig(ctx.cwd, ctx.isProjectTrusted?.() ?? false);
+			const synthesis = await runReview({ charge: params.charge, repos, manifest, assets, modelConfig, rt, hostModel: ctx.model, monitor, notes });
+			await writeFindings(assets.helper, manifest.run_dir, "synthesis", JSON.stringify(synthesis, null, 2));
+			const report = await writeReport(assets.helper, manifest.run_dir, renderReport(params.charge, synthesis));
+			const findings = synthesis.consolidated_findings ?? [];
+			const counts = ["Blocker", "Major", "Minor", "Nit"].map((s) => `${findings.filter((f: Any) => f.severity === s).length} ${s}`).join(" · ");
+			return { synthesis, counts, report, run_dir: manifest.run_dir };
+		} finally {
+			signal?.removeEventListener?.("abort", onAbort);
+			monitor.stop(ctx);
+			active = null;
+		}
+	}
 
 	pi.registerShortcut("f8", {
 		description: "code-review: drill into running agents",
@@ -74,6 +132,47 @@ export default function staciaCodeReview(pi: ExtensionAPI) {
 				return;
 			}
 			await active.openOverlay(ctx);
+		},
+	});
+
+	// Interactive scope-gathering for the /stacia-code-review command.
+	async function gatherParams(ctx: Any, argStr: string): Promise<ReviewParams | null> {
+		const charge = (argStr?.trim() || (await ctx.ui.input("Charge — what does this change claim to accomplish?", "")) || "").trim();
+		if (!charge) {
+			ctx.ui.notify("code review: a charge is required", "warning");
+			return null;
+		}
+		const repoPath = (await ctx.ui.input("Repo path", ctx.cwd)) || ctx.cwd;
+		const kind = await ctx.ui.select("Change set", ["Uncommitted (worktree)", "Staged only", "Pull request", "Branch range"]);
+		if (!kind) return null;
+		let source = "worktree";
+		if (kind === "Staged only") source = "worktree:staged";
+		else if (kind === "Pull request") {
+			const id = await ctx.ui.input("PR number or URL", "");
+			if (!id) return null;
+			source = `pr:${id}`;
+		} else if (kind === "Branch range") {
+			const rng = await ctx.ui.input("Range base...head", "origin/main...HEAD");
+			if (!rng) return null;
+			source = `range:${rng}`;
+		}
+		return { charge, repos: [{ path: repoPath, source }], adrs: [] };
+	}
+
+	pi.registerCommand("stacia-code-review", {
+		description: "Run a multi-perspective code review of a change set (prompts for scope + charge)",
+		handler: async (argStr: string, ctx: Any) => {
+			try {
+				const params = await gatherParams(ctx, argStr);
+				if (!params) return;
+				ctx.ui.notify("code review: starting… (press f8 to drill in, esc to cancel)", "info");
+				const controller = new AbortController();
+				const { synthesis, counts, report, run_dir } = await performReview(ctx, params, controller.signal);
+				ctx.ui.notify(`code review: ${synthesis.verdict} — ${counts}`, "info");
+				ctx.ui.notify(`report: ${report.split("\n")[0]}  (run ${run_dir})`, "info");
+			} catch (e) {
+				ctx.ui.notify(`code review failed: ${e instanceof Error ? e.message : String(e)}`, "error");
+			}
 		},
 	});
 
@@ -88,73 +187,9 @@ export default function staciaCodeReview(pi: ExtensionAPI) {
 		],
 		parameters: Params,
 		async execute(_id, params, signal, _onUpdate, ctx) {
-			if (!params.charge?.trim()) throw new Error("code_review requires a non-empty charge");
-			if (!params.repos?.length) throw new Error("code_review requires at least one repo");
-			if (!ctx.model) throw new Error("code_review: no active model");
-
-			const assets = loadAssets();
-
-			// allocate run dir + build bundles
-			const repoIds = params.repos.map((r) => r.path.replace(/\/+$/, "").split("/").pop() || "repo");
-			const manifest: Manifest = await initRun(assets.helper, repoIds);
-			const repos: RepoInput[] = [];
-			for (let i = 0; i < params.repos.length; i++) {
-				const m = manifest.repos[i];
-				await buildBundle(assets.helper, manifest.run_dir, m.slug, params.repos[i].path, params.repos[i].source, signal);
-				repos.push({ repo: m.repo, slug: m.slug, bundle: m.bundle, path: params.repos[i].path });
-			}
-
-			// stage ADRs into the context store
-			for (const adr of params.adrs ?? []) {
-				const body = fs.readFileSync(adr.path, "utf8");
-				const staged = await addContext(assets.helper, manifest.run_dir, "adr", adr.id, adr.title, body);
-				manifest.context.push({ id: adr.id, kind: "adr", title: adr.title, path: staged });
-			}
-
-			const monitor = new Monitor();
-			active = monitor;
-			monitor.start(ctx);
-
-			const onAbort = () => {
-				for (const a of monitor.registry.values()) {
-					if (a.state === "running" || a.state === "queued") {
-						a.state = "killed";
-						a.session?.abort?.();
-					}
-				}
-			};
-			signal?.addEventListener?.("abort", onAbort);
-
-			const notes: string[] = [];
-			try {
-				const rt = await ModelRuntime.create();
-				const modelConfig = loadModelConfig(ctx.cwd, ctx.isProjectTrusted?.() ?? false);
-				const synthesis = await runReview({
-					charge: params.charge,
-					repos,
-					manifest,
-					assets,
-					modelConfig,
-					rt,
-					hostModel: ctx.model,
-					monitor,
-					notes,
-				});
-
-				await writeFindings(assets.helper, manifest.run_dir, "synthesis", JSON.stringify(synthesis, null, 2));
-				const report = await writeReport(assets.helper, manifest.run_dir, renderReport(params.charge, synthesis));
-
-				const findings = synthesis.consolidated_findings ?? [];
-				const counts = ["Blocker", "Major", "Minor", "Nit"].map((s) => `${findings.filter((f: Any) => f.severity === s).length} ${s}`).join(" · ");
-				const text =
-					`Review complete — verdict: **${synthesis.verdict}**. ${counts}. ` +
-					`Report: ${report.split("\n")[0]} (run dir ${manifest.run_dir}).`;
-				return { content: [{ type: "text", text }], details: { verdict: synthesis.verdict, counts, report, run_dir: manifest.run_dir, synthesis } };
-			} finally {
-				signal?.removeEventListener?.("abort", onAbort);
-				monitor.stop(ctx);
-				active = null;
-			}
+			const { synthesis, counts, report, run_dir } = await performReview(ctx, params as ReviewParams, signal);
+			const text = `Review complete — verdict: **${synthesis.verdict}**. ${counts}. Report: ${report.split("\n")[0]} (run dir ${run_dir}).`;
+			return { content: [{ type: "text", text }], details: { verdict: synthesis.verdict, counts, report, run_dir, synthesis } };
 		},
 		renderResult(result: Any, _opts: Any, theme: Any) {
 			const d = result.details ?? {};
