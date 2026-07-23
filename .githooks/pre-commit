@@ -1,5 +1,9 @@
 #!/usr/bin/env bash
-# Enforce the utility contract before every commit.
+# Enforce the utility contract before every commit, and run the code-review
+# extension tests when it is touched (same gating as lint).
 set -e
 root="$(git rev-parse --show-toplevel)"
-exec "$root/summon/main" lint
+"$root/summon/main" lint
+if git diff --cached --name-only | grep -q '^extensions/stacia-code-review/'; then
+  "$root/extensions/stacia-code-review/test.sh"
+fi
