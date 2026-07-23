@@ -1,22 +1,20 @@
 /**
- * Load the on-disk review assets (personas, schemas, config) and drive the
+ * Load the on-disk review assets (personas, schemas) and drive the
  * run-directory helper (code-review-workdir.py) as a subprocess. Nothing here
- * is inlined into a tool call — the coordinator reads straight from disk.
+ * is inlined into a tool call - the coordinator reads straight from disk.
  */
 
 import { execFile } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import { injectBounds } from "./validate.ts";
 
 // biome-ignore lint/suspicious/noExplicitAny: parsed JSON schema/config
 type Json = any;
 
 export interface Assets {
-	skillDir: string;
+	assetsDir: string;
 	helper: string;
-	config: Json;
 	personas: {
 		orienteerA: string;
 		orienteerB: string;
@@ -48,32 +46,28 @@ export interface Manifest {
 
 const PERSPECTIVES = ["correctness", "security", "performance", "api-contract", "tests", "adr"] as const;
 
-export function resolveSkillDir(): string {
-	if (process.env.CR_SKILL_DIR) return process.env.CR_SKILL_DIR;
-	const here = path.dirname(fileURLToPath(import.meta.url));
-	// extensions/stacia-code-review → ../../skills/stacia-code-review
-	return path.resolve(here, "..", "..", "skills", "stacia-code-review");
+const HERE = path.dirname(fileURLToPath(import.meta.url));
+
+export function resolveAssetsDir(): string {
+	return process.env.CR_ASSETS_DIR || path.join(HERE, "assets");
 }
 
 export function loadAssets(): Assets {
-	const skillDir = resolveSkillDir();
-	const read = (p: string) => fs.readFileSync(path.join(skillDir, p), "utf8");
+	const assetsDir = resolveAssetsDir();
+	const read = (p: string) => fs.readFileSync(path.join(assetsDir, p), "utf8");
 	const readJson = (p: string) => JSON.parse(read(p));
-	const config = readJson("config.json");
 	const schemas = {
-		orientation: readJson("orientation.schema.json"),
-		seamMap: readJson("seam-map.schema.json"),
-		reviewer: readJson("reviewer-output.schema.json"),
-		synthesis: readJson("synthesis.schema.json"),
-		verifier: readJson("verifier-output.schema.json"),
+		orientation: readJson("schemas/orientation.schema.json"),
+		seamMap: readJson("schemas/seam-map.schema.json"),
+		reviewer: readJson("schemas/reviewer-output.schema.json"),
+		synthesis: readJson("schemas/synthesis.schema.json"),
+		verifier: readJson("schemas/verifier-output.schema.json"),
 	};
-	injectBounds(schemas, config);
 	const reviewers: Record<string, string> = {};
 	for (const p of PERSPECTIVES) reviewers[p] = read(`references/reviewer-${p}.md`);
 	return {
-		skillDir,
-		helper: path.join(skillDir, "code-review-workdir.py"),
-		config,
+		assetsDir,
+		helper: path.join(HERE, "helper", "code-review-workdir.py"),
 		schemas,
 		personas: {
 			orienteerA: read("references/orienteer-claim-to-code.md"),

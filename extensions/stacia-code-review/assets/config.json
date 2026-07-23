@@ -15,5 +15,13 @@
   },
   "synthesis": {
     "followUpThreshold": 4
+  },
+  "models": {
+    "default": null,
+    "orienteer": null,
+    "reconciler": null,
+    "reviewer": null,
+    "synthesizer": null,
+    "verifier": null
   }
 }

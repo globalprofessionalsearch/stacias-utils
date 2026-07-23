@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "stacia-code-review config",
   "type": "object",
-  "required": ["workflow", "reviewer", "reconciler", "synthesis"],
+  "required": ["workflow", "reviewer", "reconciler", "synthesis", "models"],
   "additionalProperties": false,
   "properties": {
     "workflow": {
@@ -88,6 +88,19 @@
           "maximum": 20,
           "description": "Major/Blocker count that triggers follow-up recommendation"
         }
+      }
+    },
+    "models": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Per-role model overrides. null = use host session model.",
+      "properties": {
+        "default": { "type": ["string", "null"], "description": "Fallback model for any role without its own override" },
+        "orienteer": { "type": ["string", "null"] },
+        "reconciler": { "type": ["string", "null"] },
+        "reviewer": { "type": ["string", "null"] },
+        "synthesizer": { "type": ["string", "null"] },
+        "verifier": { "type": ["string", "null"] }
       }
     }
   }

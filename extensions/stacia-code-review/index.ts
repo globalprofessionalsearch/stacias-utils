@@ -13,8 +13,8 @@ import { type ExtensionAPI, ModelRuntime } from "@earendil-works/pi-coding-agent
 import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import { addContext, buildBundle, initRun, loadAssets, type Manifest, writeFindings, writeReport } from "./assets.ts";
+import { loadConfig } from "./config.ts";
 import { type RepoInput, runReview } from "./coordinator.ts";
-import { loadModelConfig } from "./models.ts";
 import { Monitor } from "./monitor.ts";
 
 // biome-ignore lint/suspicious/noExplicitAny: SDK ctx / JSON payloads
@@ -115,8 +115,8 @@ export default function staciaCodeReview(pi: ExtensionAPI) {
 		const notes: string[] = [];
 		try {
 			const rt = await ModelRuntime.create();
-			const modelConfig = loadModelConfig(ctx.cwd, ctx.isProjectTrusted?.() ?? false);
-			const synthesis = await runReview({ charge: params.charge, repos, manifest, assets, modelConfig, rt, hostModel: ctx.model, monitor, notes });
+			const config = loadConfig(ctx.cwd, ctx.isProjectTrusted?.() ?? false);
+			const synthesis = await runReview({ charge: params.charge, repos, manifest, assets, config, rt, hostModel: ctx.model, monitor, notes });
 			await writeFindings(assets.helper, manifest.run_dir, "synthesis", JSON.stringify(synthesis, null, 2));
 			const report = await writeReport(assets.helper, manifest.run_dir, renderReport(params.charge, synthesis));
 			const findings = synthesis.consolidated_findings ?? [];
@@ -174,7 +174,11 @@ export default function staciaCodeReview(pi: ExtensionAPI) {
 			"Run a bounded, read-only, multi-perspective code review of a change set. Requires a charge (what the change claims to accomplish). Gather scope + charge conversationally first, then call this once.",
 		promptSnippet: "Run a multi-perspective code review of a change set (requires a stated charge)",
 		promptGuidelines: [
-			"Use code_review only after you have a stated charge and the repos + change-set specs; never infer the charge from the diff.",
+			"The charge (what the change claims to accomplish) is MANDATORY and must be explicitly stated by the user; never infer it from the diff.",
+			"For each repo, express the change set with a `source` spec: pr:<id> | range:<base>...<head> | worktree | worktree:all | worktree:staged.",
+			"Resolve repo paths and validate that refs (PR ids, base/head refs) actually exist before calling this tool.",
+			"ADRs are optional context, staged via the `adrs` arg; do not require them.",
+			"If the charge, repos, or change-set specs are ambiguous or missing, ask one concise question at a time before calling this tool.",
 		],
 		parameters: Params,
 		async execute(_id, params, signal, _onUpdate, ctx) {

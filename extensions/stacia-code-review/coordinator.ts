@@ -7,11 +7,13 @@
 
 import type { Assets, Manifest } from "./assets.ts";
 import { PERSPECTIVES } from "./assets.ts";
-import type { ModelConfig, Role } from "./models.ts";
+import type { Config } from "./config.ts";
+import type { Role } from "./models.ts";
 import { resolveModel } from "./models.ts";
 import type { Monitor } from "./monitor.ts";
 import { pool } from "./pool.ts";
 import { runSubagent } from "./subagent.ts";
+import { injectBounds } from "./validate.ts";
 
 // biome-ignore lint/suspicious/noExplicitAny: JSON payloads / opaque Model + rt
 type Any = any;
@@ -30,7 +32,7 @@ export interface ReviewInput {
 	repos: RepoInput[];
 	manifest: Manifest;
 	assets: Assets;
-	modelConfig: ModelConfig;
+	config: Config;
 	rt: Any;
 	hostModel: Any;
 	monitor: Monitor;
@@ -82,8 +84,8 @@ function mergeFindings(existing: Any[], incoming: Any[]): Any[] {
 }
 
 export async function runReview(input: ReviewInput): Promise<Any> {
-	const { assets, manifest, monitor, rt, hostModel, modelConfig, notes } = input;
-	const cfg = assets.config;
+	const { assets, manifest, monitor, rt, hostModel, config: cfg, notes } = input;
+	injectBounds(assets.schemas, cfg);
 	const charge = sanitizeCharge(input.charge);
 	const cwd = input.repos[0]?.path ?? process.cwd();
 	// B1: read/grep/find/ls are confined to these roots (the change set's repos + the run dir).
@@ -97,7 +99,7 @@ export async function runReview(input: ReviewInput): Promise<Any> {
 	};
 
 	const model = (role: Role) => {
-		const r = resolveModel(role, modelConfig, rt, hostModel);
+		const r = resolveModel(role, cfg.models, rt, hostModel);
 		if (r.note) notes.push(`${role}: ${r.note}`);
 		return r.model;
 	};

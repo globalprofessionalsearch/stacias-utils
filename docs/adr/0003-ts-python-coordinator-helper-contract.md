@@ -12,9 +12,10 @@ jeenius-tags: [architecture, code-review]
 `stacia-code-review` splits responsibility across two languages. The TS
 extension (`extensions/stacia-code-review/{assets,coordinator,index}.ts`)
 orchestrates subagents and never touches diff bytes or filesystem paths
-directly. `skills/stacia-code-review/code-review-workdir.py` is a private,
-non-PATH helper that owns every path, mkdir, and write for a run: it captures
-diffs (`gh`/`git`), builds bundles, and persists context/findings/report.
+directly. `extensions/stacia-code-review/helper/code-review-workdir.py` is a
+private, non-PATH helper that owns every path, mkdir, and write for a run: it
+captures diffs (`gh`/`git`), builds bundles, and persists
+context/findings/report.
 
 Because the two sides run as separate processes (`assets.ts` spawns
 `python3 code-review-workdir.py ...` via `execFile`), there is no shared type
@@ -113,8 +114,9 @@ Rejected alternatives:
 - Neutral: no schema validation ties the two together (`_write_json` only
   checks the findings payload is valid JSON, not that it matches
   `reviewer-output` / `synthesis` schemas); schema conformance is enforced
-  separately on the TS side (`assets.schemas.*`, `injectBounds`) — see
-  [0004-handrolled-schema-subset-validator](0004-handrolled-schema-subset-validator.md).
+  separately on the TS side (`assets.schemas.*`, `injectBounds`, backed by
+  config/personas/schemas under `extensions/stacia-code-review/assets/`) —
+  see [0004-handrolled-schema-subset-validator](0004-handrolled-schema-subset-validator.md).
 
 ## More Information
 
