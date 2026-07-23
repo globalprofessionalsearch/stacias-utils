@@ -110,6 +110,16 @@ READONLY_TOOLS="read grep find ls ffgrep fffind structured_output"
 REVIEW_RO_BINDING="$SKILL_DIR/stacia-code-review/stacia-review-readonly.md"
 PI_AGENTS_DIR="$HOME/.pi/agents"
 
+# The stacia-code-review workflow script is delivered to the `workflow` tool by
+# name, not inline: `summon setup` registers it as a saved workflow so the
+# orchestrator invokes `workflow({ name: '<REVIEW_WF_NAME>', args })` and never
+# hand-transcribes the ~24KB script (schemas are embedded in it). The tool loads
+# the script from the user saved dir at call time.
+REVIEW_WF_SCRIPT="$SKILL_DIR/stacia-code-review/workflow-script.js"
+REVIEW_WF_NAME="stacia_code_review"
+PI_WORKFLOWS_SAVED_DIR="$HOME/.pi/workflows/saved"
+REVIEW_WF_SAVED="$PI_WORKFLOWS_SAVED_DIR/$REVIEW_WF_NAME.json"
+
 # ---------------------------------------------------------------------------
 # Builtins
 # ---------------------------------------------------------------------------
@@ -280,6 +290,24 @@ cmd_lint() {
     fi
   fi
 
+  # The stacia-code-review saved workflow is a *copy* of workflow-script.js
+  # (wrapped as JSON), so it can drift from source. If it is installed, enforce
+  # that its embedded script matches the repo — a stale copy would silently run
+  # old review logic. CI (no ~/.pi) skips this via the -f guard.
+  if [[ -f "$REVIEW_WF_SAVED" && -f "$REVIEW_WF_SCRIPT" ]]; then
+    if ! python3 - "$REVIEW_WF_SAVED" "$REVIEW_WF_SCRIPT" <<'PY'
+import json, sys
+try:
+    saved = json.load(open(sys.argv[1]))
+except Exception:
+    sys.exit(1)
+sys.exit(0 if saved.get("script") == open(sys.argv[2]).read() else 1)
+PY
+    then
+      err "LINT: saved workflow '$REVIEW_WF_NAME' is stale (~/.pi/workflows/saved out of sync with workflow-script.js) — run 'summon setup'"; fail=1
+    fi
+  fi
+
   # The dispatcher must obey its own contract too.
   local s
   s="$("$SELF_DIR/main" --help 2>/dev/null </dev/null | head -n1)"
@@ -349,6 +377,29 @@ cmd_setup() {
     mkdir -p "$PI_AGENTS_DIR"
     ln -sfn "$REVIEW_RO_BINDING" "$PI_AGENTS_DIR/$(basename "$REVIEW_RO_BINDING")"
     echo "✓ workflow: read-only binding linked ($(basename "$REVIEW_RO_BINDING") -> ~/.pi/agents/)"
+  fi
+
+  # --- saved workflow: register the code-review workflow script (schemas
+  # embedded) as a user-scope saved workflow, so the orchestrator invokes it by
+  # name and never hand-transcribes the script into the tool call. Regenerated
+  # every run (idempotent); `summon lint` flags drift from source.
+  if [[ -f "$REVIEW_WF_SCRIPT" ]]; then
+    mkdir -p "$PI_WORKFLOWS_SAVED_DIR"
+    if python3 - "$REVIEW_WF_SCRIPT" "$REVIEW_WF_SAVED" "$REVIEW_WF_NAME" <<'PY'
+import json, sys
+script_path, out_path, name = sys.argv[1:4]
+doc = {
+    "name": name,
+    "description": "Bounded-context code review: orient, reconcile, review, synthesize",
+    "script": open(script_path).read(),
+}
+open(out_path, "w").write(json.dumps(doc, indent=2) + "\n")
+PY
+    then
+      echo "✓ workflow: saved workflow registered ($REVIEW_WF_NAME -> ~/.pi/workflows/saved/)"
+    else
+      echo "✗ workflow: failed to register saved workflow $REVIEW_WF_NAME" >&2
+    fi
   fi
 
   # --- claude: Claude Code is no longer a wired harness (the code-review skill

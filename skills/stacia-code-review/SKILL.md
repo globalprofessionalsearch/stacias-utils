@@ -12,7 +12,9 @@ report around that call.
 
 This skill targets the **`workflow` tool from `@quintinshaw/pi-dynamic-workflows`**
 (`agent()`, `parallel()`, `phase()`, per-agent `schema`, `tier`, and `agentType`).
-The run-directory helper `code-review-workdir.py` handles all filesystem I/O.
+The run-directory helper `code-review-workdir.py` handles all filesystem I/O, and
+`summon setup` registers the workflow script as a saved workflow so it can be
+invoked by name.
 
 ## Why the work is split around the workflow call
 
@@ -20,11 +22,16 @@ A `workflow` script runs in a Node **vm sandbox**: no `fs`, no `require`, no
 `bash`, no network, no `Date.now()`/`Math.random()`. That draws a hard line:
 
 - **Orchestrator turn, before the call** — everything with side effects:
-  preflight, the interactive scope gate, `init`, and `build-bundle` per repo
-  (all the `gh`/`git`/filesystem I/O the helper does).
-- **The single `workflow` call** — pure fan-out: subagents *read* the on-disk
-  bundles (their `agentType` grants `read`/`ffgrep`/`fffind`), and the script
-  **returns a compact JSON value**. It writes nothing.
+  preflight, the interactive scope gate, `init`, `build-bundle` per repo, and
+  staging any reference material into the context store (all the `gh`/`git`/
+  filesystem I/O the helper does).
+- **The single `workflow` call** — pure fan-out, invoked **by name** (a saved
+  workflow; see §3). Its script is static and versioned, with schemas and
+  personas **embedded**, so the orchestrator's tool-call payload is a tiny,
+  fully-dynamic `args` object — no hand-transcribed static content. Subagents
+  *read* the on-disk bundles and context (their `agentType` grants
+  `read`/`ffgrep`/`fffind`), and the script **returns a compact JSON value**.
+  It writes nothing.
 - **Orchestrator turn, after the call** — persist findings + report via the
   helper (which the sandbox could not call) and print the paths.
 
@@ -41,6 +48,11 @@ step 1 once candidates are known.
   (`ls ~/.pi/agents/stacia-review-readonly.md`). If absent, tell the user to run
   `summon setup` (it symlinks the binding from this skill dir) — do not silently
   create it.
+- **Saved workflow registered**: the workflow script is delivered to the tool
+  **by name**, not inline. Check the saved workflow exists
+  (`ls ~/.pi/workflows/saved/stacia_code_review.json`). If absent, tell the user
+  to run `summon setup` (it registers the script, schemas embedded, as a
+  user-scope saved workflow) — do not paste the script inline as a fallback.
 - **`gh` available & authed**: `gh auth status`. If it fails or `gh` is missing,
   you cannot resolve PRs — fall back to branch-range or working-tree diffs and
   tell the user.
@@ -119,9 +131,10 @@ ADRs are one case of a general need: **any large reference material a reviewer
 should know** (specs, PRDs, design docs, style guides, prior review notes,
 fetched pages, oversized PR bodies). Do not inline such material into `args` by
 value. Stage it into the run's **context store** (step 2) and pass only the
-catalog of paths; subagents `read` what they need. The only things that stay
-inline are the small, static personas and schemas the workflow *script body*
-itself composes.
+catalog of paths; subagents `read` what they need. Static content the *script
+body* composes (personas, schemas) isn't in `args` at all — it's embedded in the
+by-name workflow script (step 3). The only large thing `args` ever carries is
+the context **catalog** (paths), never bodies.
 
 ## 2. Allocate the run directory and build per-repo bundles
 
@@ -182,42 +195,32 @@ tool — route every write through the helper.
 
 ## 3. The `workflow` call
 
-Run **one** `workflow` call using the static workflow script. The orchestrator
-reads the script and all personas/schemas, then passes them to the workflow tool.
+Run **one** `workflow` call. The workflow script is delivered to the tool **by
+name** (a saved workflow registered by `summon setup`), not pasted inline. The
+orchestrator only builds a small `args` object and invokes it.
 
-### Read the static workflow script
+### Why by name, and what stays out of `args`
 
-```
-const script = read('<skill-dir>/workflow-script.js')
-```
+The `workflow` tool takes `script` and `args` as inline parameters the model
+must *author into the tool call itself* — there is no file-reference for them,
+and large hand-transcribed content risks silent corruption (a wrong enum stays
+valid JSON but weakens enforcement). So all **static, versioned** content lives
+in the script, which is delivered by name and never transcribed:
 
-The workflow script (`workflow-script.js`) is static and versioned.
-It contains all the orchestration logic: comprehension → review → synthesis.
+- **The script** (`workflow-script.js`) — invoked as `name: 'stacia_code_review'`.
+- **Output schemas** — embedded in the script as `SCHEMAS` (with config-driven
+  bounds injected at runtime inside the script). Do **not** put schemas in `args`.
+- **Personas** — embedded in the script as `PERSONAS`. Do **not** put personas
+  in `args`.
 
-### Read config, personas, and schemas
+Only genuinely **dynamic, per-run** data goes in `args`: run paths, the charge,
+the repo list, the context catalog, and `config`.
 
-The workflow sandbox has no `fs`, so the orchestrator must pre-read config,
-personas, and schemas and pass them in `args`:
+### Read and validate config
 
-**Config** (read, parse, and validate):
+`config` is small and tunable, so it rides `args` (not the script):
 - `config.json` — tunable constants (rounds, timeouts, thresholds)
-- `config.schema.json` — validate config against this schema; fail fast on invalid config
-
-**Personas** (read as strings):
-- `references/orienteer-claim-to-code.md`
-- `references/orienteer-code-to-claim.md`
-- `references/reconciler.md`
-- `references/common-reviewer-rules.md`
-- `references/reviewer-{correctness,security,performance,api-contract,tests,adr}.md`
-- `references/synthesizer.md`
-- `references/verifier.md`
-
-**Schemas** (read and parse as JSON):
-- `orientation.schema.json`
-- `seam-map.schema.json`
-- `reviewer-output.schema.json`
-- `synthesis.schema.json`
-- `verifier-output.schema.json`
+- `config.schema.json` — validate `config.json` against this; fail fast on invalid config
 
 ### Fetch and stage ADRs (if locations provided)
 
@@ -253,25 +256,10 @@ After staging, re-read `manifest.json`; its `context` catalog now holds
 the workflow `args` (paths only — the workflow injects the catalog into prompts
 and subagents `read` the bodies).
 
-### Inject config into schemas
-
-After reading schemas, inject config values into schema bounds for runtime
-enforcement:
-
-```js
-// Inject seam bounds
-schemas.seamMap.properties.seams.minItems = config.reconciler.minSeams
-schemas.seamMap.properties.seams.maxItems = config.reconciler.maxSeams
-
-// Inject max findings
-schemas.reviewer.properties.findings.maxItems = config.reviewer.maxFindings
-```
-
-This ensures bounds are both config-driven AND schema-enforced at runtime.
-
 ### Build args
 
-Build `args` from the manifest + scope + config + personas + schemas:
+Build the small, fully-dynamic `args` from the manifest + scope + config. No
+personas, no schemas — those are embedded in the script:
 
 ```json
 {
@@ -280,45 +268,29 @@ Build `args` from the manifest + scope + config + personas + schemas:
   "multi_repo": <bool>,
   "repos": [ { "repo": "<name>", "slug": "<slug>", "bundle": "<bundle path>", "path": "<abs repo local path>" } ],
   "context": [ { "id": "0001", "kind": "adr", "title": "...", "path": "<context path>" } ],
-  "config": { /* parsed config.json */ },
-  "personas": {
-    "orienteerA": "<contents of orienteer-claim-to-code.md>",
-    "orienteerB": "<contents of orienteer-code-to-claim.md>",
-    "reconciler": "<contents of reconciler.md>",
-    "commonRules": "<contents of common-reviewer-rules.md>",
-    "reviewers": {
-      "correctness": "<contents of reviewer-correctness.md>",
-      "security": "<contents of reviewer-security.md>",
-      "performance": "<contents of reviewer-performance.md>",
-      "api-contract": "<contents of reviewer-api-contract.md>",
-      "tests": "<contents of reviewer-tests.md>",
-      "adr": "<contents of reviewer-adr.md>"
-    },
-    "synthesizer": "<contents of synthesizer.md>",
-    "verifier": "<contents of verifier.md>"
-  },
-  "schemas": {
-    "orientation": { /* parsed orientation.schema.json */ },
-    "seamMap": { /* parsed seam-map.schema.json */ },
-    "reviewer": { /* parsed reviewer-output.schema.json */ },
-    "synthesis": { /* parsed synthesis.schema.json */ },
-    "verifier": { /* parsed verifier-output.schema.json */ }
-  }
+  "config": { /* parsed config.json */ }
 }
 ```
 
+The script reads `config` and injects the config-driven schema bounds
+(`seams.min/maxItems`, `findings.maxItems`) into its embedded `SCHEMAS` at
+runtime, so bounds stay both config-driven and schema-enforced.
+
 ### Call the workflow
+
+Invoke by name — the tool loads the registered script from
+`~/.pi/workflows/saved/stacia_code_review.json`:
 
 ```js
 const result = await workflow({
-  script: script,
+  name: 'stacia_code_review',
   args: JSON.stringify(args),
   agentRetries: config.workflow.agentRetries,
   concurrency: config.workflow.concurrency
 })
 ```
 
-The static workflow script handles all phases: Comprehension → Review → Synthesis.
+The script handles all phases: Comprehension → Review → Synthesis → Verification.
 See `workflow-script.js` for the implementation.
 
 ## 4. Persist and assemble the report (after the call)
