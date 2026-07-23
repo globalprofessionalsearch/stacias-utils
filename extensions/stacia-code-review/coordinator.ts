@@ -86,6 +86,8 @@ export async function runReview(input: ReviewInput): Promise<Any> {
 	const cfg = assets.config;
 	const charge = sanitizeCharge(input.charge);
 	const cwd = input.repos[0]?.path ?? process.cwd();
+	// B1: read/grep/find/ls are confined to these roots (the change set's repos + the run dir).
+	const allowedRoots = [...input.repos.map((r) => r.path), manifest.run_dir];
 	const concurrency = cfg.workflow.concurrency ?? 6;
 	const roundTimeout = cfg.workflow.roundTimeoutMs ?? 60000;
 	const longTimeout = roundTimeout * 3; // orient/reconcile/synthesis get more room than a single reviewer round
@@ -125,6 +127,7 @@ export async function runReview(input: ReviewInput): Promise<Any> {
 				cwd,
 				systemPrompt: t.persona,
 				userPrompt: `Charge: ${charge}\n\n${orientContext}Change set:\n${bundleContext}\n\n${t.dir}${schemaBlock(assets.schemas.orientation)}`,
+				allowedRoots,
 				schema: assets.schemas.orientation,
 				maxAttempts: MAX_SUBMIT_ATTEMPTS,
 				timeoutMs: longTimeout,
@@ -151,6 +154,7 @@ export async function runReview(input: ReviewInput): Promise<Any> {
 			`Charge: ${charge}\n\nSeam bounds: ${cfg.reconciler.minSeams}-${cfg.reconciler.maxSeams} seams.\n\n` +
 			`Orienteer A (claim→code):\n${untrusted("ORIENTEER A JSON", JSON.stringify(orientationA))}\n\nOrienteer B (code→claim):\n${untrusted("ORIENTEER B JSON", JSON.stringify(orientationB))}\n\n` +
 			`Merge these into a unified orientation and seam map.${schemaBlock(assets.schemas.seamMap)}`,
+		allowedRoots,
 		schema: assets.schemas.seamMap,
 		maxAttempts: MAX_SUBMIT_ATTEMPTS,
 		timeoutMs: longTimeout,
@@ -195,6 +199,7 @@ export async function runReview(input: ReviewInput): Promise<Any> {
 				cwd,
 				systemPrompt: system,
 				userPrompt,
+				allowedRoots,
 				schema: assets.schemas.reviewer,
 				maxAttempts: MAX_SUBMIT_ATTEMPTS,
 				timeoutMs: longTimeout,
@@ -231,6 +236,7 @@ export async function runReview(input: ReviewInput): Promise<Any> {
 			`Reviewer outputs:\n${untrusted("REVIEWER OUTPUTS JSON", JSON.stringify(reviewResults))}\n\n` +
 			`Synthesize: consolidate findings (preserve priorities), produce a charge verdict, account for every seam ` +
 			`(cleared/finding/under-explored), recommend follow-up if triggered.${schemaBlock(assets.schemas.synthesis)}`,
+		allowedRoots,
 		schema: assets.schemas.synthesis,
 		maxAttempts: MAX_SUBMIT_ATTEMPTS,
 		timeoutMs: longTimeout,
@@ -252,6 +258,7 @@ export async function runReview(input: ReviewInput): Promise<Any> {
 			cwd,
 			systemPrompt: assets.personas.verifier,
 			userPrompt: `Change set:\n${bundleContext}\n\nFinding to verify:\n${untrusted("FINDING JSON", JSON.stringify(finding, null, 2))}\n\nVerify this finding by reading the actual code at the cited location.${schemaBlock(assets.schemas.verifier)}`,
+			allowedRoots,
 			schema: assets.schemas.verifier,
 			maxAttempts: MAX_SUBMIT_ATTEMPTS,
 			timeoutMs: roundTimeout,

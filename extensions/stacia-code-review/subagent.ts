@@ -18,6 +18,7 @@ import {
 	SessionManager,
 	SettingsManager,
 } from "@earendil-works/pi-coding-agent";
+import { confinedReadOnlyTools } from "./confine.ts";
 import type { Activity, Monitor } from "./monitor.ts";
 import { toTypebox } from "./schema-typebox.ts";
 import { validate } from "./validate.ts";
@@ -50,10 +51,11 @@ export interface SubagentSpec {
 	schema: Any;
 	maxAttempts: number;
 	timeoutMs: number;
+	allowedRoots: string[]; // filesystem confinement for read/grep/find/ls
 }
 
 export async function runSubagent(spec: SubagentSpec): Promise<Any | null> {
-	const { activity: a, monitor, rt, model, cwd, systemPrompt, userPrompt, schema, maxAttempts, timeoutMs } = spec;
+	const { activity: a, monitor, rt, model, cwd, systemPrompt, userPrompt, schema, maxAttempts, timeoutMs, allowedRoots } = spec;
 	if (a.state === "killed" || monitor.cancelled) {
 		a.state = "killed";
 		a.fail = "cancelled";
@@ -100,8 +102,8 @@ export async function runSubagent(spec: SubagentSpec): Promise<Any | null> {
 			cwd,
 			model,
 			modelRuntime: rt,
-			tools: ["read", "grep", "find", "ls", "submit_result"],
-			customTools: [submit],
+			noTools: "builtin", // replace built-in read/grep/find/ls with path-confined versions
+			customTools: [...confinedReadOnlyTools(cwd, allowedRoots), submit],
 			resourceLoader: bareLoader(systemPrompt),
 			sessionManager: SessionManager.inMemory(cwd),
 			settingsManager: SettingsManager.inMemory({ compaction: { enabled: false } }),
