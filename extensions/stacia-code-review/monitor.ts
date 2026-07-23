@@ -28,6 +28,7 @@ export interface Activity {
 	lastEventAt: number;
 	events: string[];
 	session: Any;
+	fail?: string;
 }
 
 function bar(rate: number): string {
@@ -39,9 +40,21 @@ function bar(rate: number): string {
 export class Monitor {
 	readonly registry = new Map<string, Activity>();
 	phase = "starting";
+	cancelled = false;
 	private started = Date.now();
 	private timer: ReturnType<typeof setInterval> | null = null;
 	private overlayTui: Any = null;
+
+	/** Kill every in-flight agent and mark the whole run cancelled. */
+	cancelAll(): void {
+		this.cancelled = true;
+		for (const a of this.registry.values()) {
+			if (a.state === "running" || a.state === "queued") {
+				a.state = "killed";
+				a.session?.abort?.();
+			}
+		}
+	}
 
 	register(label: string, role: string, maxRounds = 1): Activity {
 		const a: Activity = {
@@ -139,7 +152,7 @@ export class Monitor {
 						const labels = [...this.registry.keys()];
 						sel = Math.min(sel, Math.max(0, labels.length - 1));
 						const rows: Array<{ t: string; c: "accent" | "muted" | "dim" | "plain"; sel?: boolean }> = [];
-						rows.push({ t: "drill-in  up/down select  k kill  esc close", c: "accent" });
+						rows.push({ t: "drill-in  up/down select  k kill  c cancel-all  esc close", c: "accent" });
 						labels.forEach((l, i) => {
 							const a = this.registry.get(l);
 							if (!a) return;
@@ -170,6 +183,10 @@ export class Monitor {
 								a.state = "killed"; // mark first; queued agents have no session yet
 								a.session?.abort?.();
 							}
+						} else if (data === "c") {
+							this.cancelAll();
+							done(null);
+							return;
 						} else if (matchesKey(data, Key.escape)) {
 							done(null);
 							return;

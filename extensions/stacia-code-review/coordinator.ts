@@ -42,7 +42,12 @@ function sanitizeCharge(charge: string): string {
 }
 
 function schemaBlock(schema: Any): string {
-	return `\n\nWhen finished, call submit_result with an object conforming to this JSON Schema:\n\`\`\`json\n${JSON.stringify(schema)}\n\`\`\``;
+	return (
+		"\n\nYou MUST deliver your result by calling the submit_result tool with an object conforming to this JSON Schema. " +
+		"Do NOT print the JSON in your reply — your turn ends only when submit_result accepts your object. " +
+		"If it returns validation errors, fix the object and call submit_result again:\n" +
+		`\`\`\`json\n${JSON.stringify(schema)}\n\`\`\``
+	);
 }
 
 function catalogNote(manifest: Manifest, kinds?: string[]): string {
@@ -62,7 +67,11 @@ export async function runReview(input: ReviewInput): Promise<Any> {
 	const cwd = input.repos[0]?.path ?? process.cwd();
 	const concurrency = cfg.workflow.concurrency ?? 6;
 	const roundTimeout = cfg.workflow.roundTimeoutMs ?? 60000;
+	const longTimeout = roundTimeout * 3; // orient/reconcile/synthesis get more room than a single reviewer round
 	const K = cfg.workflow.maxRounds ?? 3;
+	const checkCancel = () => {
+		if (monitor.cancelled) throw new Error("review cancelled by user");
+	};
 
 	const model = (role: Role) => {
 		const r = resolveModel(role, modelConfig, rt, hostModel);
@@ -94,15 +103,20 @@ export async function runReview(input: ReviewInput): Promise<Any> {
 				userPrompt: `Charge: ${charge}\n\n${orientContext}Change set:\n${bundleContext}\n\n${t.dir}${schemaBlock(assets.schemas.orientation)}`,
 				schema: assets.schemas.orientation,
 				maxAttempts: MAX_SUBMIT_ATTEMPTS,
-				timeoutMs: roundTimeout,
+				timeoutMs: longTimeout,
 			}),
 	);
+	checkCancel();
+	// Fail-fast: comprehension can't proceed if BOTH orienteers failed.
+	if (!oa && !ob) {
+		throw new Error(`Comprehension failed — both orienteers failed (A: ${orientA.fail ?? "?"}; B: ${orientB.fail ?? "?"}).`);
+	}
 	const orientationA = oa ?? { model: "(orienteer A failed)", clear_alignment: [], unclear_alignment: [] };
 	const orientationB = ob ?? { model: "(orienteer B failed)", clear_alignment: [], unclear_alignment: [] };
 
 	// ---- Reconcile ----
 	const recon = monitor.register("reconciler", "reconciler");
-	const seamMap = (await runSubagent({
+	const seamMap = await runSubagent({
 		activity: recon,
 		monitor,
 		rt,
@@ -115,10 +129,13 @@ export async function runReview(input: ReviewInput): Promise<Any> {
 			`Merge these into a unified orientation and seam map.${schemaBlock(assets.schemas.seamMap)}`,
 		schema: assets.schemas.seamMap,
 		maxAttempts: MAX_SUBMIT_ATTEMPTS,
-		timeoutMs: roundTimeout,
-	})) ?? { merged_orientation: "(reconciliation failed)", seams: [] };
+		timeoutMs: longTimeout,
+	});
+	checkCancel();
+	if (!seamMap) throw new Error(`Comprehension failed — reconciler produced no seam map (${recon.fail ?? "?"}).`);
 
 	// ---- Review: K-round loop per perspective, perspectives in parallel ----
+	checkCancel();
 	monitor.phase = "review";
 	const reviewResults = await pool(PERSPECTIVES as unknown as string[], concurrency, async (perspective) => {
 		const a = monitor.register(perspective, perspective, K);
@@ -127,6 +144,7 @@ export async function runReview(input: ReviewInput): Promise<Any> {
 		let findingsSoFar: Any[] = [];
 		let result: Any = null;
 		for (let round = 1; round <= K; round++) {
+			if (monitor.cancelled) return { perspective, findings: findingsSoFar, spillover: true, moreExploration: false, note: "cancelled" };
 			a.round = round;
 			const isLast = round === K;
 			let adrContext = "";
@@ -165,6 +183,7 @@ export async function runReview(input: ReviewInput): Promise<Any> {
 	});
 
 	// ---- Synthesis ----
+	checkCancel();
 	monitor.phase = "synthesis";
 	const synth = monitor.register("synthesizer", "synthesizer");
 	const synthesis = await runSubagent({
@@ -182,11 +201,12 @@ export async function runReview(input: ReviewInput): Promise<Any> {
 			`(cleared/finding/under-explored), recommend follow-up if triggered.${schemaBlock(assets.schemas.synthesis)}`,
 		schema: assets.schemas.synthesis,
 		maxAttempts: MAX_SUBMIT_ATTEMPTS,
-		timeoutMs: roundTimeout * 2,
+		timeoutMs: longTimeout,
 	});
-	if (!synthesis) throw new Error("synthesis failed — no report produced");
+	if (!synthesis) throw new Error(`Synthesis failed — no report produced (${synth.fail ?? "?"}).`);
 
 	// ---- Verification: confirm Blocker/Major findings in parallel ----
+	checkCancel();
 	monitor.phase = "verification";
 	const toVerify: Any[] = (synthesis.consolidated_findings ?? []).filter((f: Any) => f.severity === "Blocker" || f.severity === "Major");
 	const verifyModel = model("verifier");

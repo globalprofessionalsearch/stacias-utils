@@ -18,8 +18,8 @@ import {
 	SessionManager,
 	SettingsManager,
 } from "@earendil-works/pi-coding-agent";
-import { Type } from "typebox";
 import type { Activity, Monitor } from "./monitor.ts";
+import { toTypebox } from "./schema-typebox.ts";
 import { validate } from "./validate.ts";
 
 // biome-ignore lint/suspicious/noExplicitAny: JSON payloads / opaque Model
@@ -54,7 +54,11 @@ export interface SubagentSpec {
 
 export async function runSubagent(spec: SubagentSpec): Promise<Any | null> {
 	const { activity: a, monitor, rt, model, cwd, systemPrompt, userPrompt, schema, maxAttempts, timeoutMs } = spec;
-	if (a.state === "killed") return null;
+	if (a.state === "killed" || monitor.cancelled) {
+		a.state = "killed";
+		a.fail = "cancelled";
+		return null;
+	}
 	a.state = "running";
 	a.lastEventAt = Date.now();
 
@@ -64,9 +68,9 @@ export async function runSubagent(spec: SubagentSpec): Promise<Any | null> {
 		name: "submit_result",
 		label: "Submit Result",
 		description:
-			"Submit your final result as an object conforming to the required JSON schema (shown in the task). " +
-			"If it returns validation errors, correct the fields and call submit_result again.",
-		parameters: Type.Object({}, { additionalProperties: true }),
+			"Submit your final result. The parameters are the exact object you must return; if it comes back with " +
+			"validation errors, correct the fields and call submit_result again.",
+		parameters: toTypebox(schema),
 		execute: async (_id: string, params: Any) => {
 			a.attempts += 1;
 			const errs = validate(params, schema);
@@ -108,18 +112,28 @@ export async function runSubagent(spec: SubagentSpec): Promise<Any | null> {
 	try {
 		await session.prompt(userPrompt);
 	} catch (e) {
-		monitor.pushEvent(a, `error: ${e instanceof Error ? e.message : String(e)}`);
+		a.fail = e instanceof Error ? e.message : String(e);
+		monitor.pushEvent(a, `error: ${a.fail}`);
 	} finally {
 		clearTimeout(timer);
 		session.dispose?.();
 	}
 
-	if ((a.state as string) === "killed") return null;
+	if ((a.state as string) === "killed") {
+		a.fail = a.fail ?? "killed";
+		return null;
+	}
 	if (timedOut) {
 		monitor.pushEvent(a, "timeout");
+		a.fail = `timeout after ${Math.round(timeoutMs / 1000)}s`;
 		a.state = "failed";
 		return null;
 	}
-	a.state = holder.result ? "done" : "failed";
-	return holder.result;
+	if (holder.result) {
+		a.state = "done";
+		return holder.result;
+	}
+	a.state = "failed";
+	a.fail = a.fail ?? `no conforming submit_result after ${a.attempts} attempt(s)`;
+	return null;
 }

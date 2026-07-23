@@ -97,14 +97,7 @@ export default function staciaCodeReview(pi: ExtensionAPI) {
 		const monitor = new Monitor();
 		active = monitor;
 		monitor.start(ctx);
-		const onAbort = () => {
-			for (const a of monitor.registry.values()) {
-				if (a.state === "running" || a.state === "queued") {
-					a.state = "killed";
-					a.session?.abort?.();
-				}
-			}
-		};
+		const onAbort = () => monitor.cancelAll();
 		signal?.addEventListener?.("abort", onAbort);
 
 		const notes: string[] = [];
