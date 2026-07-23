@@ -171,16 +171,22 @@ export async function runReview(input: ReviewInput): Promise<Any> {
 				userPrompt,
 				schema: assets.schemas.reviewer,
 				maxAttempts: MAX_SUBMIT_ATTEMPTS,
-				timeoutMs: roundTimeout,
+				timeoutMs: longTimeout,
 			});
 			if (!result) {
-				return { perspective, findings: findingsSoFar, spillover: true, moreExploration: false, note: `incomplete: round ${round} failed` };
+				return { perspective, findings: findingsSoFar, spillover: true, moreExploration: false, note: `incomplete (round ${round}): ${a.fail ?? "failed"}` };
 			}
 			findingsSoFar = result.findings ?? [];
 			if (!result.moreExploration || isLast) return result;
 		}
 		return result;
 	});
+
+	// surface any reviewer that did not complete cleanly (reason → coverage notes)
+	for (const p of PERSPECTIVES) {
+		const a = monitor.registry.get(p);
+		if (a && a.state !== "done") notes.push(`reviewer ${p}: ${a.fail ?? a.state}`);
+	}
 
 	// ---- Synthesis ----
 	checkCancel();

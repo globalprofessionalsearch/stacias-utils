@@ -397,8 +397,15 @@ def _write_json(target: Path, label: str) -> int:
 
 
 def cmd_write_findings(args) -> int:
-    _, manifest = load_manifest(args.run)
-    target = Path(_repo_entry(manifest, args.slug)["findings"])
+    run_dir, manifest = load_manifest(args.run)
+    # A repo slug writes to that repo's findings path; any other slug (e.g.
+    # 'synthesis') writes findings/<slug>.json under the run dir.
+    entry = next((e for e in manifest["repos"] if e["slug"] == args.slug), None)
+    if entry is not None:
+        target = Path(entry["findings"])
+    else:
+        target = run_dir / "findings" / f"{safe_filename(args.slug)}.json"
+        target.parent.mkdir(parents=True, exist_ok=True)
     return _write_json(target, f"findings for {args.slug!r}")
 
 
