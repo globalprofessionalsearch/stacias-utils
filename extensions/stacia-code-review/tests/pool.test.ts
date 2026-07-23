@@ -15,15 +15,45 @@ describe("pool", () => {
 	});
 
 	it("never exceeds the concurrency cap", async () => {
+		// Deterministic instead of wall-clock: each task blocks on its own
+		// manually-resolved deferred promise, so we control exactly when work
+		// completes and can assert the in-flight count without timing races.
+		const pending: Array<() => void> = [];
 		let inFlight = 0;
 		let peak = 0;
-		await pool([...Array(10).keys()], 3, async () => {
+
+		const waitForPending = (n: number) =>
+			new Promise<void>((resolve) => {
+				const check = () => (pending.length >= n ? resolve() : setImmediate(check));
+				check();
+			});
+
+		const donePromise = pool([...Array(10).keys()], 3, async () => {
 			inFlight++;
 			peak = Math.max(peak, inFlight);
-			await tick(5);
+			await new Promise<void>((resolve) => pending.push(resolve));
 			inFlight--;
 			return null;
 		});
+		let finished = false;
+		donePromise.then(() => {
+			finished = true;
+		});
+
+		// Let the pool fill up to the concurrency cap before releasing anything —
+		// proves the workers really run in parallel, not sequentially.
+		await waitForPending(3);
+		expect(peak).toBe(3);
+
+		// Drain: release everything currently waiting, then wait for either more
+		// work to queue up behind it or the pool to finish, repeating until done.
+		while (!finished) {
+			const batch = pending.splice(0, pending.length);
+			for (const resolve of batch) resolve();
+			await Promise.race([waitForPending(1), donePromise.then(() => {})]);
+		}
+
+		await donePromise;
 		expect(peak).toBeLessThanOrEqual(3);
 		expect(peak).toBeGreaterThan(1); // actually ran in parallel
 	});

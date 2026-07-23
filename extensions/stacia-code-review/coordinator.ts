@@ -72,14 +72,37 @@ function untrusted(label: string, content: string): string {
 	);
 }
 
-// A5: merge findings across K-rounds instead of replacing, keyed by file:line|finding so a
-// later round overrides the same key while new keys accumulate rather than dropping earlier ones.
+// A5: merge findings across K-rounds instead of replacing, keyed by file:line:severity so a
+// rephrased finding at the same location+severity overrides the earlier one (rather than both
+// being kept as separate entries) while new keys still accumulate rather than dropping earlier ones.
+function findingKey(f: Any): string {
+	return `${f?.location?.file}:${f?.location?.line}:${f?.severity}`;
+}
+
 function mergeFindings(existing: Any[], incoming: Any[]): Any[] {
-	const keyOf = (f: Any) => `${f?.location?.file}:${f?.location?.line}|${f?.finding}`;
 	const byKey = new Map<string, Any>();
-	for (const f of existing) byKey.set(keyOf(f), f);
-	for (const f of incoming) byKey.set(keyOf(f), f);
+	for (const f of existing) byKey.set(findingKey(f), f);
+	for (const f of incoming) byKey.set(findingKey(f), f);
 	return [...byKey.values()];
+}
+
+// P4: findings new to, or changed within, `after` relative to `before` (same key, different
+// content) — used to send only the delta each round instead of the whole accumulated set.
+function diffFindings(before: Any[], after: Any[]): Any[] {
+	const beforeByKey = new Map<string, Any>();
+	for (const f of before) beforeByKey.set(findingKey(f), f);
+	const changed: Any[] = [];
+	for (const f of after) {
+		const prev = beforeByKey.get(findingKey(f));
+		if (!prev || JSON.stringify(prev) !== JSON.stringify(f)) changed.push(f);
+	}
+	return changed;
+}
+
+// P4: one line per finding, for the case where nothing changed last round but the reviewer still
+// needs to see what's already been found (cheaper than re-sending the full JSON every round).
+function summarizeFindings(findings: Any[]): string {
+	return findings.map((f) => `- ${findingKey(f)} — ${f?.finding}`).join("\n");
 }
 
 export async function runReview(input: ReviewInput): Promise<Any> {
@@ -169,6 +192,10 @@ export async function runReview(input: ReviewInput): Promise<Any> {
 		const a = monitor.register(perspective, perspective, K);
 		const system = `${assets.personas.commonRules}\n\n---\n\n${assets.personas.reviewers[perspective]}`;
 		let findingsSoFar: Any[] = [];
+		// P4: only the delta (new/changed findings) since the previous round is sent in the prompt,
+		// instead of re-serializing the whole accumulated set every round; falls back to a compact
+		// one-line summary when a round produced no changes. Accumulation/merge itself is unaffected.
+		let deltaSinceLastRound: Any[] = [];
 		let result: Any = null;
 		for (let round = 1; round <= K; round++) {
 			if (monitor.cancelled) return { perspective, findings: findingsSoFar, spillover: true, moreExploration: false, note: "cancelled" };
@@ -186,7 +213,11 @@ export async function runReview(input: ReviewInput): Promise<Any> {
 				`Orientation:\n${seamMap.merged_orientation}\n\nSeam map:\n${untrusted("SEAM MAP JSON", JSON.stringify(seamMap.seams))}\n\n` +
 				`Round ${round} of ${K}${isLast ? " (FINAL — must produce write-up)" : ""}\n\n` +
 				`Change set:\n${bundleContext}\n\n` +
-				(findingsSoFar.length ? `Findings so far:\n${untrusted("FINDINGS SO FAR JSON", JSON.stringify(findingsSoFar))}\n\n` : "") +
+				(deltaSinceLastRound.length
+					? `Findings so far (new/changed since last round):\n${untrusted("FINDINGS DELTA JSON", JSON.stringify(deltaSinceLastRound))}\n\n`
+					: findingsSoFar.length
+						? `Findings so far (no changes last round; compact summary):\n${untrusted("FINDINGS SUMMARY", summarizeFindings(findingsSoFar))}\n\n`
+						: "") +
 				`Review from the ${perspective} perspective. Focus on high-priority seams.${schemaBlock(assets.schemas.reviewer)}`;
 			result = await runSubagent({
 				activity: a,
@@ -204,7 +235,9 @@ export async function runReview(input: ReviewInput): Promise<Any> {
 			if (!result) {
 				return { perspective, findings: findingsSoFar, spillover: true, moreExploration: false, note: `incomplete (round ${round}): ${a.fail ?? "failed"}` };
 			}
+			const preMerge = findingsSoFar;
 			findingsSoFar = mergeFindings(findingsSoFar, result.findings ?? []);
+			deltaSinceLastRound = diffFindings(preMerge, findingsSoFar);
 			if (!result.moreExploration || isLast) return { ...result, findings: findingsSoFar };
 		}
 		return result ? { ...result, findings: findingsSoFar } : result;

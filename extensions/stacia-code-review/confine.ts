@@ -10,7 +10,6 @@
  * outside is denied with a tool error the agent sees.
  */
 
-import * as fs from "node:fs";
 import * as path from "node:path";
 import {
 	createFindToolDefinition,
@@ -19,35 +18,18 @@ import {
 	createReadToolDefinition,
 	type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
+import { canonical, within } from "./confine-path.ts";
 
 // biome-ignore lint/suspicious/noExplicitAny: tool defs / params are opaque here
 type Any = any;
 
-// realpath an existing path; for a missing path, realpath its nearest existing
-// ancestor and re-append the rest. This keeps symlinked roots (e.g. macOS
-// /tmp -> /private/tmp) consistent between roots and not-yet-existing targets.
-function canonical(p: string): string {
-	let cur = path.resolve(p);
-	const tail: string[] = [];
-	while (!fs.existsSync(cur)) {
-		const parent = path.dirname(cur);
-		if (parent === cur) return path.resolve(p);
-		tail.unshift(path.basename(cur));
-		cur = parent;
-	}
-	try {
-		const real = fs.realpathSync(cur);
-		return tail.length ? path.join(real, ...tail) : real;
-	} catch {
-		return path.resolve(p);
-	}
-}
-
-function within(target: string, roots: string[]): boolean {
-	const t = canonical(target);
-	return roots.some((root) => t === root || t.startsWith(root + path.sep));
-}
-
+// Audited param surface: read/grep/find/ls schemas each expose exactly one
+// path-bearing param, `path` (optional on grep/find/ls, required on read).
+// Their other string params (`pattern` on grep/find, `glob` on grep) are
+// filename-matching patterns evaluated relative to `path`/cwd, not raw
+// filesystem locations, so they don't need a separate guard check. If a
+// future pi version adds another path-shaped param to one of these tools,
+// extend the check below.
 function guard(def: Any, cwd: string, roots: string[]): ToolDefinition {
 	const orig = def.execute.bind(def);
 	return {

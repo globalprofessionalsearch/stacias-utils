@@ -63,6 +63,18 @@ def test_reserved_synthesis_slug_is_never_a_repo(tmp_path):
     assert Path(man["repos"][0]["findings"]).name != "synthesis.json"
 
 
+def test_derived_slug_collision_is_disambiguated(tmp_path):
+    # "synthesis" is bumped off the reserved slug to "synthesis-1" -- but a
+    # second repo whose basename literally IS "synthesis-1" must not collide
+    # with that derived slug. unique_slugs() must disambiguate against the set
+    # of already-ASSIGNED FINAL slugs, not just against each base name's own
+    # collision count.
+    man = _init(tmp_path, "synthesis", "synthesis-1", "other")
+    slugs = [r["slug"] for r in man["repos"]]
+    assert len(slugs) == len(set(slugs)), slugs
+    assert "synthesis" not in slugs, slugs
+
+
 def test_findings_slug_cannot_escape_run_dir(tmp_path):
     man = _init(tmp_path, "myrepo")
     run = Path(man["run_dir"])

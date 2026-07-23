@@ -111,6 +111,14 @@ Rejected alternatives:
   the TS side writes to (currently only `"synthesis"`). Adding a new fixed
   TS-side slug without adding it to `RESERVED_SLUGS` reintroduces the
   collision risk this ADR documents.
+- Neutral/Bad: `RESERVED_SLUGS` is a **behavior change, not a pure port** of
+  slug handling — a repo whose basename literally slugifies to `"synthesis"`
+  no longer gets its own `findings/synthesis.json`; `unique_slugs` now
+  force-disambiguates it (e.g. to `synthesis-1`) so the reserved top-level
+  slug always resolves to the overall synthesis output. Anyone reviewing a
+  repo actually named `synthesis` will see its findings under a suffixed
+  slug, not the bare one — worth calling out explicitly since it's easy to
+  read this as a no-op rename-avoidance tweak rather than a routing change.
 - Neutral: no schema validation ties the two together (`_write_json` only
   checks the findings payload is valid JSON, not that it matches
   `reviewer-output` / `synthesis` schemas); schema conformance is enforced

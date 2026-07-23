@@ -7,7 +7,14 @@
   },
   "reviewer": {
     "maxFindings": 6,
-    "perspectives": ["correctness", "security", "performance", "api-contract", "tests", "adr"]
+    "perspectives": [
+      "correctness",
+      "security",
+      "performance",
+      "api-contract",
+      "tests",
+      "adr"
+    ]
   },
   "reconciler": {
     "minSeams": 3,
@@ -17,10 +24,10 @@
     "followUpThreshold": 4
   },
   "models": {
-    "orienteer": "anthropic/claude-sonnet-4-5",
-    "reconciler": "anthropic/claude-sonnet-4-5",
-    "reviewer": "anthropic/claude-sonnet-4-5",
-    "synthesizer": "anthropic/claude-opus-4-5",
-    "verifier": "anthropic/claude-sonnet-4-5"
+    "orienteer": "anthropic/claude-sonnet-5",
+    "reconciler": "anthropic/claude-sonnet-5",
+    "reviewer": "anthropic/claude-sonnet-5",
+    "synthesizer": "anthropic/claude-opus-4-8",
+    "verifier": "anthropic/claude-sonnet-5"
   }
 }

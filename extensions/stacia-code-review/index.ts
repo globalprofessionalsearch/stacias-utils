@@ -9,7 +9,8 @@
  */
 
 import * as fs from "node:fs";
-import { type ExtensionAPI, ModelRuntime } from "@earendil-works/pi-coding-agent";
+import * as path from "node:path";
+import { CONFIG_DIR_NAME, type ExtensionAPI, getAgentDir, ModelRuntime } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import { addContext, buildBundle, initRun, loadAssets, type Manifest, writeFindings, writeReport } from "./assets.ts";
@@ -93,6 +94,9 @@ export default function staciaCodeReview(pi: ExtensionAPI) {
 		const assets = loadAssets();
 		const repoIds = params.repos.map((r) => r.path.replace(/\/+$/, "").split("/").pop() || "repo");
 		const manifest: Manifest = await initRun(assets.helper, repoIds);
+		if (manifest.repos.length !== params.repos.length) {
+			throw new Error(`initRun returned ${manifest.repos.length} repo(s), expected ${params.repos.length} (one per requested repo)`);
+		}
 		const repos: RepoInput[] = [];
 		for (let i = 0; i < params.repos.length; i++) {
 			const m = manifest.repos[i];
@@ -115,7 +119,10 @@ export default function staciaCodeReview(pi: ExtensionAPI) {
 		try {
 			const rt = await ModelRuntime.create();
 			// loadConfig fails fast if any role's model isn't an explicit provider/id
-			const config = loadConfig(ctx.cwd, ctx.isProjectTrusted?.() ?? false);
+			// (or any tunable is malformed against the config schema)
+			const userConfigPath = path.join(getAgentDir(), "stacia-code-review.json");
+			const projectConfigPath = ctx.isProjectTrusted?.() ? path.join(ctx.cwd, CONFIG_DIR_NAME, "stacia-code-review.json") : undefined;
+			const config = loadConfig(userConfigPath, projectConfigPath);
 			const synthesis = await runReview({ charge: params.charge, repos, manifest, assets, config, rt, monitor, notes });
 			await writeFindings(assets.helper, manifest.run_dir, "synthesis", JSON.stringify(synthesis, null, 2));
 			const report = await writeReport(assets.helper, manifest.run_dir, renderReport(params.charge, synthesis));

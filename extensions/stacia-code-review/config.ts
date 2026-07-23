@@ -1,20 +1,21 @@
 /**
  * Single config file for the whole extension (tunables + models). Layered
- * lowest→highest: bundled defaults (assets/config.json) → user file
- * (~/.pi/agent/stacia-code-review.json) → project file
- * (.pi/stacia-code-review.json, trust-gated). Missing/invalid override files
- * are ignored.
+ * lowest→highest: bundled defaults (assets/config.json) → user file →
+ * project file (trust-gated — caller decides whether to pass a project path
+ * at all). Missing/invalid override files are ignored. This module is
+ * pi-free at runtime: callers (index.ts) resolve the candidate file paths
+ * (via pi's getAgentDir()/CONFIG_DIR_NAME) and pass them in.
  */
 
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import { CONFIG_DIR_NAME, getAgentDir } from "@earendil-works/pi-coding-agent";
 import { validateModels } from "./models.ts";
+import { validate } from "./validate.ts";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const BASE = path.join(HERE, "assets", "config.json");
-const CONFIG_NAME = "stacia-code-review.json";
+const SCHEMA = path.join(HERE, "assets", "config.schema.json");
 
 export interface Config {
 	workflow: { maxRounds: number; roundTimeoutMs: number; concurrency: number; agentRetries: number };
@@ -48,16 +49,29 @@ function readJsonSafe(p: string): Json | null {
 	}
 }
 
-export function loadConfig(cwd: string, trusted: boolean): Config {
+/**
+ * Load + merge + validate the config. `userConfigPath`/`projectConfigPath` are
+ * candidate override file paths (existence + trust decisions are the
+ * caller's job — this function just merges whichever paths it's given, if
+ * they exist). The FULL merged config is validated against
+ * assets/config.schema.json, then `models` is checked with validateModels.
+ */
+export function loadConfig(userConfigPath?: string, projectConfigPath?: string): Config {
 	let cfg: Json = JSON.parse(fs.readFileSync(BASE, "utf8"));
 
-	const user = readJsonSafe(path.join(getAgentDir(), CONFIG_NAME));
-	if (user) cfg = deepMerge(cfg, user);
+	if (userConfigPath) {
+		const user = readJsonSafe(userConfigPath);
+		if (user) cfg = deepMerge(cfg, user);
+	}
 
-	if (trusted) {
-		const project = readJsonSafe(path.join(cwd, CONFIG_DIR_NAME, CONFIG_NAME));
+	if (projectConfigPath) {
+		const project = readJsonSafe(projectConfigPath);
 		if (project) cfg = deepMerge(cfg, project);
 	}
+
+	const schema = JSON.parse(fs.readFileSync(SCHEMA, "utf8"));
+	const errs = validate(cfg, schema);
+	if (errs.length) throw new Error(`config: invalid merged config:\n${errs.join("\n")}`);
 
 	validateModels(cfg.models ?? {}); // fail fast: every role needs an explicit provider/id
 	return cfg as Config;

@@ -74,7 +74,8 @@ ignored (falls through to the layer below). Deep merge is a plain-object
 recursive merge — object keys merge, everything else (arrays, scalars) is
 replaced wholesale by the higher layer.
 
-Shipped defaults (`assets/config.json`):
+Shipped defaults (`assets/config.json`) illustrated below — the `models` block
+is an illustrative default, not a contract; see "Per-role models":
 
 ```json
 {
@@ -83,11 +84,11 @@ Shipped defaults (`assets/config.json`):
   "reconciler": { "minSeams": 3, "maxSeams": 12 },
   "synthesis": { "followUpThreshold": 4 },
   "models": {
-    "orienteer": "anthropic/claude-sonnet-4-5",
-    "reconciler": "anthropic/claude-sonnet-4-5",
-    "reviewer": "anthropic/claude-sonnet-4-5",
-    "synthesizer": "anthropic/claude-opus-4-5",
-    "verifier": "anthropic/claude-sonnet-4-5"
+    "orienteer": "provider/id",
+    "reconciler": "provider/id",
+    "reviewer": "provider/id",
+    "synthesizer": "provider/id",
+    "verifier": "provider/id"
   }
 }
 ```
@@ -102,8 +103,11 @@ fallback** — the review runs only on models you name.
 Resolution is a **hard requirement, fail-fast**: `loadConfig` throws if any role
 is unset/blank/not `provider/id` (listing all offenders), and `resolveModel`
 throws if a configured id can't be found (bad provider/id or no auth). Change a
-role by overriding just that key in your user/project config; the shipped
-Anthropic set (sonnet, opus for synthesis) is only a default you can replace.
+role by overriding just that key in `~/.pi/agent/stacia-code-review.json` (or a
+trusted project's `.pi/stacia-code-review.json`) — the shipped defaults
+(`assets/config.json`) are whatever current Anthropic models resolve at
+release time, not a fixed contract; expect them to be bumped as models are
+superseded, without notice in this doc.
 
 ## Live monitor
 
@@ -128,3 +132,9 @@ Run state lives under
 `${XDG_CACHE_HOME:-$HOME/.cache}/stacia-code-review/runs/<run-id>/`. The report
 is charge-scoped: verdict, top priorities (Blocker/Major), all findings by
 severity, coverage caveats, and a follow-up recommendation if triggered.
+
+## Dependency footprint
+
+Test/runtime deps (e.g. `jsdom`, `dompurify`) are pinned via this extension's
+own `package-lock.json` — self-contained, no reliance on pi's dependency tree
+or floating version ranges.
