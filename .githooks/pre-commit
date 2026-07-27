@@ -1,19 +1,11 @@
 #!/usr/bin/env bash
 # Enforce the utility/skill/plugin contracts before every commit, and run the
 # code-review test suite when its tree is touched (same gating as lint).
-#
-# Both trees are gated while the pi -> Claude Code port is in flight: the pi
-# extension under extensions/ and the plugin under plugins/ exist side by side
-# until the pi version is deleted. Drop the extensions/ arm with it.
 set -e
 root="$(git rev-parse --show-toplevel)"
 "$root/summon/main" lint
 
 staged="$(git diff --cached --name-only)"
-
-if printf '%s\n' "$staged" | grep -q '^extensions/stacia-code-review/'; then
-  "$root/extensions/stacia-code-review/test.sh"
-fi
 
 if printf '%s\n' "$staged" | grep -q '^plugins/stacia-code-review/'; then
   "$root/plugins/stacia-code-review/test.sh"

@@ -24,10 +24,6 @@ plugins/<name>/skills/<skill>/SKILL.md       a plugin's own skills
 
 Everything else at the repo root is infrastructure.
 
-<!-- TODO: `extensions/` holds the legacy pi-harness extension that predates the
-     Claude Code port. It is being retired, not extended — delete this note (and
-     the directory) once the port lands. -->
-
 ## The conventions (enforced)
 
 - **Utilities**: `utilities/<name>/main` is executable and its `--help` exits 0
@@ -61,9 +57,12 @@ export PATH="$HOME/Documents/code/github/globalprofessionalsearch/stacias-utils/
 That puts `summon` on PATH. Nothing else needs exporting — run `summon setup`
 once, then `summon list`.
 
-<!-- TODO: the exact install mechanism (which directories get written, and how)
-     is being reworked alongside the Claude Code port. Until it settles, the
-     output of `summon setup` is the source of truth, not this section. -->
+Claude Code plugins install through a local marketplace: `plugins/` is itself
+the marketplace, and `summon setup` registers it once and then installs each
+plugin at user scope. There is no `~/.claude/plugins/<name>` auto-scan, and a
+symlink planted there is ignored — installing *copies* the plugin — so re-run
+`summon setup` after editing a plugin, or point Claude Code at the working tree
+with `claude --plugin-dir <repo>/plugins/<name>`.
 
 ## Skills
 
@@ -77,10 +76,12 @@ Nothing here is on a harness search path by default — `summon setup` wires the
 repo's skills into the agent harness, pointing back into the repo, so edits to a
 skill's body are live with no re-sync.
 
-<!-- TODO: which harness the top-level `skills/` tree is wired into is being
-     repointed as part of the Claude Code port; `summon setup`'s own output is
-     authoritative. Plugin skills (under `plugins/<name>/skills/`) are installed
-     with their plugin and are unaffected. -->
+<!-- OPEN: the top-level `skills/` tree is still wired into pi
+     (`~/.pi/agent/skills/`), which the code-review port has otherwise left
+     behind. Repointing it at Claude Code is unfinished work, not a decision —
+     `summon setup`'s own output is authoritative until it lands. Plugin skills
+     (under `plugins/<name>/skills/`) install with their plugin and are
+     unaffected. -->
 
 
 Skill bodies should stay harness-neutral (a best practice, not enforced):

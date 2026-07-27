@@ -15,29 +15,20 @@ jobs:
       - name: Lint rule coverage (negative fixtures)
         run: ./summon/test
 
-  # Both code-review trees are tested while the pi -> Claude Code port is in
-  # flight: the pi extension under extensions/ and the plugin under plugins/
-  # exist side by side until the pi version is deleted. Drop the extension leg
-  # of the matrix with it.
   code-review-tests:
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        tree:
-          - extensions/stacia-code-review
-          - plugins/stacia-code-review
-    name: Test ${{ matrix.tree }}
     steps:
       - uses: actions/checkout@v4
+      # >= 24: the coordinator's bin entry is `node ./cli.ts`, run through
+      # Node's built-in type stripping rather than a build step.
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "24"
       - uses: actions/setup-python@v5
         with:
           python-version: "3.x"
-      - name: Run the suite
-        run: ./${{ matrix.tree }}/test.sh
+      - name: Test the code-review plugin
+        run: ./plugins/stacia-code-review/test.sh
 
   commit:
     if: github.event_name == 'pull_request'

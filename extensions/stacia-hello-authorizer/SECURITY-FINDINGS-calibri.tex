@@ -1,0 +1,236 @@
+\documentclass[11pt]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage{fontspec}
+% Calibri via Carlito, its metric-compatible open clone (Calibri itself is
+% proprietary and not installed). Explicit Path so it resolves under both
+% xelatex and lualatex regardless of fontconfig registration.
+\setmainfont{Carlito}[
+  Path = /usr/local/texlive/2025/texmf-dist/fonts/truetype/google/carlito/,
+  Extension = .ttf,
+  UprightFont = *-Regular,
+  BoldFont = *-Bold,
+  ItalicFont = *-Italic,
+  BoldItalicFont = *-BoldItalic,
+]
+\usepackage{microtype}
+\usepackage{enumitem}
+\usepackage{xcolor}
+\usepackage{titlesec}
+\usepackage[colorlinks=true,linkcolor=black,urlcolor=blue]{hyperref}
+
+% Monospace for inline code; \code{} keeps underscores/braces literal.
+\newcommand{\code}[1]{\texttt{#1}}
+
+% Blockquote environment for the two pull-quotes.
+\newenvironment{pullquote}
+  {\begin{quote}\itshape}
+  {\end{quote}}
+
+\titleformat{\section}{\Large\bfseries}{}{0em}{}
+\titleformat{\subsection}{\large\bfseries}{}{0em}{}
+
+\setlist[itemize]{leftmargin=1.5em,itemsep=0.3em}
+
+\title{Case study: security is a second-class citizen in pi}
+\author{Stacia}
+\date{}
+
+\begin{document}
+\maketitle
+
+\noindent An attempt to understand pi's permission model surfaced a structural
+flaw in how pi approaches security.
+
+\medskip
+\noindent\textbf{Status:} case study plus the decisions it forced.
+
+\section*{How it started: building to understand}
+
+This began as a way to understand how pi handles permissions: a tool-call
+\textbf{sieve gate}, built to learn the domain rather than to ship a product.
+
+It intercepts each tool call, runs it through an ordered \emph{rejection} sieve
+(auto-deny with a teaching reason), then an ordered \emph{approval} sieve
+(auto-allow), and sends anything left to a human checkpoint with a plain-language
+summary. It hooks pi's \code{tool\_call} event and works: it denies, approves,
+and prompts on real commands.
+
+\section*{The pivot: subagents don't share the parent's extension context}
+
+Checking whether the gate would cover \textbf{subagent} activity revealed that it
+usually does not. A subagent runs in its own session, and that session only
+enforces the extensions \textbf{it} loaded. The parent's gate does not
+automatically extend to a child.
+
+That changed the question from ``what rules should the gate apply?'' to:
+
+\begin{pullquote}
+Can a security gate in pi even be \emph{guaranteed to run} on the work being done?
+\end{pullquote}
+
+Answering it required reading source.
+
+\section*{The investigation}
+
+Read at depth: three subagent extensions (\code{@quintinshaw/pi-dynamic-workflows},
+\code{nicobailon/pi-subagents}, \code{tintinweb/pi-subagents}),
+\code{@gotgenes/pi-permission-system}'s subagent integration, and the pi harness
+itself (the tool-call dispatch path and the resource loader that decides which
+extensions a session loads). Three findings.
+
+\subsection*{1. pi's tool boundary is a cooperative, mutable chain}
+
+pi exposes one extension-facing seam at the tool boundary
+(\code{agent-session.js:214}): a \code{tool\_call} hook before execution, a
+\code{tool\_result} hook after. Dispatch (\code{runner.emitToolCall}) walks
+\textbf{all bound extensions in load order}. A handler may return
+\code{\{ block, reason \}} or \textbf{mutate the tool input in place with no
+re-validation}, and the \textbf{first} block wins. Two properties follow:
+
+\begin{itemize}
+  \item \textbf{Enforcement is per-session and opt-in.} The handler set is
+    whatever \emph{that} session bound. A session that did not load the gate has
+    no gate.
+  \item \textbf{The gate is a peer, not an authority.} It shares a mutable input
+    with other extensions, order-dependent, so a sibling loaded \emph{after} it
+    can rewrite a command the gate already approved.
+\end{itemize}
+
+\subsection*{2. Whether a subagent loads the gate varies wildly by extension}
+
+The three answer ``does the parent's policy run in the child?'' differently:
+
+\begin{itemize}
+  \item \textbf{\code{dynamic-workflows}: no.} Children are created with
+    \code{noExtensions: true} hard-coded; the gate never loads. Tool granting is
+    whole-tool allow/deny at spawn (\code{applyToolPolicy}), no command-level
+    nuance. It leans on git-worktree isolation, which is damage confinement, not
+    access control.
+  \item \textbf{\code{nicobailon}: only inside one ecosystem.} It is
+    \emph{subprocess}-based, the only one with a real process boundary, but
+    exposes no hooks a general policy can bind to. It targets
+    \code{pi-permission-system} and misses env wiring
+    (\code{PI\_SUBAGENT\_PARENT\_SESSION}) others would need. Outside that
+    ecosystem there is no viable integration path.
+  \item \textbf{\code{tintinweb}: yes, by default, and scopably.} It loads host
+    extensions into children (\code{extensions: true}) and calls
+    \code{bindExtensions}, so the gate runs per-call; loading is declaratively
+    scopable (\code{extensions: [stacia-sieve-gate]}). It stays in-process (no
+    boundary) and reloads everything per child by default, but it is the only one
+    that gives a policy real purchase inside subagents.
+\end{itemize}
+
+Same policy, unchanged: fully enforced, partially enforced, or entirely absent,
+depending on which subagent extension is in use and how it was configured.
+
+\subsection*{3. \code{noExtensions} is a scalpel, which worsens the inconsistency}
+
+\code{noExtensions: true} does not mean ``no extensions in the child''
+(\code{resource-loader.js:267}). It drops only the auto-discovered set;
+\code{additionalExtensionPaths} and inline \code{extensionFactories} still load.
+So \code{noExtensions: true} plus \code{extensionFactories: [gate]} loads
+\emph{only} the gate. The capability to guarantee a child is gated exists in the
+harness. It is not wired to any consistent, first-class control, so each subagent
+extension reinvents or ignores it.
+
+\section*{The conclusion: a structural flaw}
+
+The finding is about pi, not any one extension.
+
+\textbf{Security in pi is a second-class element, an extension composed with peer
+extensions, so it can never be guaranteed structurally.} The precise failure is
+not ``pi can't stop every attack'' (no in-process model can) but:
+
+\begin{pullquote}
+pi cannot guarantee the security layer is even \textbf{present and authoritative}
+on a given session.
+\end{pullquote}
+
+The gate can be unloaded (\code{isolated} / \code{noExtensions}; the same
+\code{noExtensions} is also the scalpel of finding 3), it competes with peers
+(load order), and its decisions can be mutated after approval. A security posture
+built on pi is defeatable by \emph{configuration} and by \emph{siblings}.
+
+Which risks are pi's and which are common to the paradigm:
+
+\begin{itemize}
+  \item \textbf{pi-specific (the differentiators).} A sibling handler mutating an
+    approved input, and a child spawned that never loads the gate. Both come from
+    the cooperative, opt-in-per-session model. A harness with a single
+    always-present authoritative decision point removes both.
+  \item \textbf{Paradigm-inherent (shared with any in-process agent, including
+    Claude Code).} A Turing-complete shell as an escape hatch, two-step laundering
+    with no information-flow control, human-in-the-loop fatigue and broad-grant
+    abuse, and rules stored in agent-editable files. These are present in any
+    harness and close only with a real boundary (OS sandbox, separate user,
+    credential isolation, information-flow control).
+\end{itemize}
+
+The differentiator is entirely pi-specific and architectural. pi does not need an
+opinion on \emph{how} to implement security. It lacks a \textbf{first-class,
+unified substrate}: a harness-owned, always-present, authoritative permission
+decision point that security \emph{and} ordinary extensions bind to as policy,
+instead of racing as equal peers over a mutable input. Without it, security on pi
+is structurally unguaranteeable, and the burden of closing that falls on
+userspace.
+
+This is a potential death-knell for adopting pi. The paradigm-inherent vectors
+are not pi's fault. The structural one, no guarantee the gate is present and
+final, is, and it cannot be patched around from an extension.
+
+\section*{Decisions and mitigations}
+
+The pragmatic path on pi:
+
+\begin{itemize}
+  \item \textbf{Adopt \code{tintinweb/pi-subagents}}, the only substrate where the
+    gate runs per-call in subagents, scoped to
+    \code{extensions: [stacia-sieve-gate]} to keep blast radius small.
+  \item \textbf{Forward subagent fall-throughs to the parent UI} via a
+    \code{Symbol.for()} broker (child sessions have no UI), with a
+    narrowly-scoped grant cache to blunt fatigue.
+  \item \textbf{Gate the spawn}, denying \code{Agent} calls that would run ungated
+    (\code{isolated: true}, opt-out \code{subagent\_type}s), since every bypass
+    the parent can reach is itself a tool call it sees. This blocks
+    \emph{unintentional} ungated spawns --- a naive request or a careless config.
+    It does \textbf{not} stop an adversarial sibling: per finding 1, a handler
+    loaded after the gate can set \code{isolated: true} back \emph{after}
+    approval, and the ungated child spawns anyway. The spawn gate would hold only
+    if the gate were guaranteed to run last in the chain (validating the final
+    input) --- exactly the load-order authority pi cannot grant.
+  \item \textbf{Protect the preconditions}, treating writes to
+    \code{.pi/agents/**}, \code{\textasciitilde/.pi/agent/extensions/**}, pi
+    settings/auth, and pi-re-invoking \code{bash} as top-sensitivity.
+\end{itemize}
+
+Every item is userspace mitigation that raises cost and coverage; none is a
+structural guarantee. Uncloseable under this design without a harness change or a
+real boundary: post-approval mutation, the shell-breadth escape hatch, and the
+absence of information-flow control.
+
+\section*{Evidence index}
+
+\begin{itemize}
+  \item pi tool hooks / dispatch: \code{agent-session.js:214}
+    (\code{beforeToolCall} to \code{emitToolCall}); \code{runner.emitToolCall}
+    (load order, first-block short-circuit, mutable input, no re-validation).
+  \item \code{noExtensions} semantics: \code{resource-loader.js:267};
+    \code{additionalExtensionPaths} and \code{extensionFactories} survive it.
+  \item dynamic-workflows: \code{agent.ts} (\code{noExtensions: true};
+    \code{applyToolPolicy}; \code{DEFAULT\_EXCLUDED\_SUBAGENT\_TOOLS});
+    \code{session.resourceLoader} reachable only to programmatic embedders.
+  \item tintinweb: default \code{extensions: true} (\code{agent-types.ts},
+    \code{default-agents.ts}); loader-level \code{extensionsOverride};
+    \code{isolated} is an \code{Agent} tool param (\code{index.ts}) forcing
+    \code{extensions === false} (\code{agent-runner.ts:524});
+    \code{bindExtensions} fires \code{session\_start}; child has no UI
+    (\code{ctx.hasUI === false}).
+  \item nicobailon: subprocess model; missing \code{PI\_SUBAGENT\_PARENT\_SESSION};
+    \code{tools:} CSV allowlist.
+  \item pi-permission-system: native \code{@gotgenes/pi-subagents} integration
+    (process-global registry plus ask-forwarding); two-layer visibility/policy
+    model.
+\end{itemize}
+
+\end{document}

@@ -7,6 +7,16 @@ jeenius-tags: [architecture, code-review]
 
 # TypeScript coordinator / Python helper contract
 
+> **Still in force.** This decision was not affected by the Claude Agent SDK
+> re-host (ADR-0007): the contract is between the coordinator and its own
+> helper subprocess, so it is harness-agnostic, and `helper/` moved across
+> byte-identical. Only the paths below moved —
+> `extensions/stacia-code-review/{assets,coordinator,index}.ts` is now
+> `plugins/stacia-code-review/coordinator/{assets,coordinator,cli}.ts`, and
+> `extensions/stacia-code-review/helper/` is now
+> `plugins/stacia-code-review/coordinator/helper/`. The body is left as
+> written, as the historical record.
+
 ## Context and Problem Statement
 
 `stacia-code-review` splits responsibility across two languages. The TS

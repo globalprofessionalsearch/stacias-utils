@@ -14,9 +14,6 @@ plugins/<name>/                Claude Code plugin
 Everything else at the repo root (`bin/`, `summon/`, `.github/`, ...) is
 infrastructure.
 
-<!-- TODO: `extensions/` holds the legacy pi-harness extension that predates the
-     Claude Code port. It is being retired — don't add to it. -->
-
 ## Utility contract
 
 A utility is a directory under `utilities/` named in `kebab-case` with a single
@@ -80,10 +77,10 @@ them portable to others.
 `summon setup` wires the repo's skills into the agent harness, pointing back
 into the repo — so skill-body edits are live, with no re-sync and no re-run.
 
-<!-- TODO: which harness the top-level `skills/` tree is wired into, and by what
-     mechanism, is being repointed as part of the Claude Code port. Until it
-     settles, the output of `summon setup` is the source of truth, not this
-     paragraph. -->
+<!-- OPEN: the top-level `skills/` tree is still installed into pi
+     (`~/.pi/agent/skills/`) by one umbrella symlink. The code-review port moved
+     off pi; this tree has not followed yet. Until it does, `summon setup`'s
+     output is the source of truth, not this paragraph. -->
 
 ### Add one
 
@@ -118,9 +115,9 @@ they are already namespaced by their plugin and are invoked as
 `summon setup` installs plugins into Claude Code; they are never run through
 `summon`.
 
-<!-- TODO: the install mechanism (marketplace registration and install target)
-     is being reworked alongside the Claude Code port; run `summon lint` and
-     trust its errors over this section if the two disagree. -->
+Installs are snapshots, not symlinks: `claude plugin install` copies the plugin
+into `~/.claude/plugins/cache/`, so re-run `summon setup` after editing one (or
+use `claude --plugin-dir <repo>/plugins/<name>` while iterating).
 
 The repo ships one plugin: `plugins/stacia-code-review/`, whose design of
 record is the ADR series under `docs/adr/`. Read the relevant ADRs before
