@@ -2,6 +2,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { loadManifest } from "../assets.ts";
 import { failureReport, parseArgs, readRequest, userConfigPath } from "../cli.ts";
 
 // The launcher (bin/launch-review) validates repo paths, source grammar and ADR
@@ -147,5 +148,37 @@ describe("failureReport", () => {
 
 	it("handles a non-Error thrown value", () => {
 		expect(failureReport("just a string", "/runs/abc")).toContain("just a string");
+	});
+});
+
+describe("run_dir handoff from the launcher", () => {
+	// The launcher allocates the run dir so it can print it before splitting the
+	// pane — after that the calling session never hears from the review again.
+	it("accepts a request carrying a pre-allocated run_dir", () => {
+		expect(readRequest(write({ ...valid, run_dir: "/runs/abc" })).run_dir).toBe("/runs/abc");
+	});
+
+	it("still accepts a request without one", () => {
+		expect(readRequest(write(valid)).run_dir).toBeUndefined();
+	});
+});
+
+describe("loadManifest", () => {
+	it("reads the manifest of a pre-allocated run", () => {
+		const dir = fs.mkdtempSync(path.join(tmpDir, "run-"));
+		fs.writeFileSync(path.join(dir, "manifest.json"), JSON.stringify({ run_dir: dir, log: `${dir}/logs/run.jsonl`, repos: [{ slug: "a" }] }));
+		const m = loadManifest(dir);
+		expect(m.run_dir).toBe(dir);
+		expect(m.log).toBe(`${dir}/logs/run.jsonl`);
+	});
+
+	it("names the path when the manifest is missing", () => {
+		expect(() => loadManifest(path.join(tmpDir, "nope"))).toThrowError(/could not read run manifest/);
+	});
+
+	it("names the path when the manifest is malformed", () => {
+		const dir = fs.mkdtempSync(path.join(tmpDir, "run-"));
+		fs.writeFileSync(path.join(dir, "manifest.json"), "{ not json");
+		expect(() => loadManifest(dir)).toThrowError(/is not valid JSON/);
 	});
 });

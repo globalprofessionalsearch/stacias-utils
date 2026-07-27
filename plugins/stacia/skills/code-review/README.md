@@ -140,10 +140,19 @@ with cwd set to `<plugin>/coordinator`. The request file:
   "version": 1,
   "charge": "what the change claims to accomplish",
   "cwd": "/dir the launcher was invoked from",
+  "run_dir": "/…/runs/20260727T215846Z-177e95",
   "repos": [{ "path": "/abs/repo", "source": "range:main...HEAD" }],
   "adrs": [{ "id": "0003", "title": "…", "path": "/abs/docs/adr/0003-….md" }]
 }
 ```
+
+`run_dir` is allocated by the **launcher**, not the coordinator, and printed on
+stdout before the pane is split. The pane is fire-and-forget — once it exists
+the calling session never hears from the review again — so the one path worth
+knowing has to be known before then. The helper still owns allocation and
+mkdir (ADR-0003); `launch-review` is simply an earlier caller of `init` than
+the coordinator used to be, and every other subcommand already takes
+`--run <dir>`.
 
 `repos` always has at least one entry with an absolute, existing path and a
 grammar-valid `source`. `adrs` may be empty. `charge` is non-blank.

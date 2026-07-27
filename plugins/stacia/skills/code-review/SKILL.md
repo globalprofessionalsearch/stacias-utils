@@ -142,9 +142,24 @@ Notes:
 - `--dry-run` prints the resolved request and exits without launching. Use it
   if you want to show her what will run before running it.
 
-The launcher returns immediately after splitting the pane. Tell her the review
-is running in the new pane, and stop — do not poll for it, do not tail the run
-directory, and do not attempt your own review in the meantime.
+The launcher returns immediately after splitting the pane, and prints the run
+directory before it does:
+
+```
+launch-review: review running in a new iTerm2 pane
+launch-review: run directory: …/runs/20260727T215846Z-177e95
+launch-review: log:           …/runs/20260727T215846Z-177e95/logs/run.jsonl
+launch-review: report (when complete): …/runs/20260727T215846Z-177e95/report.md
+```
+
+**Relay the run directory to her.** It is the only thing this session will ever
+know about the review — the pane owns everything after the split, so if it is
+closed or the coordinator dies early, that path is the only way back to the
+artifacts.
+
+Then stop. Do not poll for it, do not tail the run directory, do not read the
+report when it appears, and do not attempt your own review in the meantime. If
+she asks about the review later, give her the path again; do not go looking.
 
 If it reports that it fell back to running in this terminal (not macOS, no
 iTerm2), say so: the run will occupy this session until it finishes and the

@@ -23,7 +23,7 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { addContext, buildBundle, initRun, loadAssets, type Manifest, writeFindings, writeReport } from "./assets.ts";
+import { addContext, buildBundle, initRun, loadAssets, loadManifest, type Manifest, writeFindings, writeReport } from "./assets.ts";
 import { loadConfig } from "./config.ts";
 import { type RepoInput, runReview } from "./coordinator.ts";
 import { Monitor } from "./monitor.ts";
@@ -39,6 +39,8 @@ export interface ReviewRequest {
 	version: number;
 	charge: string;
 	cwd: string;
+	/** Run directory pre-allocated by the launcher (see loadManifest). */
+	run_dir?: string;
 	repos: Array<{ path: string; source: string }>;
 	adrs?: Array<{ id: string; title: string; path: string }>;
 }
@@ -87,11 +89,18 @@ export type OnRunDir = (manifest: Manifest) => void;
 
 export async function performReview(req: ReviewRequest, monitor: Monitor, signal: AbortSignal, onRunDir?: OnRunDir): Promise<Any> {
 	const assets = loadAssets();
-	const repoIds = req.repos.map((r) => r.path.replace(/\/+$/, "").split("/").pop() || "repo");
-	const manifest: Manifest = await initRun(assets.helper, repoIds);
+	// The launcher allocates the run directory and passes it in, so it can tell
+	// the calling session where the artifacts are before it splits the pane and
+	// loses contact. Older requests without one are still allocated here.
+	const manifest: Manifest = req.run_dir
+		? loadManifest(req.run_dir)
+		: await initRun(
+				assets.helper,
+				req.repos.map((r) => r.path.replace(/\/+$/, "").split("/").pop() || "repo"),
+			);
 	onRunDir?.(manifest);
 	if (manifest.repos.length !== req.repos.length) {
-		throw new Error(`initRun returned ${manifest.repos.length} repo(s), expected ${req.repos.length} (one per requested repo)`);
+		throw new Error(`run manifest has ${manifest.repos.length} repo(s), expected ${req.repos.length} (one per requested repo)`);
 	}
 
 	const repos: RepoInput[] = [];

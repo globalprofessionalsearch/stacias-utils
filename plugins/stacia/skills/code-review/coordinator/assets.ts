@@ -102,6 +102,29 @@ export async function initRun(helper: string, repos: string[]): Promise<Manifest
 	return JSON.parse(out) as Manifest;
 }
 
+/**
+ * Read the manifest of an already-allocated run.
+ *
+ * `bin/launch-review` runs `init` itself so it can tell the calling session
+ * where the artifacts will land — it splits a pane and exits, so anything the
+ * caller needs must be known before then. The coordinator therefore inherits a
+ * run directory rather than allocating one.
+ */
+export function loadManifest(runDir: string): Manifest {
+	const p = path.join(runDir, "manifest.json");
+	let raw: string;
+	try {
+		raw = fs.readFileSync(p, "utf8");
+	} catch (err) {
+		throw new Error(`could not read run manifest ${p}: ${(err as Error).message}`);
+	}
+	try {
+		return JSON.parse(raw) as Manifest;
+	} catch (err) {
+		throw new Error(`run manifest ${p} is not valid JSON: ${(err as Error).message}`);
+	}
+}
+
 export function buildBundle(helper: string, runDir: string, slug: string, repoPath: string, source: string, signal?: AbortSignal): Promise<string> {
 	return runHelper(helper, ["build-bundle", "--run", runDir, "--slug", slug, "--repo-path", repoPath, "--source", source], undefined, signal);
 }

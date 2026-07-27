@@ -182,11 +182,34 @@ find "$req_root" -maxdepth 1 -type d -name 'req.*' -mtime +1 -exec rm -rf {} + 2
 req_dir="$(mktemp -d "$req_root/req.XXXXXXXX")"
 REQ="$req_dir/request.json"
 
+# Allocate the run directory HERE rather than in the coordinator, so this
+# script can hand it back to the caller. The pane is fire-and-forget: once we
+# split it we never hear from it again, so anything the calling session needs
+# to know has to be known before we exit. That includes the one path worth
+# knowing — where the bundles, findings, log and report will land.
+#
+# The helper still owns allocation and mkdir (ADR-0003); we are just an
+# earlier caller of `init` than the coordinator used to be. Every other
+# subcommand already takes `--run <dir>`, so passing it forward is the
+# contract working as designed.
+HELPER="$COORD_DIR/helper/code-review-workdir.py"
+[[ -f "$HELPER" ]] || die "run-directory helper not found: $HELPER"
+
+repo_names=()
+for p in "${resolved_paths[@]}"; do repo_names+=("$(basename "$p")"); done
+
+if ! manifest_json="$(python3 "$HELPER" init "${repo_names[@]}" 2>&1)"; then
+  die "could not allocate a run directory: $manifest_json"
+fi
+RUN_DIR="$(printf '%s' "$manifest_json" | python3 -c 'import json,sys; print(json.load(sys.stdin)["run_dir"])')" \
+  || die "run-directory helper returned no run_dir"
+
 {
   printf '{\n'
   printf '  "version": 1,\n'
   printf '  "charge": %s,\n' "$(json_str "$charge")"
   printf '  "cwd": %s,\n' "$(json_str "$PWD")"
+  printf '  "run_dir": %s,\n' "$(json_str "$RUN_DIR")"
   printf '  "repos": [\n'
   for i in "${!resolved_paths[@]}"; do
     printf '    { "path": %s, "source": %s }' \
@@ -214,6 +237,7 @@ need_install=0
 if [[ $dry -eq 1 ]]; then
   printf '%s: request %s\n' "$NAME" "$REQ"
   cat "$REQ"
+  printf '%s: run directory: %s\n' "$NAME" "$RUN_DIR"
   printf '%s: would run: %s %s/cli.ts --request %s\n' \
     "$NAME" "$NODE_BIN" "$COORD_DIR" "$REQ"
   [[ $need_install -eq 1 ]] && printf '%s: (preceded by `npm ci` — node_modules is missing)\n' "$NAME"
@@ -296,4 +320,10 @@ then
   run_here
 fi
 
-printf '%s: review running in a new iTerm2 pane (request: %s)\n' "$NAME" "$REQ"
+# The run dir is the one thing the calling session cannot learn any other way:
+# the pane owns everything after this point, and if it is closed or the
+# coordinator dies early, this line is the only pointer to the artifacts.
+printf '%s: review running in a new iTerm2 pane\n' "$NAME"
+printf '%s: run directory: %s\n' "$NAME" "$RUN_DIR"
+printf '%s: log:           %s/logs/run.jsonl\n' "$NAME" "$RUN_DIR"
+printf '%s: report (when complete): %s/report.md\n' "$NAME" "$RUN_DIR"
