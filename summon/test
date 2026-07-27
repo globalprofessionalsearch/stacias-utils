@@ -15,13 +15,17 @@ pass=0 fail=0
 ok()   { printf '  ok   - %s\n' "$1"; pass=$((pass+1)); }
 bad()  { printf '  FAIL - %s\n' "$1"; fail=$((fail+1)); }
 
-# Build a minimal, fully-valid fixture repo in $1: a utility, an ordinary
-# skill, and a code-review skill. All pass lint. Individual tests then
-# mutate a copy to trip one rule.
+# Build a minimal, fully-valid fixture repo in $1: a utility, a top-level
+# skill, and a Claude Code plugin (manifest + marketplace listing + its own
+# namespaced skill). All pass lint. Individual tests then mutate a copy to trip
+# one rule.
 seed_repo() {
   local root="$1"
   mkdir -p "$root/summon" "$root/utilities/good-tool" \
-           "$root/skills/stacia-good-skill" "$root/skills/stacia-code-review"
+           "$root/skills/stacia-good-skill" \
+           "$root/plugins/.claude-plugin" \
+           "$root/plugins/good-plugin/.claude-plugin" \
+           "$root/plugins/good-plugin/skills/good-plugin-skill"
   cp "$MAIN" "$root/summon/main"; chmod +x "$root/summon/main"
 
   cat > "$root/utilities/good-tool/main" <<'EOF'
@@ -39,10 +43,30 @@ description: A valid fixture skill.
 body
 EOF
 
-  cat > "$root/skills/stacia-code-review/SKILL.md" <<'EOF'
+  # The marketplace name is hardcoded in the linter (CC_MARKETPLACE), so the
+  # fixture has to use it too.
+  cat > "$root/plugins/.claude-plugin/marketplace.json" <<'EOF'
+{
+  "name": "stacia-utils",
+  "owner": { "name": "Fixture" },
+  "plugins": [
+    { "name": "good-plugin", "source": "./good-plugin", "description": "A valid fixture plugin." }
+  ]
+}
+EOF
+
+  cat > "$root/plugins/good-plugin/.claude-plugin/plugin.json" <<'EOF'
+{
+  "name": "good-plugin",
+  "description": "A valid fixture plugin.",
+  "version": "0.0.1"
+}
+EOF
+
+  cat > "$root/plugins/good-plugin/skills/good-plugin-skill/SKILL.md" <<'EOF'
 ---
-name: stacia-code-review
-description: A valid fixture code-review skill.
+name: good-plugin-skill
+description: A valid fixture plugin skill.
 ---
 body
 EOF
@@ -97,6 +121,57 @@ r="$(new_repo)"
 mv "$r/skills/stacia-good-skill" "$r/skills/good-skill"
 sed -i.bak 's/^name: stacia-good-skill$/name: good-skill/' "$r/skills/good-skill/SKILL.md"
 expect_fail "skill missing stacia- prefix" "$r" "must be prefixed with 'stacia-'"
+
+# --- Claude Code plugin rules ---
+# A plugin's entrypoint is its manifest — .claude-plugin/plugin.json, the file
+# Claude Code actually reads. Without it the directory is not a plugin, and
+# without a marketplace listing `summon setup` installs nothing.
+r="$(new_repo)"
+rm -f "$r/plugins/good-plugin/.claude-plugin/plugin.json"
+expect_fail "plugin missing plugin.json entrypoint" "$r" \
+  "missing entrypoint (expected plugins/good-plugin/.claude-plugin/plugin.json)"
+
+r="$(new_repo)"
+sed -i.bak 's/"name": "good-plugin"/"name": "wrong-name"/' "$r/plugins/good-plugin/.claude-plugin/plugin.json"
+expect_fail "plugin.json name mismatches its dir" "$r" \
+  "plugin.json 'name' must equal 'good-plugin'"
+
+r="$(new_repo)"
+rm -f "$r/plugins/.claude-plugin/marketplace.json"
+expect_fail "missing marketplace manifest" "$r" "missing marketplace manifest"
+
+r="$(new_repo)"
+sed -i.bak 's/^  "name": "stacia-utils",$/  "name": "some-other-marketplace",/' \
+  "$r/plugins/.claude-plugin/marketplace.json"
+expect_fail "marketplace manifest misnamed" "$r" \
+  "marketplace manifest must declare \"name\": \"stacia-utils\""
+
+r="$(new_repo)"
+sed -i.bak 's/{ "name": "good-plugin", "source"/{ "name": "other-plugin", "source"/' \
+  "$r/plugins/.claude-plugin/marketplace.json"
+expect_fail "plugin absent from the marketplace" "$r" \
+  "not listed in the stacia-utils marketplace manifest"
+
+r="$(new_repo)"
+mv "$r/plugins/good-plugin/skills/good-plugin-skill" "$r/plugins/good-plugin/skills/renamed-skill"
+expect_fail "plugin skill frontmatter name mismatches its dir" "$r" \
+  "skill renamed-skill: frontmatter 'name:' must equal 'renamed-skill'"
+
+r="$(new_repo)"
+sed -i.bak '/^description: A valid fixture plugin skill\.$/d' \
+  "$r/plugins/good-plugin/skills/good-plugin-skill/SKILL.md"
+expect_fail "plugin skill missing description" "$r" \
+  "skill good-plugin-skill: frontmatter 'description:' must be non-empty"
+
+r="$(new_repo)"
+rm -f "$r/plugins/good-plugin/skills/good-plugin-skill/SKILL.md"
+expect_fail "plugin skill missing SKILL.md" "$r" \
+  "skill good-plugin-skill: missing entrypoint"
+
+# A plugin's skills are namespaced by the plugin (/<plugin>:<skill>), so unlike
+# top-level skills/ they are deliberately NOT required to be stacia-prefixed.
+r="$(new_repo)"
+expect_pass "plugin skill needs no stacia- prefix" "$r"
 
 echo
 printf 'summon/test: %d passed, %d failed\n' "$pass" "$fail"

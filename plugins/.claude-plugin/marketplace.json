@@ -1,0 +1,13 @@
+{
+  "name": "stacia-utils",
+  "owner": { "name": "Stacia Colasurdo" },
+  "description": "Claude Code plugins published from Stacia's stacias-utils repo. `summon setup` registers this directory as a local marketplace; each plugin lives in its own subdirectory.",
+  "plugins": [
+    {
+      "name": "stacia-code-review",
+      "source": "./stacia-code-review",
+      "description": "Orchestrated, read-only, multi-perspective code review of a change set, optionally spanning multiple repos. Resolves scope and charge conversationally, then runs a bounded four-stage pipeline (comprehension, review, synthesis, verification) in a live-monitored terminal pane.",
+      "category": "review"
+    }
+  ]
+}

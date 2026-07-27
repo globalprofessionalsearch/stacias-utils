@@ -15,10 +15,14 @@ tools are self-describing, so always discover them live.
 summon list
 ```
 
-Prints two sections — **Utilities** (runnable CLI tools) and **Skills** (agent
-skills) — one line each as `name - one-line description`. Generated on the fly,
-so it is always current. Only utilities are run via `summon <name>`; skills are
-installed into the agent harness by `summon setup` and load automatically.
+Prints a section per kind — **Utilities** (runnable CLI tools), **Skills**
+(agent skills), and **Claude Code plugins** — with a one-line description each.
+Generated on the fly, so it is always current.
+
+Only utilities are run via `summon <name>`. Skills and plugins are not invoked
+through the dispatcher: `summon setup` installs them into the agent harness,
+which then loads skills on demand and exposes each plugin's own skills as
+`/<plugin>:<skill>` (e.g. `/stacia-code-review:stacia-code-review`).
 
 ## Learn one utility
 

@@ -1,5 +1,5 @@
 ---
-status: accepted
+status: accepted, superseded by ADR-0007
 date: 2026-07-23
 decision-makers: Stacia Colasurdo
 jeenius-tags: [architecture, code-review]

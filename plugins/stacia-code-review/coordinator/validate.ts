@@ -65,7 +65,49 @@ export function validate(value: Json, schema: Json, path = "$"): string[] {
 	return errs;
 }
 
-/** Inject config-driven bounds into schema objects (mutates copies at load). */
+/**
+ * A bound stated in prose, for the schema's `description`.
+ *
+ * `minItems`/`maxItems` stay the machine-checked contract; this is the same
+ * bound said in words so the model reads it as an instruction rather than as
+ * a keyword it has to notice. Kept to one fixed sentence shape so
+ * `describeBound` can recognise and replace its own prior output.
+ */
+function boundSentence(min: number | undefined, max: number): string {
+	if (min === undefined) return `Return at most ${max} items.`;
+	if (min === max) return `Return exactly ${max} items.`;
+	return `Return between ${min} and ${max} items.`;
+}
+
+/** Matches any sentence `boundSentence` could have produced, at end of string. */
+const BOUND_SENTENCE = /\s*Return (?:at most \d+|exactly \d+|between \d+ and \d+) items\.$/;
+
+/**
+ * Restate an array bound in `node.description`, replacing (not stacking) any
+ * bound sentence a previous call left there.
+ *
+ * Why prose as well as keywords: `injectBounds` is the only place the config's
+ * `minSeams`/`maxSeams`/`maxFindings` reach the model, and a bound the model
+ * never internalises is a bound paid for in retries. The keywords remain the
+ * enforcement mechanism — `validate()` above, and the SDK's own Ajv pass — but
+ * prose is the part that survives any schema sanitisation between us and the
+ * model, and it is what makes `minSeams: 3` read as "a floor that forces
+ * diligence" rather than as a number to be clipped to.
+ */
+function describeBound(node: Json, sentence: string): void {
+	const base = String(node.description ?? "")
+		.replace(BOUND_SENTENCE, "")
+		.trimEnd();
+	node.description = base ? `${base} ${sentence}` : sentence;
+}
+
+/**
+ * Inject config-driven bounds into schema objects (mutates copies at load).
+ *
+ * Writes each bound twice — as `minItems`/`maxItems`, and as a sentence in the
+ * neighbouring `description`. Idempotent: re-running with a different config
+ * replaces the previous sentence rather than appending a second one.
+ */
 export function injectBounds(
 	schemas: { seamMap: Json; reviewer: Json },
 	cfg: { reconciler: { minSeams: number; maxSeams: number }; reviewer: { maxFindings: number } },
@@ -74,7 +116,11 @@ export function injectBounds(
 	if (seams) {
 		seams.minItems = cfg.reconciler.minSeams;
 		seams.maxItems = cfg.reconciler.maxSeams;
+		describeBound(seams, boundSentence(cfg.reconciler.minSeams, cfg.reconciler.maxSeams));
 	}
 	const findings = schemas.reviewer?.properties?.findings;
-	if (findings) findings.maxItems = cfg.reviewer.maxFindings;
+	if (findings) {
+		findings.maxItems = cfg.reviewer.maxFindings;
+		describeBound(findings, boundSentence(undefined, cfg.reviewer.maxFindings));
+	}
 }

@@ -38,7 +38,10 @@ Return exactly one outcome:
 
 ## Output
 
-Return a JSON object:
+Your result is **structured output**: your final result must be an object
+conforming to the supplied verifier-output schema. Anything you write outside that
+object is not captured.
+
 - `outcome`: "retain" | "correct" | "dismiss"
 - `explanation`: Why you reached this verdict (1-3 sentences)
 - `corrections`: (only if outcome is "correct") Object with corrected fields

@@ -11,7 +11,7 @@
     },
     "seams": {
       "type": "array",
-      "description": "Priority-ranked list of seams. Seams are regions warranting reviewer attention: unclear alignment or orienteer disagreement. Orchestrator injects minItems/maxItems from config.",
+      "description": "Priority-ranked list of seams. Seams are regions warranting reviewer attention: unclear alignment or orienteer disagreement.",
       "items": {
         "type": "object",
         "required": ["id", "priority", "type", "region", "files", "rationale"],

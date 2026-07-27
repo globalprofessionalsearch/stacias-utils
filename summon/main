@@ -1,21 +1,26 @@
 #!/usr/bin/env bash
 # summon - discover and run Stacia's personal utilities and agent skills
 #
-# The repo holds two kinds of thing, each in its own top-level directory:
+# The repo holds three kinds of thing, each in its own top-level directory:
 #
 #   utilities/<name>/main       an executable whose `--help` prints, on line 1,
 #                               a man-page-style synopsis: "<name> - <desc>"
-#   skills/<name>/SKILL.md       an agent skill, namespaced with the `stacia-`
-#                               prefix; its frontmatter `name`/`description`
-#                               are the contract.
+#   skills/<name>/SKILL.md       a harness-neutral agent skill, namespaced with
+#                               the `stacia-` prefix; its frontmatter
+#                               `name`/`description` are the contract.
+#   plugins/<name>/             a Claude Code plugin; its entrypoint is the
+#     .claude-plugin/plugin.json manifest, and its own skills live in
+#                               plugins/<name>/skills/<skill>/SKILL.md.
 #
-# Both are self-describing: `summon list` harvests utility synopses from
+# All three are self-describing: `summon list` harvests utility synopses from
 # `main --help` and skill synopses from frontmatter, so there is nothing to
-# regenerate. `summon lint` enforces both contracts (skills must be
-# `stacia-`-prefixed). Harness-neutral skill content is a best practice (not
-# linted). A skill may also ship a workflow-tool `agentType` binding in its own
-# dir (e.g. the code-review read-only binding); `summon setup` installs it into
-# ~/.pi/agents/ and `summon lint` enforces it is read-only.
+# regenerate. `summon lint` enforces all three contracts (top-level skills must
+# be `stacia-`-prefixed; plugin skills are already namespaced by their plugin).
+# Harness-neutral skill content is a best practice, not linted.
+#
+# `summon setup` installs each kind the way its harness actually discovers it:
+# pi skills via one umbrella symlink, Claude Code plugins via the local
+# marketplace in plugins/ (see install_plugins — a symlink does NOT work).
 # Everything else at the repo root is infrastructure.
 #
 # Sugar: a leading run of filler words (a an the this that these those up me my
@@ -37,6 +42,7 @@ SELF_DIR="$(cd -P "$(dirname "$_self")" && pwd)"   # <repo>/summon
 REPO="$(dirname "$SELF_DIR")"
 UTIL_DIR="$REPO/utilities"   # executable utilities:    <name>/main
 SKILL_DIR="$REPO/skills"     # agent skills:            <name>/SKILL.md
+PLUGIN_DIR="$REPO/plugins"   # Claude Code plugins:     <name>/.claude-plugin/plugin.json
 
 # Leading filler/incantation words stripped before dispatch (see main()).
 FILLER="a an the this that these those up me my some"
@@ -74,6 +80,16 @@ skills() {
   done | LC_ALL=C sort
 }
 
+# Print the names of all Claude Code plugins, sorted. Every (non-dot) dir under
+# plugins/ is one; whether it *conforms* is the linter's business.
+plugins() {
+  local d
+  for d in "$PLUGIN_DIR"/*/; do
+    [[ -d "$d" ]] || continue
+    printf '%s\n' "$(basename "$d")"
+  done | LC_ALL=C sort
+}
+
 # Line 1 of a utility's `--help` (its synopsis). Empty if it produced none.
 synopsis() {
   local name="$1"
@@ -99,12 +115,15 @@ skill_field() {
   frontmatter_field "$SKILL_DIR/$1/SKILL.md" "$2"
 }
 
-# The stacia-code-review coordinator is a pi EXTENSION (not a workflow-tool
-# skill anymore). `summon setup` symlinks it into ~/.pi/agent/extensions/ so pi
-# auto-discovers it in any project; read-only-ness is enforced inside the
-# extension (subagents are confined at the call site), not via an agentType file.
-REVIEW_EXTENSION="$REPO/extensions/stacia-code-review"
-PI_EXTENSIONS_DIR="$HOME/.pi/agent/extensions"
+# Claude Code plugin install. Discovery is marketplace-mediated: there is no
+# ~/.claude/plugins/<name> auto-scan, and symlinks planted there are ignored
+# (installing COPIES the plugin into ~/.claude/plugins/cache/). So `plugins/` is
+# itself the marketplace — plugins/.claude-plugin/marketplace.json — and
+# `summon setup` registers it once, then installs each plugin at user scope.
+#   https://code.claude.com/docs/en/plugins
+#   https://code.claude.com/docs/en/plugin-marketplaces
+CC_MARKETPLACE="stacia-utils"
+CC_MARKETPLACE_MANIFEST="$PLUGIN_DIR/.claude-plugin/marketplace.json"
 
 # ---------------------------------------------------------------------------
 # Builtins
@@ -114,17 +133,22 @@ cmd_help() {
 summon - discover and run Stacia's personal utilities and agent skills
 
 Usage:
-  summon list                    List every utility and skill with its synopsis
+  summon list                    List every utility, skill and plugin with its
+                                 synopsis
   summon [filler] <name> [args]  Run a utility (leading a/an/the/this/that/
                                  these/those/up/me/my/some are optional sugar)
   summon [filler] <name> --help  Show a utility's full help
-  summon lint                    Enforce the utility + skill contracts (CI + hook)
+  summon lint                    Enforce the utility + skill + plugin contracts
+                                 (CI + hook)
   summon commit-lint <file|->    Validate a Conventional Commits message
-  summon setup                   Configure hooks + skills, print shell-rc hints
+  summon setup                   Configure hooks, install skills + plugins,
+                                 print shell-rc hints
   summon help | --help           Show this help
 
 Utilities: utilities/<name>/main (\`--help\` line 1 is "<name> - <desc>").
 Skills:    skills/<name>/SKILL.md (stacia-prefixed frontmatter contract).
+Plugins:   plugins/<name>/.claude-plugin/plugin.json (Claude Code; invoked
+           there as /<name>:<skill>, never through \`summon\`).
 Run \`summon list\`.
 EOF
 }
@@ -156,6 +180,31 @@ cmd_list() {
       printf '  %s - %s\n' "$name" "$desc"
     fi
   done < <(skills)
+
+  # Claude Code plugins aren't run through `summon`; they're installed by
+  # `summon setup` and invoked in Claude Code as /<plugin>:<skill>. Listed so
+  # `summon list` stays the one place that answers "what is in this repo".
+  local n=0 sd sname
+  while IFS= read -r name; do [[ -n "$name" ]] && n=$((n+1)); done < <(plugins)
+  if [[ $n -gt 0 ]]; then
+    echo
+    echo "Claude Code plugins (installed by \`summon setup\`):"
+    while IFS= read -r name; do
+      [[ -n "$name" ]] || continue
+      printf '  %s\n' "$name"
+      for sd in "$PLUGIN_DIR/$name/skills"/*/; do
+        [[ -f "$sd/SKILL.md" ]] || continue
+        sname="$(basename "$sd")"
+        desc="$(frontmatter_field "$sd/SKILL.md" description || true)"
+        if [[ -z "$desc" ]]; then
+          printf '    /%s:%-18s (no description; run: summon lint)\n' "$name" "$sname"
+          missing=1
+        else
+          printf '    /%s:%s - %s\n' "$name" "$sname" "$desc"
+        fi
+      done
+    done < <(plugins)
+  fi
 
   return $missing
 }
@@ -245,10 +294,66 @@ cmd_lint() {
     fi
   done
 
-  # The stacia-code-review coordinator extension: if present, it must have an
-  # index.ts entrypoint (pi discovers extensions/<name>/index.ts).
-  if [[ -d "$REVIEW_EXTENSION" && ! -f "$REVIEW_EXTENSION/index.ts" ]]; then
-    err "LINT: code-review extension: missing entrypoint ($REVIEW_EXTENSION/index.ts)"; fail=1
+  # Every directory under plugins/ must be a conforming Claude Code plugin.
+  # A plugin's entrypoint is its manifest, .claude-plugin/plugin.json — that is
+  # the file Claude Code reads; without it the directory is not a plugin at all.
+  # Plugins are published through the local marketplace at
+  # plugins/.claude-plugin/marketplace.json, so each must be listed there too,
+  # or `summon setup` installs nothing.
+  if [[ -d "$PLUGIN_DIR" ]]; then
+    if [[ ! -f "$CC_MARKETPLACE_MANIFEST" ]]; then
+      err "LINT: plugins: missing marketplace manifest ($CC_MARKETPLACE_MANIFEST)"; fail=1
+    elif ! grep -q "\"name\"[[:space:]]*:[[:space:]]*\"$CC_MARKETPLACE\"" "$CC_MARKETPLACE_MANIFEST"; then
+      err "LINT: plugins: marketplace manifest must declare \"name\": \"$CC_MARKETPLACE\""; fail=1
+    fi
+
+    while IFS= read -r name; do
+      [[ -n "$name" ]] || continue
+      d="$PLUGIN_DIR/$name"
+
+      if [[ ! "$name" =~ $kebab ]]; then
+        err "LINT: plugin $name: name must be kebab-case ([a-z0-9] and single hyphens)"; fail=1
+      fi
+
+      local manifest="$d/.claude-plugin/plugin.json"
+      if [[ ! -f "$manifest" ]]; then
+        err "LINT: plugin $name: missing entrypoint (expected plugins/$name/.claude-plugin/plugin.json)"; fail=1; continue
+      fi
+      if ! grep -q "\"name\"[[:space:]]*:[[:space:]]*\"$name\"" "$manifest"; then
+        err "LINT: plugin $name: plugin.json 'name' must equal '$name'"; fail=1
+      fi
+      if [[ -f "$CC_MARKETPLACE_MANIFEST" ]] && \
+         ! grep -q "\"name\"[[:space:]]*:[[:space:]]*\"$name\"" "$CC_MARKETPLACE_MANIFEST"; then
+        err "LINT: plugin $name: not listed in the $CC_MARKETPLACE marketplace manifest"; fail=1
+      fi
+
+      # A plugin's skills are namespaced by the plugin (/<plugin>:<skill>), so
+      # the stacia- prefix isn't needed here — but the frontmatter contract is
+      # the same one skills/ is held to.
+      local sd sname
+      for sd in "$d/skills"/*/; do
+        [[ -d "$sd" ]] || continue
+        sname="$(basename "$sd")"
+        if [[ ! "$sname" =~ $kebab ]]; then
+          err "LINT: plugin $name: skill $sname: name must be kebab-case"; fail=1
+        fi
+        if [[ ! -f "$sd/SKILL.md" ]]; then
+          err "LINT: plugin $name: skill $sname: missing entrypoint (expected skills/$sname/SKILL.md)"; fail=1; continue
+        fi
+        if [[ "$(head -n1 "$sd/SKILL.md")" != "---" ]]; then
+          err "LINT: plugin $name: skill $sname: SKILL.md must open with a YAML frontmatter block (---)"; fail=1
+        fi
+        local pfname pfdesc
+        pfname="$(frontmatter_field "$sd/SKILL.md" name || true)"
+        pfdesc="$(frontmatter_field "$sd/SKILL.md" description || true)"
+        if [[ "$pfname" != "$sname" ]]; then
+          err "LINT: plugin $name: skill $sname: frontmatter 'name:' must equal '$sname' (got: ${pfname:-<empty>})"; fail=1
+        fi
+        if [[ -z "$pfdesc" ]]; then
+          err "LINT: plugin $name: skill $sname: frontmatter 'description:' must be non-empty"; fail=1
+        fi
+      done
+    done < <(plugins)
   fi
 
   # The dispatcher must obey its own contract too.
@@ -257,7 +362,7 @@ cmd_lint() {
   [[ "$s" == "summon - "* ]] || { err "LINT: summon: own --help line 1 malformed"; fail=1; }
 
   if [[ $fail -eq 0 ]]; then
-    echo "lint OK ($(utils | grep -c . || true) utilities, $(skills | grep -c . || true) skills)"
+    echo "lint OK ($(utils | grep -c . || true) utilities, $(skills | grep -c . || true) skills, $(plugins | grep -c . || true) plugins)"
   fi
   return $fail
 }
@@ -285,11 +390,68 @@ EOF
 }
 
 # ---------------------------------------------------------------------------
-# One-shot setup: hooks + skills + the code-review extension + shell-rc hints.
+# Claude Code plugin install.
+#
+# NOT the pi trick. pi recurses into one umbrella symlink, so linking skills/
+# once exposes every current and future skill for free. Claude Code has no
+# analogue: it does not scan ~/.claude/plugins/ for plugin directories, and
+# symlinks planted there are ignored. Discovery is marketplace-mediated, and
+# `plugin install` COPIES the plugin into
+# ~/.claude/plugins/cache/<marketplace>/<plugin>/<version>/.
+#   https://code.claude.com/docs/en/plugins
+#   https://code.claude.com/docs/en/plugin-marketplaces
+#
+# So plugins/ is itself the marketplace (plugins/.claude-plugin/marketplace.json),
+# registered once by path; every plugin listed there is installed at user scope
+# so it is available in any project. Every install is a snapshot — re-running
+# `summon setup` is how you pick up repo edits.
+# ---------------------------------------------------------------------------
+install_plugins() {
+  local name
+  [[ "$(plugins | grep -c . || true)" -gt 0 ]] || return 0
+
+  if [[ ! -f "$CC_MARKETPLACE_MANIFEST" ]]; then
+    err "! claude: no marketplace manifest at $CC_MARKETPLACE_MANIFEST — skipping plugin install"
+    return 0
+  fi
+  if ! command -v claude >/dev/null 2>&1; then
+    err "! claude: CLI not on PATH — skipping plugin install. Once it is, run:"
+    err "    claude plugin marketplace add \"$PLUGIN_DIR\""
+    err "    claude plugin install <name>@$CC_MARKETPLACE --scope user"
+    return 0
+  fi
+
+  # `add` on a first run, `update` on every run after. Either is enough.
+  if claude plugin marketplace add "$PLUGIN_DIR" >/dev/null 2>&1 \
+     || claude plugin marketplace update "$CC_MARKETPLACE" >/dev/null 2>&1; then
+    echo "✓ claude: marketplace '$CC_MARKETPLACE' registered (-> plugins/)"
+  else
+    err "! claude: could not register the marketplace at $PLUGIN_DIR — skipping plugin install"
+    return 0
+  fi
+
+  while IFS= read -r name; do
+    [[ -n "$name" ]] || continue
+    if claude plugin install "$name@$CC_MARKETPLACE" --scope user >/dev/null 2>&1; then
+      echo "✓ claude: plugin installed ($name@$CC_MARKETPLACE, user scope) — invoke /$name:<skill>"
+    elif claude plugin update "$name@$CC_MARKETPLACE" >/dev/null 2>&1; then
+      echo "✓ claude: plugin updated ($name@$CC_MARKETPLACE) — invoke /$name:<skill>"
+    else
+      err "! claude: could not install $name@$CC_MARKETPLACE"
+      err "    try: claude plugin install $name@$CC_MARKETPLACE --scope user"
+    fi
+  done < <(plugins)
+
+  echo "  (installs are copies under ~/.claude/plugins/cache/ — repo edits are not"
+  echo "   live; re-run 'summon setup', or use: claude --plugin-dir $PLUGIN_DIR/<name>)"
+}
+
+# ---------------------------------------------------------------------------
+# One-shot setup: hooks + pi skills + Claude Code plugins + shell-rc hints.
 # Idempotent.
-#  - Skills: a single umbrella symlink exposes skills/ to pi recursively.
-#  - Extension: the code-review coordinator extension is symlinked into
-#    ~/.pi/agent/extensions/ so pi auto-discovers it (user scope, any project).
+#  - pi skills: a single umbrella symlink exposes skills/ to pi recursively.
+#  - Claude Code plugins: registered via the local marketplace in plugins/ and
+#    installed at user scope. NOT a symlink — see cmd_install_plugins.
 # ---------------------------------------------------------------------------
 cmd_setup() {
   git -C "$REPO" config core.hooksPath .githooks
@@ -311,19 +473,7 @@ cmd_setup() {
   ln -sfn "$SKILL_DIR" "$pi/$PI_SKILLS_LINK"
   echo "✓ pi: skills linked once ($PI_SKILLS_LINK -> skills/); new skills auto-discovered"
 
-  # --- code-review extension: symlink into ~/.pi/agent/extensions/ so pi
-  # auto-discovers it in every project. Read-only-ness is enforced inside the
-  # extension (subagents are confined at the call site).
-  if [[ -d "$REVIEW_EXTENSION" ]]; then
-    mkdir -p "$PI_EXTENSIONS_DIR"
-    ln -sfn "$REVIEW_EXTENSION" "$PI_EXTENSIONS_DIR/$(basename "$REVIEW_EXTENSION")"
-    echo "✓ pi: code-review extension linked ($(basename "$REVIEW_EXTENSION") -> ~/.pi/agent/extensions/)"
-  fi
-  # Prune the obsolete workflow read-only agentType binding a prior setup planted.
-  if [[ -L "$HOME/.pi/agents/stacia-review-readonly.md" ]]; then
-    rm -f "$HOME/.pi/agents/stacia-review-readonly.md"
-    echo "✓ pruned obsolete read-only binding (stacia-review-readonly.md)"
-  fi
+  install_plugins
 
   # NOTE: a previous revision pruned repo-owned symlinks out of ~/.claude/skills
   # here, on the premise that Claude Code was permanently unwired. That premise

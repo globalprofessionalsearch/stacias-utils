@@ -12,7 +12,7 @@
     },
     "findings": {
       "type": "array",
-      "description": "Prioritized findings, ordered by severity: Blocker > Major > Minor > Nit. Orchestrator injects maxItems from config.",
+      "description": "Prioritized findings, ordered by severity: Blocker > Major > Minor > Nit.",
       "items": {
         "type": "object",
         "required": ["severity", "confidence", "location", "evidence", "finding", "rationale"],
@@ -56,7 +56,7 @@
     },
     "spillover": {
       "type": "boolean",
-      "description": "True if likely more significant issues remain beyond the 6 reported. False if lens adequately covered."
+      "description": "True if likely more significant issues remain beyond those reported. False if lens adequately covered."
     },
     "moreExploration": {
       "type": "boolean",

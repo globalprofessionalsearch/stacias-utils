@@ -1,20 +1,21 @@
 # Contributing
 
-The repo holds two kinds of thing, each in its own top-level directory. Strict
+The repo holds three kinds of thing, each in its own top-level directory. Strict
 conventions govern them; `summon lint` (pre-commit hook + CI) rejects anything
-that breaks one. There is no metadata to maintain — the help text and the
-frontmatter *are* the contracts.
+that breaks one. There is no metadata to maintain — the help text, the
+frontmatter, and the plugin manifest *are* the contracts.
 
 ```
 utilities/<name>/main         executable CLI tool
 skills/<name>/SKILL.md         harness-neutral agent skill
+plugins/<name>/                Claude Code plugin
 ```
-
-A skill may additionally ship a workflow-tool `agentType` binding in its own dir
-(see the Skill contract) — that is part of the skill, not a separate kind.
 
 Everything else at the repo root (`bin/`, `summon/`, `.github/`, ...) is
 infrastructure.
+
+<!-- TODO: `extensions/` holds the legacy pi-harness extension that predates the
+     Claude Code port. It is being retired — don't add to it. -->
 
 ## Utility contract
 
@@ -72,29 +73,17 @@ unrelated skills that land in the shared harness skill directories.
 **Harness-neutrality (best practice, not linted):** write skill bodies so a
 `SKILL.md` isn't coupled to one harness. Describe behavior abstractly ("launch
 parallel read-only subagents, one per perspective, in a single message") rather
-than naming a specific harness's delegation tool or execution flags. pi is the
-only harness `summon setup` wires today; keeping skills neutral keeps them
-portable to others.
+than naming a specific harness's delegation tool or execution flags. Claude
+Code is the harness the repo is standardizing on; keeping skills neutral keeps
+them portable to others.
 
-`summon setup` installs skills into pi:
+`summon setup` wires the repo's skills into the agent harness, pointing back
+into the repo — so skill-body edits are live, with no re-sync and no re-run.
 
-- **pi** (recursive discovery): one umbrella symlink `~/.pi/agent/skills/stacia-utils
-  -> skills/`. Run-once — new skills are auto-discovered without re-running setup.
-
-Skill-body edits are live (the symlink points back into the repo).
-
-**Skill-owned workflow `agentType` bindings.** A skill that drives the
-pi-dynamic-workflows `workflow` tool may ship an `agentType` *binding*: a
-frontmatter-only Markdown file in its own skill dir that binds a subagent's tool
-allow-list. The `workflow` tool resolves `agentType` names from `~/.pi/agents/`,
-so `summon setup` symlinks the binding there (user scope, any repo). The
-code-review skill ships `skills/stacia-code-review/stacia-review-readonly.md`,
-granting only read/search tools — this is what makes its review fan-out
-tool-level read-only. `summon lint` enforces it: frontmatter block, a
-`stacia-`-prefixed `name:`, and a `tools:` **YAML array** (`tools: [read, ...]`;
-a comma *string* is silently ignored by the workflow tool) restricted to
-non-mutating tools (`read, grep, find, ls, ffgrep, fffind`). The binding lives
-with the skill it serves — no separate top-level directory.
+<!-- TODO: which harness the top-level `skills/` tree is wired into, and by what
+     mechanism, is being repointed as part of the Claude Code port. Until it
+     settles, the output of `summon setup` is the source of truth, not this
+     paragraph. -->
 
 ### Add one
 
@@ -102,10 +91,43 @@ with the skill it serves — no separate top-level directory.
 mkdir -p skills/stacia-my-skill
 $EDITOR skills/stacia-my-skill/SKILL.md
 summon lint                          # must pass
-summon setup                         # one-time: plant the pi umbrella symlink
+summon setup                         # one-time: wire the skill into the harness
 git add skills/stacia-my-skill
 git commit -m "feat: add stacia-my-skill skill"
 ```
+
+## Plugin contract
+
+A plugin is a directory under `plugins/` named in `kebab-case`, whose
+entrypoint is its manifest:
+
+```
+plugins/my-plugin/
+  .claude-plugin/plugin.json    # "name" must equal the directory name
+  skills/<skill>/SKILL.md       # optional: the plugin's own skills
+  ...                           # commands, agents, hooks, supporting code
+```
+
+The manifest is what Claude Code reads — a directory without a valid
+`.claude-plugin/plugin.json` is not a plugin. A plugin's own skills satisfy the
+same frontmatter contract as `skills/` (frontmatter block, `name:` equal to the
+skill dir, non-empty `description:`) but do **not** take the `stacia-` prefix:
+they are already namespaced by their plugin and are invoked as
+`/<plugin>:<skill>`.
+
+`summon setup` installs plugins into Claude Code; they are never run through
+`summon`.
+
+<!-- TODO: the install mechanism (marketplace registration and install target)
+     is being reworked alongside the Claude Code port; run `summon lint` and
+     trust its errors over this section if the two disagree. -->
+
+The repo ships one plugin: `plugins/stacia-code-review/`, whose design of
+record is the ADR series under `docs/adr/`. Read the relevant ADRs before
+changing its coordinator, personas, or schemas — several of its constraints
+(read-only subagent confinement, structured output, the TypeScript/Python
+helper boundary) are decisions with recorded rationale, not incidental
+implementation.
 
 ## Reserved names
 

@@ -9,7 +9,7 @@ design decisions are captured.
 You receive the **orientation** (comprehension model of the change), **seam map**
 (priority-ranked regions warranting attention), and an **ADR catalog** — a list
 of accepted ADRs staged on disk, each as `[adr] <id> — <title>: <path>`. The ADR
-**bodies are not inlined**; `read` each path to load the decision text. Start
+**bodies are not inlined**; `Read` each path to load the decision text. Start
 from high-priority seams; pull ADR and code content on demand to investigate.
 You do not receive the full diff.
 
@@ -74,7 +74,9 @@ violation is just as severe as a security bug.
 
 ## Output
 
-Return findings following the standard reviewer output schema:
+Your result is **structured output** conforming to the standard reviewer-output
+schema (see the shared reviewer rules). Fill each finding's fields as follows:
+
 - `location`: the code location of the violation or the decision needing an ADR
 - `evidence`: quote the violating code or the decision being made
 - `finding`: what's wrong or what's missing
