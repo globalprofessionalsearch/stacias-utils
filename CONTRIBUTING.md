@@ -115,9 +115,13 @@ they are already namespaced by their plugin and are invoked as
 `summon setup` installs plugins into Claude Code; they are never run through
 `summon`.
 
-Installs are marketplace-mediated and the manifest is generated: `summon setup`
-renders `plugins/.claude-plugin/marketplace.json` from the `plugins/` directory
-scan, so it is never hand-edited. `summon lint` fails if it has drifted.
+Installs are marketplace-mediated. `plugins/.claude-plugin/marketplace.json` is
+an authored file — a product of development, like any other source file — and
+adding a plugin means adding it there too. Nothing generates or rewrites it;
+`summon lint` checks it stays accurate against what is on disk and names what
+is wrong (`name`, each entry's `source`, and plugins listed-but-absent or
+present-but-unlisted). Owner and description wording are editorial and not
+linted beyond being non-empty.
 
 The repo ships one plugin: the `stacia` umbrella at `plugins/stacia/`. A utility
 is a self-contained directory under `plugins/stacia/skills/<utility>/` — its

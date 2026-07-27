@@ -27,9 +27,9 @@ at user scope. Because this utility is a skill of that plugin rather than a
 plugin of its own, it ships with it — and adding or removing a utility never
 requires re-running setup.
 
-The marketplace manifest (`plugins/.claude-plugin/marketplace.json`) is
-generated from the `plugins/` directory scan. Do not hand-edit it; `summon lint`
-fails if it has drifted.
+The marketplace manifest (`plugins/.claude-plugin/marketplace.json`) is an
+authored file listing each plugin. `summon lint` checks it stays accurate
+against what is on disk.
 
 Docs: <https://code.claude.com/docs/en/plugins> ·
 <https://code.claude.com/docs/en/plugin-marketplaces>

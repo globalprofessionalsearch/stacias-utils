@@ -58,9 +58,10 @@ That puts `summon` on PATH. Nothing else needs exporting — run `summon setup`
 once, then `summon list`.
 
 Claude Code plugins install through a local marketplace: `plugins/` is itself
-the marketplace, and `summon setup` registers it once. The manifest
-(`plugins/.claude-plugin/marketplace.json`) is *generated* from the directory
-scan — never hand-edited; `summon lint` fails if it has drifted.
+the marketplace, and `summon setup` registers it once. Its manifest
+(`plugins/.claude-plugin/marketplace.json`) is authored and committed — add a
+plugin there when you add one under `plugins/`. `summon lint` checks it stays
+accurate and says what is wrong; it never rewrites it.
 
 `setup` runs once because there is one umbrella plugin, `stacia`. Utilities live
 under `plugins/stacia/skills/<utility>/`, so adding or removing one never adds a
