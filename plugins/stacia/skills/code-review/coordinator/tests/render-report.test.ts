@@ -107,9 +107,17 @@ describe("renderReport — structure", () => {
 	});
 
 	it("reports verification stats when present", () => {
-		const md = renderReport("c", { ...base, verification_stats: { verified: 3, confirmed: 2, corrected: 0, dismissed: 1, unverified: 0 } });
+		const md = renderReport("c", { ...base, verification_stats: { verified: 3, confirmed: 2, corrected: 0, dismissed: 1 } });
 		expect(md).toContain("3 Blocker/Major finding(s) independently checked");
 		expect(md).toContain("2 confirmed");
+		expect(md).toContain("1 dismissed");
+	});
+
+	it("does not report an 'unverified' count — a failed verifier halts the run", () => {
+		// Every Blocker/Major in a report that exists was actually checked, so
+		// there is no such thing as an unverified finding any more.
+		const md = renderReport("c", { ...base, verification_stats: { verified: 2, confirmed: 2, corrected: 0, dismissed: 0 } });
+		expect(md).not.toContain("unverified");
 	});
 
 	it("tolerates a synthesis missing every optional field", () => {

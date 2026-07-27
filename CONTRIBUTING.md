@@ -115,12 +115,18 @@ they are already namespaced by their plugin and are invoked as
 `summon setup` installs plugins into Claude Code; they are never run through
 `summon`.
 
-Installs are snapshots, not symlinks: `claude plugin install` copies the plugin
-into `~/.claude/plugins/cache/`, so re-run `summon setup` after editing one (or
-use `claude --plugin-dir <repo>/plugins/<name>` while iterating).
+Installs are marketplace-mediated and the manifest is generated: `summon setup`
+renders `plugins/.claude-plugin/marketplace.json` from the `plugins/` directory
+scan, so it is never hand-edited. `summon lint` fails if it has drifted.
 
-The repo ships one plugin: `plugins/stacia-code-review/`, whose design of
-record is the ADR series under `docs/adr/`. Read the relevant ADRs before
+The repo ships one plugin: the `stacia` umbrella at `plugins/stacia/`. A utility
+is a self-contained directory under `plugins/stacia/skills/<utility>/` — its
+`SKILL.md` plus whatever `bin/`, code and `test.sh` it needs — invoked as
+`/stacia:<utility>`. Adding or removing one is a mkdir or an rm: it never adds a
+plugin, so `summon setup` does not need re-running.
+
+The code-review utility (`plugins/stacia/skills/code-review/`) has its design of
+record in the ADR series under `docs/adr/`. Read the relevant ADRs before
 changing its coordinator, personas, or schemas — several of its constraints
 (read-only subagent confinement, structured output, the TypeScript/Python
 helper boundary) are decisions with recorded rationale, not incidental

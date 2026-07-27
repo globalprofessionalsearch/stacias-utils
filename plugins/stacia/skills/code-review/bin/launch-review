@@ -14,8 +14,10 @@ set -euo pipefail
 
 NAME="launch-review"
 
-# --- locate ourselves through any symlinks (the plugin root is symlinked into
-# ~/.claude/plugins by `summon setup`, so $0 is very likely a link).
+# --- locate ourselves through any symlinks. This utility is self-contained:
+# bin/ and coordinator/ are siblings under plugins/stacia/skills/code-review,
+# so everything resolves relative to this script and nothing depends on where
+# the umbrella plugin is registered from.
 _self="${BASH_SOURCE[0]}"
 while [ -L "$_self" ]; do
   _dir="$(cd -P "$(dirname "$_self")" && pwd)"
@@ -23,8 +25,8 @@ while [ -L "$_self" ]; do
   case "$_self" in /*) : ;; *) _self="$_dir/$_self" ;; esac
 done
 BIN_DIR="$(cd -P "$(dirname "$_self")" && pwd)"
-PLUGIN_ROOT="$(dirname "$BIN_DIR")"
-COORD_DIR="$PLUGIN_ROOT/coordinator"
+SKILL_ROOT="$(dirname "$BIN_DIR")"   # plugins/stacia/skills/code-review
+COORD_DIR="$SKILL_ROOT/coordinator"
 
 err() { printf '%s: %s\n' "$NAME" "$*" >&2; }
 die() { err "$*"; exit 1; }

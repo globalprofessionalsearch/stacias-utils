@@ -27,8 +27,19 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.x"
-      - name: Test the code-review plugin
-        run: ./plugins/stacia-code-review/test.sh
+      # Names no utility: every plugins/*/skills/*/test.sh runs. Adding a
+      # utility with tests needs no edit here.
+      - name: Test every utility that ships tests
+        run: |
+          found=0
+          for t in plugins/*/skills/*/test.sh; do
+            [ -x "$t" ] || continue
+            found=1
+            echo "::group::$t"
+            "$t"
+            echo "::endgroup::"
+          done
+          [ "$found" = 1 ] || echo "no utility test suites found"
 
   commit:
     if: github.event_name == 'pull_request'

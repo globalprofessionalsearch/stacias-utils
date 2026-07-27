@@ -79,7 +79,7 @@ export function renderReport(charge: string, s: Any): string {
 		const v = s.verification_stats;
 		lines.push(
 			`\n## Verification\n\n${v.verified} Blocker/Major finding(s) independently checked: ` +
-				`${v.confirmed} confirmed, ${v.corrected} corrected, ${v.dismissed} dismissed, ${v.unverified} unverified.`,
+				`${v.confirmed} confirmed, ${v.corrected} corrected, ${v.dismissed} dismissed.`,
 		);
 	}
 

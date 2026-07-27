@@ -2,7 +2,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { parseArgs, readRequest, userConfigPath } from "../cli.ts";
+import { failureReport, parseArgs, readRequest, userConfigPath } from "../cli.ts";
 
 // The launcher (bin/launch-review) validates repo paths, source grammar and ADR
 // paths before writing request.json, so cli.ts deliberately does NOT re-check
@@ -111,5 +111,41 @@ describe("userConfigPath", () => {
 
 	it("does not consult the working directory — there is no project layer (ADR-0006)", () => {
 		expect(userConfigPath("/home/u")).not.toContain("/repo");
+	});
+});
+
+describe("failureReport", () => {
+	// A failed review is exactly when the run dir matters: the log, the bundles
+	// and any partial findings are all under there, and the message alone
+	// rarely says enough.
+	it("labels the review UNSUCCESSFUL and carries the reason", () => {
+		const out = failureReport(new Error("Orienteer A (claim→code) failed (timeout after 360s)"), "/runs/abc");
+		expect(out).toContain("Review UNSUCCESSFUL");
+		expect(out).toContain("Orienteer A (claim→code) failed (timeout after 360s)");
+	});
+
+	it("points at the run directory and the log inside it", () => {
+		const out = failureReport(new Error("boom"), "/runs/abc");
+		expect(out).toContain("/runs/abc");
+		expect(out).toContain("/runs/abc/logs/run.jsonl");
+	});
+
+	it("says so plainly when the run failed before a run dir existed", () => {
+		const out = failureReport(new Error("could not read request file"), null);
+		expect(out).toContain("No run directory was allocated");
+		expect(out).not.toContain("logs/run.jsonl");
+	});
+
+	it("surfaces a degraded log rather than silently pointing at a file that isn't there", () => {
+		const out = failureReport(new Error("boom"), "/runs/abc", "ENOSPC");
+		expect(out).toContain("run log was degraded: ENOSPC");
+	});
+
+	it("omits the degraded-log note when logging worked", () => {
+		expect(failureReport(new Error("boom"), "/runs/abc", null)).not.toContain("degraded");
+	});
+
+	it("handles a non-Error thrown value", () => {
+		expect(failureReport("just a string", "/runs/abc")).toContain("just a string");
 	});
 });

@@ -28,6 +28,7 @@ import { loadConfig } from "./config.ts";
 import { type RepoInput, runReview } from "./coordinator.ts";
 import { Monitor } from "./monitor.ts";
 import { renderReport } from "./render-report.ts";
+import { NULL_LOG, RunLog } from "./run-log.ts";
 
 // biome-ignore lint/suspicious/noExplicitAny: request/synthesis are JSON payloads
 type Any = any;
@@ -77,10 +78,18 @@ export function readRequest(requestPath: string): ReviewRequest {
 	return req as ReviewRequest;
 }
 
-export async function performReview(req: ReviewRequest, monitor: Monitor, signal: AbortSignal): Promise<Any> {
+/**
+ * Called as soon as the run directory exists, so `main` can point at it even
+ * when the review fails. Everything worth inspecting after a failure —
+ * bundles, the log, whatever findings landed — lives under there.
+ */
+export type OnRunDir = (manifest: Manifest) => void;
+
+export async function performReview(req: ReviewRequest, monitor: Monitor, signal: AbortSignal, onRunDir?: OnRunDir): Promise<Any> {
 	const assets = loadAssets();
 	const repoIds = req.repos.map((r) => r.path.replace(/\/+$/, "").split("/").pop() || "repo");
 	const manifest: Manifest = await initRun(assets.helper, repoIds);
+	onRunDir?.(manifest);
 	if (manifest.repos.length !== req.repos.length) {
 		throw new Error(`initRun returned ${manifest.repos.length} repo(s), expected ${req.repos.length} (one per requested repo)`);
 	}
@@ -100,7 +109,7 @@ export async function performReview(req: ReviewRequest, monitor: Monitor, signal
 
 	const config = loadConfig(userConfigPath());
 	const notes: string[] = [];
-	const synthesis = await runReview({ charge: req.charge, repos, manifest, assets, config, monitor, notes, signal });
+	const synthesis = await runReview({ charge: req.charge, repos, manifest, assets, config, monitor, notes, signal, log: monitor.runLog });
 
 	await writeFindings(assets.helper, manifest.run_dir, "synthesis", JSON.stringify(synthesis, null, 2));
 	const report = await writeReport(assets.helper, manifest.run_dir, renderReport(req.charge, synthesis));
@@ -127,20 +136,52 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
 	monitor.onQuit(() => controller.abort());
 	monitor.start();
 
+	// Captured as soon as initRun allocates it, so the failure path can point at
+	// it. A failed review is exactly when the run dir matters most: the log,
+	// the bundles and any partial findings are all under there.
+	let runDir: string | null = null;
+	let log: RunLog = NULL_LOG;
+	const onRunDir = (manifest: Manifest) => {
+		runDir = manifest.run_dir;
+		log = new RunLog(manifest.log ?? null);
+		monitor.setLog(log);
+		log.info("run.start", { runDir, charge: req.charge, repos: req.repos, adrs: (req.adrs ?? []).map((a) => a.id) });
+	};
+
 	try {
-		const { synthesis, counts, report, run_dir } = await performReview(req, monitor, controller.signal);
+		const { synthesis, counts, report, run_dir } = await performReview(req, monitor, controller.signal, onRunDir);
 		monitor.stop();
+		await log.close();
 		process.stdout.write(`\nReview complete — verdict: ${synthesis.verdict}\n${counts}\nReport: ${report.split("\n")[0]}\nRun dir: ${run_dir}\n`);
 		return 0;
 	} catch (err) {
 		// The run didn't finish normally — make sure in-flight sibling subagents
 		// don't keep spending tokens after we unwind.
-		monitor.cancelAll();
+		monitor.cancelAll("run failed");
 		controller.abort();
 		monitor.stop();
-		process.stderr.write(`\nstacia-code-review failed: ${(err as Error).message}\n`);
+		log.fail("run.failed", err);
+		await log.close();
+		process.stderr.write(failureReport(err, runDir, log.error));
 		return 1;
 	}
+}
+
+/**
+ * What the user sees in the pane when a review does not complete. The run dir
+ * is the actionable part — the message alone rarely says enough — so it is
+ * always printed when we got far enough to have one.
+ */
+export function failureReport(err: unknown, runDir: string | null, logError?: string | null): string {
+	const message = err instanceof Error ? err.message : String(err);
+	const lines = ["", `Review UNSUCCESSFUL: ${message}`, ""];
+	if (runDir) {
+		lines.push(`Run directory: ${runDir}`, `Log:           ${runDir}/logs/run.jsonl`, "");
+	} else {
+		lines.push("No run directory was allocated — the review failed before it started.", "");
+	}
+	if (logError) lines.push(`(run log was degraded: ${logError})`, "");
+	return lines.join("\n");
 }
 
 // Only run when executed directly, so the exported pieces stay unit-testable.

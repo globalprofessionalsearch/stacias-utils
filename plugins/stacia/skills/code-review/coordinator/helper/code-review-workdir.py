@@ -15,6 +15,8 @@ Layout (base = ${XDG_CACHE_HOME:-$HOME/.cache}/stacia-code-review):
         bundles/<slug>.md        # one diff bundle per repo
         context/<kind>/<id>.<ext># reference material, read by subagents on demand
         findings/<slug>.json     # raw per-perspective reviewer results per repo
+        logs/run.jsonl           # append-only run log (path allocated here,
+                                 # written by the coordinator; see manifest.log)
         report.md                # final assembled report
         report.html              # HTML wrapper (renders report.md client-side)
 
@@ -355,9 +357,11 @@ def cmd_init(args) -> int:
     run_dir = base_dir() / "runs" / run_name
     bundles_dir, findings_dir = run_dir / "bundles", run_dir / "findings"
     context_dir = run_dir / "context"
+    logs_dir = run_dir / "logs"
     bundles_dir.mkdir(parents=True, exist_ok=True)
     findings_dir.mkdir(parents=True, exist_ok=True)
     context_dir.mkdir(parents=True, exist_ok=True)
+    logs_dir.mkdir(parents=True, exist_ok=True)
 
     repos = unique_slugs(args.repos)
     multi = len(repos) > 1
@@ -371,6 +375,11 @@ def cmd_init(args) -> int:
         "run_dir": str(run_dir),
         "report": str(run_dir / "report.md"),
         "report_html": str(report_html),
+        # Append-only JSONL run log. The helper allocates the path and makes the
+        # directory (it owns every path and mkdir for a run); the coordinator
+        # opens an append stream to it, because a subprocess per log line would
+        # cost more than the run itself.
+        "log": str(logs_dir / "run.jsonl"),
         "multi_repo": multi,
         "context": [],
         "repos": [

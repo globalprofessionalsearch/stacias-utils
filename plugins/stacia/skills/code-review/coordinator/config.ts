@@ -20,6 +20,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { validateModels } from "./models.ts";
+import { validateTimeouts } from "./timeouts.ts";
 import { validate } from "./validate.ts";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -27,7 +28,8 @@ const BASE = path.join(HERE, "assets", "config.json");
 const SCHEMA = path.join(HERE, "assets", "config.schema.json");
 
 export interface Config {
-	workflow: { maxRounds: number; roundTimeoutMs: number; concurrency: number };
+	workflow: { maxRounds: number; concurrency: number };
+	timeouts: Record<string, number>; // per-role ms, per invocation; all roles required (validated)
 	reviewer: { maxFindings: number; perspectives: string[] };
 	reconciler: { minSeams: number; maxSeams: number };
 	synthesis: { followUpThreshold: number };
@@ -71,6 +73,10 @@ export function loadConfig(userConfigPath?: string): Config {
 		const user = readJsonSafe(userConfigPath);
 		if (user) cfg = deepMerge(cfg, user);
 	}
+
+	// Ahead of the schema so a stale `workflow.roundTimeoutMs` override reports the
+	// migration hint rather than a bare additionalProperties violation.
+	validateTimeouts(cfg.timeouts ?? {}, cfg.workflow ?? {});
 
 	const schema = JSON.parse(fs.readFileSync(SCHEMA, "utf8"));
 	const errs = validate(cfg, schema);

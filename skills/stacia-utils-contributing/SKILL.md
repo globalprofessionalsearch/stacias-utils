@@ -122,11 +122,18 @@ they are already namespaced by their plugin and are invoked as
 `summon`. The install mechanism is being reworked alongside the Claude Code
 port — run `summon lint` and trust its errors over any path written down here.
 
-The repo ships `plugins/stacia-code-review/`. Its design of record is the ADR
-series under `docs/adr/`; read the relevant ADRs before changing its
-coordinator, personas, or schemas, because several of its constraints
-(read-only subagent confinement, structured output, the TypeScript/Python
-helper boundary) are recorded decisions rather than incidental implementation.
+The repo ships one plugin: the `stacia` umbrella at `plugins/stacia/`. A utility
+is a self-contained directory under `plugins/stacia/skills/<utility>/`, invoked
+as `/stacia:<utility>`; adding or removing one never requires re-running
+`summon setup`. The marketplace manifest is generated from the directory scan —
+never hand-edit it.
+
+The code-review utility (`plugins/stacia/skills/code-review/`) has its design of
+record in the ADR series under `docs/adr/`; read the relevant ADRs before
+changing its coordinator, personas, or schemas, because several of its
+constraints (read-only subagent confinement, structured output, the
+TypeScript/Python helper boundary) are recorded decisions rather than
+incidental implementation.
 
 ## Reserved names
 

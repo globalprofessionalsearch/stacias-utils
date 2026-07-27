@@ -20,9 +20,12 @@ import { PERSPECTIVES } from "./assets.ts";
 import type { Config } from "./config.ts";
 import type { Role } from "./models.ts";
 import { modelFor } from "./models.ts";
+import type { Activity } from "./monitor-state.ts";
 import type { Monitor } from "./monitor.ts";
+import type { RunLog } from "./run-log.ts";
 import { pool } from "./pool.ts";
 import { runSubagent } from "./subagent.ts";
+import { timeoutFor } from "./timeouts.ts";
 import { injectBounds } from "./validate.ts";
 
 // biome-ignore lint/suspicious/noExplicitAny: JSON payloads
@@ -42,8 +45,29 @@ export interface ReviewInput {
 	assets: Assets;
 	config: Config;
 	monitor: Monitor;
-	notes: string[]; // coverage notes (e.g. reviewer failures), appended in place
+	notes: string[]; // coverage notes, appended in place
 	signal?: AbortSignal; // parent cancel-all
+	log?: RunLog;
+}
+
+/**
+ * Every agent is necessary. There is no partial review: an orienteer stub, a
+ * reviewer that returned early, or an unverified Blocker all mean the report
+ * would describe less coverage than it appears to. Rather than encode that in
+ * caveats a reader has to notice, the run halts.
+ *
+ * `runSubagent` returns null for every failure mode (timeout, schema-retry
+ * exhaustion, kill, abort). This turns that null into a halt: cancel every
+ * sibling immediately, then throw so the pool stops scheduling and the error
+ * reaches cli.ts.
+ */
+export function required<T>(result: T | null, what: string, a: Activity, monitor: Monitor, log?: RunLog): T {
+	if (result !== null && result !== undefined) return result;
+	const why = a.fail ?? a.state ?? "failed";
+	log?.fail("agent.required", new Error(why), { agent: a.label, role: a.role, round: a.round || undefined });
+	// Halt siblings BEFORE unwinding, so nothing keeps spending after this point.
+	monitor.cancelAll(`${what} failed`);
+	throw new Error(`${what} failed (${why}) — every agent is required, so the review is halted.`);
 }
 
 function sanitizeCharge(charge: string): string {
@@ -122,22 +146,23 @@ export function resolvePerspectives(cfg: Config): string[] {
 }
 
 export async function runReview(input: ReviewInput): Promise<Any> {
-	const { assets, manifest, monitor, config: cfg, notes, signal } = input;
+	const { assets, manifest, monitor, config: cfg, notes, signal, log } = input;
 	injectBounds(assets.schemas, cfg);
 	const charge = sanitizeCharge(input.charge);
 	const cwd = input.repos[0]?.path ?? process.cwd();
 	// read/grep/glob are confined to these roots (the change set's repos + the run dir).
 	const allowedRoots = [...input.repos.map((r) => r.path), manifest.run_dir];
 	const concurrency = cfg.workflow.concurrency ?? 6;
-	const roundTimeout = cfg.workflow.roundTimeoutMs ?? 60000;
-	const longTimeout = roundTimeout * 3; // orient/reconcile/review/synthesis get more room than a verifier
 	const K = cfg.workflow.maxRounds ?? 3;
 	const perspectives = resolvePerspectives(cfg);
 	const checkCancel = () => {
-		if (monitor.cancelled || signal?.aborted) throw new Error("review cancelled by user");
+		if (signal?.aborted) throw new Error("review cancelled by user");
+		if (monitor.cancelled) throw new Error(`review halted — ${monitor.cancelReason ?? "cancelled"}`);
 	};
 
 	const model = (role: Role) => modelFor(role, cfg.models);
+	// Per-invocation budget, not per-role-total: a reviewer gets this afresh each round.
+	const timeout = (role: Role) => timeoutFor(role, cfg.timeouts);
 	const bundleContext = untrusted(
 		"CHANGE SET CONTEXT",
 		input.repos.map((r) => `Repo: ${r.repo}, bundle (read this): ${r.bundle}, local path: ${r.path}`).join("\n"),
@@ -165,16 +190,17 @@ export async function runReview(input: ReviewInput): Promise<Any> {
 				userPrompt: `Charge: ${charge}\n\n${orientContext}Change set:\n${bundleContext}\n\n${t.dir}`,
 				allowedRoots,
 				schema: assets.schemas.orientation,
-				timeoutMs: longTimeout,
+				timeoutMs: timeout("orienteer"),
 			}),
 	);
 	checkCancel();
-	// Fail-fast: comprehension can't proceed if BOTH orienteers failed.
-	if (!oa && !ob) {
-		throw new Error(`Comprehension failed — both orienteers failed (A: ${orientA.fail ?? "?"}; B: ${orientB.fail ?? "?"}).`);
-	}
-	const orientationA = oa ?? { model: "(orienteer A failed)", clear_alignment: [], unclear_alignment: [] };
-	const orientationB = ob ?? { model: "(orienteer B failed)", clear_alignment: [], unclear_alignment: [] };
+	// BOTH orienteers are required. The pi version substituted an empty stub for
+	// a single failure, but the reconciler's whole job is to treat divergence
+	// between two independent reads as signal — with one side stubbed there is
+	// no second read, every region looks unanimous, and the seam map is derived
+	// from half the evidence while looking complete.
+	const orientationA = required(oa, "Orienteer A (claim→code)", orientA, monitor, log);
+	const orientationB = required(ob, "Orienteer B (code→claim)", orientB, monitor, log);
 
 	// ---- Reconcile ----
 	const recon = monitor.register("reconciler", "reconciler");
@@ -190,10 +216,10 @@ export async function runReview(input: ReviewInput): Promise<Any> {
 			`Merge these into a unified orientation and seam map.`,
 		allowedRoots,
 		schema: assets.schemas.seamMap,
-		timeoutMs: longTimeout,
+		timeoutMs: timeout("reconciler"),
 	});
 	checkCancel();
-	if (!seamMap) throw new Error(`Comprehension failed — reconciler produced no seam map (${recon.fail ?? "?"}).`);
+	required(seamMap, "Reconciler", recon, monitor, log);
 
 	// Register the seams so the monitor can show coverage advancing live. It infers
 	// a seam as covered when a reviewer opens one of its files — the only live
@@ -216,9 +242,9 @@ export async function runReview(input: ReviewInput): Promise<Any> {
 		let deltaSinceLastRound: Any[] = [];
 		let result: Any = null;
 		for (let round = 1; round <= K; round++) {
-			if (monitor.cancelled || signal?.aborted) {
-				return { perspective, findings: findingsSoFar, spillover: true, moreExploration: false, note: "cancelled" };
-			}
+			// A sibling already failed and halted the run: stop rather than return
+			// a partial result that synthesis would treat as this lens's verdict.
+			checkCancel();
 			a.round = round;
 			const isLast = round === K;
 			let adrContext = "";
@@ -248,24 +274,20 @@ export async function runReview(input: ReviewInput): Promise<Any> {
 				userPrompt,
 				allowedRoots,
 				schema: assets.schemas.reviewer,
-				timeoutMs: longTimeout,
+				timeoutMs: timeout("reviewer"),
 			});
-			if (!result) {
-				return { perspective, findings: findingsSoFar, spillover: true, moreExploration: false, note: `incomplete (round ${round}): ${a.fail ?? "failed"}` };
-			}
+			// A round that fails halts the run. The pi version returned the
+			// findings gathered so far with spillover:true, which reads downstream
+			// as "this lens finished and thinks there may be more" — indistinguishable
+			// from an honest spillover, so a truncated review looked like a complete one.
+			required(result, `Reviewer ${perspective} (round ${round} of ${K})`, a, monitor, log);
 			const preMerge = findingsSoFar;
 			findingsSoFar = mergeFindings(findingsSoFar, result.findings ?? []);
 			deltaSinceLastRound = diffFindings(preMerge, findingsSoFar);
 			if (!result.moreExploration || isLast) return { ...result, findings: findingsSoFar };
 		}
-		return result ? { ...result, findings: findingsSoFar } : result;
+		return { ...result, findings: findingsSoFar };
 	});
-
-	// surface any reviewer that did not complete cleanly (reason → coverage notes)
-	for (const p of perspectives) {
-		const a = monitor.registry.get(p);
-		if (a && a.state !== "done") notes.push(`reviewer ${p}: ${a.fail ?? a.state}`);
-	}
 
 	// ---- Synthesis ----
 	checkCancel();
@@ -285,9 +307,9 @@ export async function runReview(input: ReviewInput): Promise<Any> {
 			`(cleared/finding/under-explored), recommend follow-up if triggered.`,
 		allowedRoots,
 		schema: assets.schemas.synthesis,
-		timeoutMs: longTimeout,
+		timeoutMs: timeout("synthesizer"),
 	});
-	if (!synthesis) throw new Error(`Synthesis failed — no report produced (${synth.fail ?? "?"}).`);
+	required(synthesis, "Synthesis", synth, monitor, log);
 
 	// Synthesis is authoritative on coverage: anything it did not mark
 	// under-explored was actually reviewed, whether or not a file-open was seen.
@@ -298,9 +320,9 @@ export async function runReview(input: ReviewInput): Promise<Any> {
 	monitor.phase = "verification";
 	const toVerify: Any[] = (synthesis.consolidated_findings ?? []).filter((f: Any) => f.severity === "Blocker" || f.severity === "Major");
 	const verifyModel = model("verifier");
-	const verdicts = await pool(toVerify, concurrency, (finding, idx) => {
+	const verdicts = await pool(toVerify, concurrency, async (finding, idx) => {
 		const a = monitor.register(`verify:${idx}`, "verifier");
-		return runSubagent({
+		const v = await runSubagent({
 			activity: a,
 			monitor,
 			model: verifyModel,
@@ -309,32 +331,41 @@ export async function runReview(input: ReviewInput): Promise<Any> {
 			userPrompt: `Change set:\n${bundleContext}\n\nFinding to verify:\n${untrusted("FINDING JSON", JSON.stringify(finding, null, 2))}\n\nVerify this finding by reading the actual code at the cited location.`,
 			allowedRoots,
 			schema: assets.schemas.verifier,
-			timeoutMs: roundTimeout,
+			timeoutMs: timeout("verifier"),
 		});
+		// An unverified Blocker is the worst thing this report can contain: it is
+		// presented with the same weight as a confirmed one but nothing checked it.
+		return required(v, `Verifier for ${finding.severity} at ${finding.location?.file}:${finding.location?.line}`, a, monitor, log);
 	});
 
 	const verified: Any[] = [];
 	const dismissed: Any[] = [];
 	toVerify.forEach((finding, idx) => {
 		const v = verdicts[idx];
-		if (!v) verified.push({ ...finding, confidence: "low", verification: "unverified" });
-		else if (v.outcome === "dismiss") dismissed.push({ ...finding, verification: "dismissed", dismissal_reason: v.explanation });
+		if (v.outcome === "dismiss") dismissed.push({ ...finding, verification: "dismissed", dismissal_reason: v.explanation });
 		else if (v.outcome === "correct") verified.push({ ...finding, ...v.corrections, verification: "corrected" });
 		else verified.push({ ...finding, verification: "confirmed" });
 	});
 	const minorAndNits = (synthesis.consolidated_findings ?? []).filter((f: Any) => f.severity !== "Blocker" && f.severity !== "Major");
 
 	monitor.phase = "done";
+	log?.info("run.complete", {
+		verdict: synthesis.verdict,
+		findings: verified.length + minorAndNits.length,
+		verified: toVerify.length,
+		dismissed: dismissed.length,
+	});
 	return {
 		...synthesis,
 		consolidated_findings: [...verified, ...minorAndNits],
 		dismissed_findings: dismissed,
+		// `unverified` is gone: a verifier that fails now halts the run, so every
+		// Blocker/Major in a report that exists was actually checked.
 		verification_stats: {
 			verified: toVerify.length,
 			confirmed: verified.filter((f) => f.verification === "confirmed").length,
 			corrected: verified.filter((f) => f.verification === "corrected").length,
 			dismissed: dismissed.length,
-			unverified: verified.filter((f) => f.verification === "unverified").length,
 		},
 		coverage_notes: [...new Set(notes)],
 	};

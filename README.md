@@ -58,11 +58,13 @@ That puts `summon` on PATH. Nothing else needs exporting — run `summon setup`
 once, then `summon list`.
 
 Claude Code plugins install through a local marketplace: `plugins/` is itself
-the marketplace, and `summon setup` registers it once and then installs each
-plugin at user scope. There is no `~/.claude/plugins/<name>` auto-scan, and a
-symlink planted there is ignored — installing *copies* the plugin — so re-run
-`summon setup` after editing a plugin, or point Claude Code at the working tree
-with `claude --plugin-dir <repo>/plugins/<name>`.
+the marketplace, and `summon setup` registers it once. The manifest
+(`plugins/.claude-plugin/marketplace.json`) is *generated* from the directory
+scan — never hand-edited; `summon lint` fails if it has drifted.
+
+`setup` runs once because there is one umbrella plugin, `stacia`. Utilities live
+under `plugins/stacia/skills/<utility>/`, so adding or removing one never adds a
+plugin and never needs a re-run.
 
 ## Skills
 
@@ -95,12 +97,19 @@ manifest plus whatever skills, commands, agents, hooks, or supporting code the
 plugin needs. `summon setup` installs them into Claude Code; they are not run
 through `summon`, they are invoked in Claude Code as `/<plugin>:<skill>`.
 
-The repo ships **`stacia-code-review`**: an orchestrated, read-only,
-multi-perspective code review of a change set, optionally spanning several
-repos. It resolves scope and charge conversationally, then runs a bounded
-four-stage pipeline (comprehension → review → synthesis → verification) in a
-Claude Agent SDK coordinator process with a live monitor. Its design of record
-is the ADR series under `docs/adr/`.
+The repo ships one plugin, the **`stacia`** umbrella. Each utility is a
+self-contained directory under `plugins/stacia/skills/<utility>/` — `SKILL.md`
+plus whatever `bin/`, code and `test.sh` it needs — invoked as
+`/stacia:<utility>`. Deleting the directory removes the utility outright.
+
+Utilities:
+
+- **`/stacia:code-review`** — an orchestrated, read-only, multi-perspective code
+  review of a change set, optionally spanning several repos. It resolves scope
+  and charge conversationally, then runs a bounded four-stage pipeline
+  (comprehension → review → synthesis → verification) in a Claude Agent SDK
+  coordinator process with a live monitor. Its design of record is the ADR
+  series under `docs/adr/`.
 
 ## Conventions
 

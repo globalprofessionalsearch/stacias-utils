@@ -9,6 +9,7 @@
  */
 
 import { type Activity, MonitorState, type SeamRef } from "./monitor-state.ts";
+import { NULL_LOG, type RunLog } from "./run-log.ts";
 import { LinePainter, type Painter, type Term, Tui, nodeTerm } from "./tui.ts";
 
 // biome-ignore lint/suspicious/noExplicitAny: AbortController-ish and SDK messages are opaque here
@@ -30,6 +31,8 @@ export interface MonitorOptions {
 	/** Install SIGINT/SIGTERM/exit/uncaught handlers. Off in tests. */
 	exitHooks?: boolean;
 	colors?: boolean;
+	/** Durable run log. Defaults to a no-op; cli.ts supplies the real one. */
+	log?: RunLog;
 }
 
 export class Monitor {
@@ -41,10 +44,26 @@ export class Monitor {
 	private unhook: (() => void) | null = null;
 	private quitHandler: (() => void) | null = null;
 	private readonly opts: MonitorOptions;
+	private log: RunLog;
 
 	constructor(opts: MonitorOptions = {}) {
 		this.opts = opts;
 		this.state = new MonitorState({ eventLimit: opts.eventLimit ?? 200 });
+		this.log = opts.log ?? NULL_LOG;
+	}
+
+	/**
+	 * Durable copy of what the TUI shows. The on-screen event log is a ring
+	 * buffer that dies with the process; this survives the run — which is the
+	 * point, since a failed review is exactly when you want the history.
+	 */
+	setLog(log: RunLog): void {
+		this.log = log;
+	}
+
+	/** The active run log, so the coordinator can record its own lifecycle events. */
+	get runLog(): RunLog {
+		return this.log;
 	}
 
 	// ---- the surface coordinator.ts / subagent.ts use ------------------------
@@ -58,6 +77,7 @@ export class Monitor {
 	}
 
 	set phase(p: string) {
+		if (p !== this.state.phase) this.log.info("phase", { phase: p });
 		this.state.phase = p;
 	}
 
@@ -66,10 +86,12 @@ export class Monitor {
 	}
 
 	register(label: string, role: string, maxRounds = 1): Activity {
+		this.log.info("agent.register", { agent: label, role, maxRounds });
 		return this.state.register(label, role, maxRounds);
 	}
 
 	pushEvent(a: Activity, s: string): void {
+		this.log.info("agent.event", { agent: a.label, role: a.role, round: a.round || undefined, text: s });
 		this.state.pushEvent(a, s);
 	}
 
@@ -92,14 +114,28 @@ export class Monitor {
 
 	/** Kill one agent: a direct abort() on its controller. */
 	kill(a: Activity): boolean {
-		return this.state.kill(a);
+		const killed = this.state.kill(a);
+		if (killed) this.log.warn("agent.kill", { agent: a.label, role: a.role });
+		return killed;
 	}
 
-	/** Kill every in-flight agent and mark the whole run cancelled. */
-	cancelAll(): void {
+	/**
+	 * Kill every in-flight agent and mark the whole run cancelled. The reason is
+	 * retained because the cause matters downstream: a user pressing `c` and an
+	 * agent failing both land here, and only the first is benign.
+	 */
+	cancelAll(reason = "cancelled by user"): void {
+		if (!this.state.cancelled) {
+			this.cancelReason = reason;
+			const live = [...this.state.registry.values()].filter((a) => a.state === "running" || a.state === "queued").map((a) => a.label);
+			this.log.warn("run.cancel", { reason, killed: live });
+		}
 		this.state.cancelAll();
 		this.painter?.render();
 	}
+
+	/** Why the run was cancelled, or null if it wasn't. */
+	cancelReason: string | null = null;
 
 	/** Seed the seam map after comprehension so coverage can be tracked live. */
 	setSeams(seams: readonly SeamRef[] | undefined): void {

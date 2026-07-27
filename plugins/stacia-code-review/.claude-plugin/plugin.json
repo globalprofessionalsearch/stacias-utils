@@ -1,7 +1,0 @@
-{
-  "name": "stacia-code-review",
-  "description": "Orchestrated, read-only, multi-perspective code review of a change set, optionally spanning multiple repos. Resolves scope and charge conversationally, then runs a bounded four-stage pipeline (comprehension, review, synthesis, verification) in a live-monitored terminal pane.",
-  "version": "0.1.0",
-  "author": { "name": "Stacia Colasurdo" },
-  "license": "MIT"
-}

@@ -39,6 +39,8 @@ export interface Manifest {
 	run_dir: string;
 	report: string;
 	report_html: string;
+	/** Append-only JSONL run log. Path allocated by the helper's `init`. */
+	log: string;
 	multi_repo: boolean;
 	context: Array<{ id: string; kind: string; title: string; path: string }>;
 	repos: Array<{ repo: string; slug: string; bundle: string; findings: string }>;

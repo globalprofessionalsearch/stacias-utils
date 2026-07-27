@@ -76,3 +76,59 @@ describe("pool", () => {
 		expect(seen.size).toBe(20);
 	});
 });
+
+describe("pool — fail-fast", () => {
+	// Every agent in a review is necessary, so once one fails there is nothing
+	// to gain from starting work whose result will be thrown away.
+
+	it("rethrows the failure", async () => {
+		await expect(pool([1, 2, 3], 1, async () => { throw new Error("boom"); })).rejects.toThrow("boom");
+	});
+
+	it("stops scheduling further items after a failure", async () => {
+		const started: number[] = [];
+		await expect(
+			pool([0, 1, 2, 3, 4, 5], 1, async (n) => {
+				started.push(n);
+				if (n === 1) throw new Error("boom");
+				return n;
+			}),
+		).rejects.toThrow("boom");
+		// Serial pool: 0 ran, 1 threw, nothing after should have been picked up.
+		expect(started).toEqual([0, 1]);
+	});
+
+	it("reports the FIRST failure, not a later one from the cancellation cascade", async () => {
+		// Mirrors the real shape: one agent times out, siblings then abort. The
+		// cause is the first error; surfacing an abort instead would bury it.
+		const err = await pool([0, 1], 2, async (n) => {
+			if (n === 0) throw new Error("root cause");
+			await tick(20);
+			throw new Error("aborted because a sibling failed");
+		}).catch((e) => e as Error);
+		expect(err.message).toBe("root cause");
+	});
+
+	it("waits for in-flight siblings to settle before unwinding", async () => {
+		// The coordinator aborts siblings via monitor.cancelAll(); pool must not
+		// resolve before those aborts have actually landed.
+		let settled = false;
+		await expect(
+			pool([0, 1], 2, async (n) => {
+				if (n === 0) throw new Error("boom");
+				await tick(30);
+				settled = true;
+				return n;
+			}),
+		).rejects.toThrow("boom");
+		expect(settled).toBe(true);
+	});
+
+	it("still returns results normally when nothing throws", async () => {
+		expect(await pool([1, 2, 3], 2, async (n) => n * 2)).toEqual([2, 4, 6]);
+	});
+
+	it("propagates a non-Error rejection unchanged", async () => {
+		await expect(pool([1], 1, async () => Promise.reject("plain string"))).rejects.toBe("plain string");
+	});
+});
