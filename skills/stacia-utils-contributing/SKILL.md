@@ -17,9 +17,6 @@ skills/<name>/SKILL.md         harness-neutral agent skill
 plugins/<name>/                Claude Code plugin
 ```
 
-`extensions/` holds a legacy pi-harness extension that predates the Claude Code
-port. It is being retired — do not add to it.
-
 ## The utility contract
 
 A utility is a directory under `utilities/` named in `kebab-case` containing a

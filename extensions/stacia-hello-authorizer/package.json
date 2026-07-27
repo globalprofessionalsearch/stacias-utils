@@ -1,6 +1,0 @@
-{
-  "name": "stacia-sieve-gate-extension",
-  "private": true,
-  "type": "module",
-  "description": "Standalone pi tool-call gate: an ordered rejection sieve, then an ordered approval sieve, then a haiku-summarized human approve/deny. Replaces the @gotgenes/pi-permission-system authorizer link."
-}
