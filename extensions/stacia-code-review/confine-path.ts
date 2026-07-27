@@ -8,7 +8,53 @@
  */
 
 import * as fs from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
+import { fileURLToPath } from "node:url";
+
+/**
+ * Unicode space variants pi's `normalizePath` collapses to a regular space
+ * (`utils/paths.js` UNICODE_SPACES). Mirrored verbatim.
+ */
+const UNICODE_SPACES = /[\u00A0\u2000-\u200A\u202F\u205F\u3000]/g;
+
+/**
+ * Resolve a tool `path` argument the SAME WAY the underlying read/grep/find/ls
+ * tool will resolve it, so the confinement check and the filesystem access
+ * agree on which file is meant.
+ *
+ * This mirrors pi's `resolveToCwd(p, cwd)` →
+ * `resolvePath(p, cwd, { normalizeUnicodeSpaces: true, stripAtPrefix: true })`
+ * → `normalizePath` (`utils/paths.js`). We cannot import it: the package's
+ * `exports` map only exposes `.` and `./rpc-entry`, so `dist/utils/paths.js`
+ * is unreachable.
+ *
+ * Why this exists: a plain `path.isAbsolute(p) ? p : path.resolve(cwd, p)`
+ * disagrees with the tool on three inputs, and each disagreement was a
+ * confinement bypass — the guard checked a path inside an allowed root, then
+ * the tool expanded the same string back out to somewhere else:
+ *
+ *   "~/.ssh/id_rsa"       guard saw <cwd>/~/.ssh/id_rsa   tool opened $HOME/.ssh/id_rsa
+ *   "file:///etc/passwd"  guard saw <cwd>/file:/etc/passwd  tool opened /etc/passwd
+ *   "@/etc/passwd"        guard saw <cwd>/@/etc/passwd    tool opened /etc/passwd
+ *
+ * Order below is load-bearing and matches `normalizePath`: unicode spaces,
+ * then `@`-strip, then `~` expansion (which returns early), then `file://`.
+ */
+export function resolveLikeTool(input: string, cwd: string, homeDir: string = os.homedir()): string {
+	let s = input.replace(UNICODE_SPACES, " ");
+	if (s.startsWith("@")) s = s.slice(1);
+	if (s === "~") return path.resolve(homeDir);
+	if (s.startsWith("~/") || (process.platform === "win32" && s.startsWith("~\\"))) {
+		return path.resolve(path.join(homeDir, s.slice(2)));
+	}
+	if (/^file:\/\//.test(s)) return path.resolve(fileURLToPath(s));
+	if (path.isAbsolute(s)) return path.resolve(s);
+	// pi normalizes the base dir too (tilde only — no @-strip, no space folding).
+	// In practice cwd is always an absolute repo root, so this is a no-op.
+	const base = cwd === "~" ? homeDir : cwd.startsWith("~/") ? path.join(homeDir, cwd.slice(2)) : cwd;
+	return path.resolve(base, s);
+}
 
 // P4 perf: memoize canonical() by resolved input path, and by every existing
 // ancestor realpath'd along the way. `confinedReadOnlyTools()` re-canonicalizes

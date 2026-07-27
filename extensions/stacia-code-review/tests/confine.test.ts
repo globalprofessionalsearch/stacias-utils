@@ -2,7 +2,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { canonical, within } from "../confine-path.ts";
+import { canonical, resolveLikeTool, within } from "../confine-path.ts";
 
 // These tests exercise the PURE confine-path helpers directly — no pi
 // imports, no tool wrapping — per self-review-2-delegation.md's A2 scope.
@@ -99,6 +99,95 @@ describe("within", () => {
 		const notYetExisting = path.join(base, "repo-evil", "new-file.txt");
 
 		expect(within(notYetExisting, [canonical(repo)])).toBe(false);
+	});
+});
+
+describe("resolveLikeTool", () => {
+	// Mirrors pi's resolveToCwd -> resolvePath -> normalizePath. The guard MUST
+	// resolve exactly the way the tool does, or it checks one path and the tool
+	// opens another. See the bypass regression tests below.
+	const home = "/home/testuser";
+
+	it("expands a leading ~/ to the home dir, not <cwd>/~/", () => {
+		expect(resolveLikeTool("~/.ssh/id_rsa", "/repo", home)).toBe(path.join(home, ".ssh/id_rsa"));
+	});
+
+	it("treats a bare ~ as the home dir", () => {
+		expect(resolveLikeTool("~", "/repo", home)).toBe(home);
+	});
+
+	it("strips a leading @ before resolving", () => {
+		expect(resolveLikeTool("@/etc/passwd", "/repo", home)).toBe("/etc/passwd");
+	});
+
+	it("converts a file:// URL to a filesystem path", () => {
+		expect(resolveLikeTool("file:///etc/passwd", "/repo", home)).toBe("/etc/passwd");
+	});
+
+	it("strips @ before expanding ~ (order matters)", () => {
+		expect(resolveLikeTool("@~/.ssh/id_rsa", "/repo", home)).toBe(path.join(home, ".ssh/id_rsa"));
+	});
+
+	it("normalizes unicode spaces to regular spaces", () => {
+		// U+00A0 NO-BREAK SPACE in the input must fold to a regular space (pi passes normalizeUnicodeSpaces: true)
+		expect(resolveLikeTool("/repo/my\u00A0file.txt", "/repo", home)).toBe("/repo/my file.txt");
+	});
+
+	it("resolves a plain relative path against cwd", () => {
+		expect(resolveLikeTool("src/index.ts", "/repo", home)).toBe("/repo/src/index.ts");
+	});
+
+	it("leaves an absolute path absolute", () => {
+		expect(resolveLikeTool("/repo/src/index.ts", "/repo", home)).toBe("/repo/src/index.ts");
+	});
+
+	it("does not treat a ~ in a non-leading position as a home reference", () => {
+		expect(resolveLikeTool("src/~backup/x.ts", "/repo", home)).toBe("/repo/src/~backup/x.ts");
+	});
+});
+
+describe("confinement against resolver-mismatch bypasses", () => {
+	// Regression tests for the three ways a path could pass the allow-list check
+	// and then escape it. Each input is NOT path.isAbsolute(), so the old
+	// `path.resolve(cwd, p)` landed it inside the root and let it through.
+	let root: string;
+	let fakeHome: string;
+
+	beforeEach(() => {
+		root = fs.mkdtempSync(path.join(tmpDir, "repo-"));
+		fakeHome = fs.mkdtempSync(path.join(tmpDir, "home-"));
+	});
+
+	const check = (input: string) => within(resolveLikeTool(input, root, fakeHome), [canonical(root)]);
+
+	it("denies ~/.ssh/id_rsa — the exact target named in confine.ts's threat model", () => {
+		// Old behavior: path.resolve(root, "~/.ssh/id_rsa") === "<root>/~/.ssh/id_rsa" -> allowed.
+		expect(path.resolve(root, "~/.ssh/id_rsa").startsWith(root)).toBe(true);
+		expect(check("~/.ssh/id_rsa")).toBe(false);
+	});
+
+	it("denies a file:// URL pointing outside the root", () => {
+		expect(check("file:///etc/passwd")).toBe(false);
+	});
+
+	it("denies an @-prefixed absolute path outside the root", () => {
+		expect(check("@/etc/passwd")).toBe(false);
+	});
+
+	it("denies @~/ (both transformations chained)", () => {
+		expect(check("@~/.ssh/id_rsa")).toBe(false);
+	});
+
+	it("still allows legitimate paths inside the root", () => {
+		fs.writeFileSync(path.join(root, "file.txt"), "ok");
+		expect(check("file.txt")).toBe(true);
+		expect(check(path.join(root, "file.txt"))).toBe(true);
+		expect(check("./nested/new-file.txt")).toBe(true);
+	});
+
+	it("allows a ~-rooted path that genuinely resolves inside an allowed root", () => {
+		// Guard must resolve, not blanket-reject: if home IS the allowed root, allow it.
+		expect(within(resolveLikeTool("~/notes.md", root, fakeHome), [canonical(fakeHome)])).toBe(true);
 	});
 });
 

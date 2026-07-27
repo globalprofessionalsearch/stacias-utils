@@ -10,7 +10,6 @@
  * outside is denied with a tool error the agent sees.
  */
 
-import * as path from "node:path";
 import {
 	createFindToolDefinition,
 	createGrepToolDefinition,
@@ -18,18 +17,24 @@ import {
 	createReadToolDefinition,
 	type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
-import { canonical, within } from "./confine-path.ts";
+import { canonical, resolveLikeTool, within } from "./confine-path.ts";
 
 // biome-ignore lint/suspicious/noExplicitAny: tool defs / params are opaque here
 type Any = any;
 
 // Audited param surface: read/grep/find/ls schemas each expose exactly one
 // path-bearing param, `path` (optional on grep/find/ls, required on read).
-// Their other string params (`pattern` on grep/find, `glob` on grep) are
-// filename-matching patterns evaluated relative to `path`/cwd, not raw
-// filesystem locations, so they don't need a separate guard check. If a
-// future pi version adds another path-shaped param to one of these tools,
-// extend the check below.
+//
+// `glob` on grep is a ripgrep --glob filter over the walk rooted at `path`; it
+// cannot widen the root, so it needs no separate check. `pattern` on find is
+// rooted at `path` on the fd/rg backend, but find's FALLBACK backend hands the
+// pattern to the node `glob` package, which honors `..` segments — that path is
+// UNAUDITED and may be an escape vector. If a future pi version adds another
+// path-shaped param, extend the check below.
+//
+// Note the guard must resolve `path` exactly as the tool does; see
+// resolveLikeTool in confine-path.ts for why re-implementing that resolution
+// was itself the bug.
 function guard(def: Any, cwd: string, roots: string[]): ToolDefinition {
 	const orig = def.execute.bind(def);
 	return {
@@ -37,7 +42,10 @@ function guard(def: Any, cwd: string, roots: string[]): ToolDefinition {
 		execute: async (id: string, params: Any, signal: Any, onUpdate: Any, ctx: Any) => {
 			const p = params?.path;
 			if (typeof p === "string" && p.length > 0) {
-				const abs = path.isAbsolute(p) ? p : path.resolve(cwd, p);
+				// MUST resolve the way the wrapped tool will (resolveLikeTool mirrors pi's
+				// resolveToCwd). Using path.resolve here let "~/.ssh/id_rsa", "file:///etc/passwd"
+				// and "@/etc/passwd" pass the check and then escape it — see confine-path.ts.
+				const abs = resolveLikeTool(p, cwd);
 				if (!within(abs, roots)) {
 					throw new Error(
 						`access denied: "${p}" is outside the review's allowed roots. ` +

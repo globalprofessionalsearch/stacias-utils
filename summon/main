@@ -325,22 +325,11 @@ cmd_setup() {
     echo "✓ pruned obsolete read-only binding (stacia-review-readonly.md)"
   fi
 
-  # --- claude: Claude Code is no longer a wired harness (the code-review skill
-  # now requires the pi-only `workflow` tool from pi-dynamic-workflows). Prune any
-  # repo-owned symlinks a prior `summon setup` planted into ~/.claude/skills so
-  # Claude doesn't keep silently loading a now-incompatible skill. One-time.
-  local claude="$HOME/.claude/skills" pruned=0
-  if [[ -d "$claude" ]]; then
-    for link in "$claude"/*; do
-      [[ -L "$link" ]] || continue
-      case "$(readlink "$link")" in
-        "$SKILL_DIR"/*)
-          rm -f "$link"; pruned=1
-          echo "✓ claude: pruned stale link $(basename "$link") (Claude support dropped)" ;;
-      esac
-    done
-  fi
-  [[ $pruned -eq 0 ]] && echo "✓ claude: nothing to prune (no repo-owned links)"
+  # NOTE: a previous revision pruned repo-owned symlinks out of ~/.claude/skills
+  # here, on the premise that Claude Code was permanently unwired. That premise
+  # is being reversed — the code-review coordinator is moving to Claude Code —
+  # so the pruner is removed. Do not reinstate it: it would uninstall the port
+  # on the next `summon setup`.
 
   cat <<EOF
 
