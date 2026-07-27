@@ -1,26 +1,20 @@
 #!/usr/bin/env bash
-# summon - discover and run Stacia's personal utilities and agent skills
+# summon - discover and run Stacia's personal utilities and Claude Code plugins
 #
-# The repo holds three kinds of thing, each in its own top-level directory:
+# The repo holds two kinds of thing, each in its own top-level directory:
 #
 #   utilities/<name>/main       an executable whose `--help` prints, on line 1,
 #                               a man-page-style synopsis: "<name> - <desc>"
-#   skills/<name>/SKILL.md       a harness-neutral agent skill, namespaced with
-#                               the `stacia-` prefix; its frontmatter
-#                               `name`/`description` are the contract.
 #   plugins/<name>/             a Claude Code plugin; its entrypoint is the
 #     .claude-plugin/plugin.json manifest, and its own skills live in
 #                               plugins/<name>/skills/<skill>/SKILL.md.
 #
-# All three are self-describing: `summon list` harvests utility synopses from
-# `main --help` and skill synopses from frontmatter, so there is nothing to
-# regenerate. `summon lint` enforces all three contracts (top-level skills must
-# be `stacia-`-prefixed; plugin skills are already namespaced by their plugin).
-# Harness-neutral skill content is a best practice, not linted.
+# Both are self-describing: `summon list` harvests utility synopses from
+# `main --help` and plugin-skill synopses from frontmatter, so there is nothing
+# to regenerate. `summon lint` enforces both contracts.
 #
-# `summon setup` installs each kind the way its harness actually discovers it:
-# pi skills via one umbrella symlink, Claude Code plugins via the local
-# marketplace in plugins/ (see install_plugins — a symlink does NOT work).
+# `summon setup` installs Claude Code plugins via the local marketplace in
+# plugins/ (see install_plugins — a symlink does NOT work).
 # The marketplace manifest is authored and committed, never generated here;
 # `summon lint` only reports where it has stopped matching what is on disk.
 # Everything else at the repo root is infrastructure.
@@ -43,19 +37,12 @@ done
 SELF_DIR="$(cd -P "$(dirname "$_self")" && pwd)"   # <repo>/summon
 REPO="$(dirname "$SELF_DIR")"
 UTIL_DIR="$REPO/utilities"   # executable utilities:    <name>/main
-SKILL_DIR="$REPO/skills"     # agent skills:            <name>/SKILL.md
 PLUGIN_DIR="$REPO/plugins"   # Claude Code plugins:     <name>/.claude-plugin/plugin.json
 
 # Leading filler/incantation words stripped before dispatch (see main()).
 FILLER="a an the this that these those up me my some"
-# Names that can never be a utility or skill: builtins, filler words, dispatcher.
+# Names that can never be a utility: builtins, filler words, dispatcher.
 RESERVED="list lint commit-lint setup help summon $FILLER"
-
-# Every skill must be namespaced with this prefix so it can't shadow (or be
-# shadowed by) unrelated definitions in the shared harness directories.
-SKILL_PREFIX="stacia-"
-# Umbrella symlink name used for pi's run-once install (pi recurses into it).
-PI_SKILLS_LINK="stacia-utils"
 
 err()  { printf '%s\n' "$*" >&2; }
 die()  { err "$*"; exit 1; }
@@ -67,17 +54,6 @@ utils() {
     [[ -d "$d" ]] || continue
     name="$(basename "$d")"
     [[ -f "$d/main" ]] || continue
-    printf '%s\n' "$name"
-  done | LC_ALL=C sort
-}
-
-# Print the names of all skills (dirs under skills/ with a SKILL.md), sorted.
-skills() {
-  local d name
-  for d in "$SKILL_DIR"/*/; do
-    [[ -d "$d" ]] || continue
-    name="$(basename "$d")"
-    [[ -f "$d/SKILL.md" ]] || continue
     printf '%s\n' "$name"
   done | LC_ALL=C sort
 }
@@ -112,11 +88,6 @@ frontmatter_field() {
   ' "$file"
 }
 
-# A skill's frontmatter field value (name/description). Empty if absent.
-skill_field() {
-  frontmatter_field "$SKILL_DIR/$1/SKILL.md" "$2"
-}
-
 # Claude Code plugin install. Discovery is marketplace-mediated: there is no
 # ~/.claude/plugins/<name> auto-scan, and symlinks planted there are ignored
 # (installing COPIES the plugin into ~/.claude/plugins/cache/). So `plugins/` is
@@ -132,23 +103,21 @@ CC_MARKETPLACE_MANIFEST="$PLUGIN_DIR/.claude-plugin/marketplace.json"
 # ---------------------------------------------------------------------------
 cmd_help() {
   cat <<EOF
-summon - discover and run Stacia's personal utilities and agent skills
+summon - discover and run Stacia's personal utilities and Claude Code plugins
 
 Usage:
-  summon list                    List every utility, skill and plugin with its
-                                 synopsis
+  summon list                    List every utility and plugin with its synopsis
   summon [filler] <name> [args]  Run a utility (leading a/an/the/this/that/
                                  these/those/up/me/my/some are optional sugar)
   summon [filler] <name> --help  Show a utility's full help
-  summon lint                    Enforce the utility + skill + plugin contracts
+  summon lint                    Enforce the utility + plugin contracts
                                  (CI + hook)
   summon commit-lint <file|->    Validate a Conventional Commits message
-  summon setup                   Configure hooks, install skills + plugins,
-                                 print shell-rc hints
+  summon setup                   Configure hooks, install plugins, print
+                                 shell-rc hints
   summon help | --help           Show this help
 
 Utilities: utilities/<name>/main (\`--help\` line 1 is "<name> - <desc>").
-Skills:    skills/<name>/SKILL.md (stacia-prefixed frontmatter contract).
 Plugins:   plugins/<name>/.claude-plugin/plugin.json (Claude Code; invoked
            there as /<name>:<skill>, never through \`summon\`).
 Run \`summon list\`.
@@ -169,19 +138,6 @@ cmd_list() {
       printf '  %s\n' "$syn"
     fi
   done < <(utils)
-
-  echo
-  echo "Skills:"
-  while IFS= read -r name; do
-    [[ -n "$name" ]] || continue
-    desc="$(skill_field "$name" description || true)"
-    if [[ -z "$desc" ]]; then
-      printf '  %-18s (no description; run: summon lint)\n' "$name"
-      missing=1
-    else
-      printf '  %s - %s\n' "$name" "$desc"
-    fi
-  done < <(skills)
 
   # Claude Code plugins aren't run through `summon`; they're installed by
   # `summon setup` and invoked in Claude Code as /<plugin>:<skill>. Listed so
@@ -263,39 +219,6 @@ cmd_lint() {
     fi
   done
 
-  # Every directory under skills/ must be a conforming skill.
-  # (Harness-neutral content is a best practice, not linted — see CONTRIBUTING.md.)
-  for d in "$SKILL_DIR"/*/; do
-    [[ -d "$d" ]] || continue
-    name="$(basename "$d")"
-
-    if [[ ! "$name" =~ $kebab ]]; then
-      err "LINT: skill $name: name must be kebab-case ([a-z0-9] and single hyphens)"; fail=1
-    fi
-    if [[ "$name" != "$SKILL_PREFIX"?* ]]; then
-      err "LINT: skill $name: name must be prefixed with '$SKILL_PREFIX' (e.g. ${SKILL_PREFIX}$name)"; fail=1
-    fi
-    case " $RESERVED " in *" $name "*)
-      err "LINT: skill $name: reserved name (clashes with a summon builtin)"; fail=1 ;;
-    esac
-
-    if [[ ! -f "$d/SKILL.md" ]]; then
-      err "LINT: skill $name: missing entrypoint (expected skills/$name/SKILL.md)"; fail=1; continue
-    fi
-    if [[ "$(head -n1 "$d/SKILL.md")" != "---" ]]; then
-      err "LINT: skill $name: SKILL.md must open with a YAML frontmatter block (---)"; fail=1
-    fi
-    local fname fdesc
-    fname="$(skill_field "$name" name || true)"
-    fdesc="$(skill_field "$name" description || true)"
-    if [[ "$fname" != "$name" ]]; then
-      err "LINT: skill $name: frontmatter 'name:' must equal '$name' (got: ${fname:-<empty>})"; fail=1
-    fi
-    if [[ -z "$fdesc" ]]; then
-      err "LINT: skill $name: frontmatter 'description:' must be non-empty"; fail=1
-    fi
-  done
-
   # Every directory under plugins/ must be a conforming Claude Code plugin.
   # A plugin's entrypoint is its manifest, .claude-plugin/plugin.json — that is
   # the file Claude Code reads; without it the directory is not a plugin at all.
@@ -332,7 +255,7 @@ cmd_lint() {
       fi
       # A plugin's skills are namespaced by the plugin (/<plugin>:<skill>), so
       # the stacia- prefix isn't needed here — but the frontmatter contract is
-      # the same one skills/ is held to.
+      # the same frontmatter contract.
       local sd sname
       for sd in "$d/skills"/*/; do
         [[ -d "$sd" ]] || continue
@@ -365,7 +288,7 @@ cmd_lint() {
   [[ "$s" == "summon - "* ]] || { err "LINT: summon: own --help line 1 malformed"; fail=1; }
 
   if [[ $fail -eq 0 ]]; then
-    echo "lint OK ($(utils | grep -c . || true) utilities, $(skills | grep -c . || true) skills, $(plugins | grep -c . || true) plugins)"
+    echo "lint OK ($(utils | grep -c . || true) utilities, $(plugins | grep -c . || true) plugins)"
   fi
   return $fail
 }
@@ -543,31 +466,14 @@ install_plugins() {
 }
 
 # ---------------------------------------------------------------------------
-# One-shot setup: hooks + pi skills + Claude Code plugins + shell-rc hints.
+# One-shot setup: git hooks + Claude Code plugins + shell-rc hints.
 # Idempotent.
-#  - pi skills: a single umbrella symlink exposes skills/ to pi recursively.
 #  - Claude Code plugins: registered via the local marketplace in plugins/ and
-#    installed at user scope. NOT a symlink — see cmd_install_plugins.
+#    installed at user scope. NOT a symlink — see install_plugins.
 # ---------------------------------------------------------------------------
 cmd_setup() {
   git -C "$REPO" config core.hooksPath .githooks
   echo "✓ git hooks enabled (core.hooksPath=.githooks)"
-
-  local pi="$HOME/.pi/agent/skills" link
-  mkdir -p "$pi"
-
-  # --- pi: run-once. pi discovers SKILL.md dirs recursively, so a single
-  # umbrella symlink to the whole skills/ dir exposes every current and future
-  # skill. Adding a skill to the repo needs no re-run.
-  # First remove any prior per-skill symlinks we planted into pi's root.
-  for link in "$pi"/*; do
-    [[ -L "$link" ]] || continue
-    case "$(readlink "$link")" in
-      "$SKILL_DIR"/*) rm -f "$link"; echo "✓ pi: removed per-skill link $(basename "$link")" ;;
-    esac
-  done
-  ln -sfn "$SKILL_DIR" "$pi/$PI_SKILLS_LINK"
-  echo "✓ pi: skills linked once ($PI_SKILLS_LINK -> skills/); new skills auto-discovered"
 
   install_plugins
 

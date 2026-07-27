@@ -1,5 +1,5 @@
 ---
-name: stacia-utils-usage
+name: utils-usage
 description: Discover and run Stacia's personal command-line utilities via the `summon` dispatcher. Use this whenever a task might be served by one of Stacia's tools, or when she refers to one of her utilities by name. Do not guess what exists — ask `summon`.
 ---
 

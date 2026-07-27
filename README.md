@@ -1,14 +1,13 @@
 # Stacia's Utils
 
-Personal command-line **utilities**, agent **skills**, and Claude Code
-**plugins** — three kinds of thing, all discovered and wired through one
-dispatcher: `summon`.
+Personal command-line **utilities** and a Claude Code **plugin** — two kinds of
+thing, both discovered and wired through one dispatcher: `summon`.
 
 There is no maintained list and no generated metadata. Everything describes
 itself, and `summon` discovers it live:
 
 ```bash
-summon list                 # utilities, skills, and plugins (name - description)
+summon list                 # utilities and plugins (name - description)
 summon <name> --help        # how a utility works
 summon <name> [args...]     # run a utility
 ```
@@ -17,9 +16,8 @@ summon <name> [args...]     # run a utility
 
 ```
 utilities/<name>/main                        executable CLI tool
-skills/<name>/SKILL.md                       agent skill
 plugins/<name>/.claude-plugin/plugin.json    Claude Code plugin manifest
-plugins/<name>/skills/<skill>/SKILL.md       a plugin's own skills
+plugins/<name>/skills/<skill>/SKILL.md       a plugin's skills
 ```
 
 Everything else at the repo root is infrastructure.
@@ -28,24 +26,21 @@ Everything else at the repo root is infrastructure.
 
 - **Utilities**: `utilities/<name>/main` is executable and its `--help` exits 0
   and prints `<name> - <one-line description>` on line 1.
-- **Skills**: `skills/<name>/SKILL.md` is `stacia-`-prefixed, with frontmatter
-  `name` (== dir) and a non-empty `description`. (Harness-neutral content is a
-  best practice, not linted.)
 - **Plugins**: `plugins/<name>/` has a `.claude-plugin/plugin.json` whose `name`
-  equals the directory. A plugin's own skills live at
-  `plugins/<name>/skills/<skill>/SKILL.md` and satisfy the same frontmatter
-  contract, minus the `stacia-` prefix — they are already namespaced by their
-  plugin (`/<plugin>:<skill>`).
+  equals the directory, and is listed in the marketplace manifest. A plugin's
+  skills live at `plugins/<name>/skills/<skill>/SKILL.md` with frontmatter
+  `name` (== dir) and a non-empty `description`. They need no prefix — the
+  plugin already namespaces them (`/<plugin>:<skill>`).
 
-Those rules make everything auto-discoverable. `summon lint` enforces all three
-(in CI and the pre-commit hook); see `CONTRIBUTING.md`.
+Those rules make everything auto-discoverable. `summon lint` enforces both (in
+CI and the pre-commit hook); see `CONTRIBUTING.md`.
 
 ## Setup
 
 ```bash
 git clone git@github.com:globalprofessionalsearch/stacias-utils.git
 cd stacias-utils
-./summon/main setup          # enables git hooks, installs skills + plugins, prints a shell-rc line
+./summon/main setup          # enables git hooks, installs the plugin, prints a shell-rc line
 ```
 
 Then add the line it prints to your shell rc:
@@ -67,30 +62,6 @@ accurate and says what is wrong; it never rewrites it.
 under `plugins/stacia/skills/<utility>/`, so adding or removing one never adds a
 plugin and never needs a re-run.
 
-## Skills
-
-Skills are agent-skill files (`SKILL.md`) a harness loads on demand. The repo
-ships them under `skills/<name>/SKILL.md` (`stacia-utils-usage`,
-`stacia-utils-contributing`). Skill dirs are `stacia-`-prefixed so they can't
-collide with, or be shadowed by, unrelated skills in the shared skill
-directories.
-
-Nothing here is on a harness search path by default — `summon setup` wires the
-repo's skills into the agent harness, pointing back into the repo, so edits to a
-skill's body are live with no re-sync.
-
-<!-- OPEN: the top-level `skills/` tree is still wired into pi
-     (`~/.pi/agent/skills/`), which the code-review port has otherwise left
-     behind. Repointing it at Claude Code is unfinished work, not a decision —
-     `summon setup`'s own output is authoritative until it lands. Plugin skills
-     (under `plugins/<name>/skills/`) install with their plugin and are
-     unaffected. -->
-
-
-Skill bodies should stay harness-neutral (a best practice, not enforced):
-describe behavior abstractly rather than naming one harness's delegation tool
-or execution flags, so a skill stays portable.
-
 ## Plugins
 
 `plugins/<name>/` holds Claude Code plugins — a `.claude-plugin/plugin.json`
@@ -105,6 +76,11 @@ plus whatever `bin/`, code and `test.sh` it needs — invoked as
 
 Utilities:
 
+- **`/stacia:utils-usage`** — how to discover and run the command-line
+  utilities in this repo via `summon`. Coding assistants load this to find out
+  what exists rather than guessing.
+- **`/stacia:utils-contributing`** — how to add or modify a utility or plugin
+  here so it satisfies the contracts `summon lint` enforces.
 - **`/stacia:code-review`** — an orchestrated, read-only, multi-perspective code
   review of a change set, optionally spanning several repos. It resolves scope
   and charge conversationally, then runs a bounded four-stage pipeline
@@ -117,5 +93,5 @@ Utilities:
 - One command on PATH: `summon` (everything else is `summon <name>`).
 - Commits / PR titles use [Conventional Commits](https://www.conventionalcommits.org/),
   enforced by the `commit-msg` hook and CI.
-- Coding assistants discover everything through the `stacia-utils-usage` skill;
-  contributors follow `stacia-utils-contributing`.
+- Coding assistants discover everything through `/stacia:utils-usage`;
+  contributors follow `/stacia:utils-contributing`.

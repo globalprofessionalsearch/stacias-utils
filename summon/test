@@ -15,14 +15,12 @@ pass=0 fail=0
 ok()   { printf '  ok   - %s\n' "$1"; pass=$((pass+1)); }
 bad()  { printf '  FAIL - %s\n' "$1"; fail=$((fail+1)); }
 
-# Build a minimal, fully-valid fixture repo in $1: a utility, a top-level
-# skill, and a Claude Code plugin (manifest + marketplace listing + its own
-# namespaced skill). All pass lint. Individual tests then mutate a copy to trip
-# one rule.
+# Build a minimal, fully-valid fixture repo in $1: a utility and a Claude Code
+# plugin (manifest + marketplace listing + its own namespaced skill). Both pass
+# lint. Individual tests then mutate a copy to trip one rule.
 seed_repo() {
   local root="$1"
   mkdir -p "$root/summon" "$root/utilities/good-tool" \
-           "$root/skills/stacia-good-skill" \
            "$root/plugins/.claude-plugin" \
            "$root/plugins/good-plugin/.claude-plugin" \
            "$root/plugins/good-plugin/skills/good-plugin-skill"
@@ -34,14 +32,6 @@ seed_repo() {
 echo run
 EOF
   chmod +x "$root/utilities/good-tool/main"
-
-  cat > "$root/skills/stacia-good-skill/SKILL.md" <<'EOF'
----
-name: stacia-good-skill
-description: A valid fixture skill.
----
-body
-EOF
 
   # The marketplace manifest is authored, like any other source file. The
   # linter checks it stays accurate against what is on disk; it never generates
@@ -114,16 +104,6 @@ r="$(new_repo)"; expect_pass "valid repo passes" "$r"
 r="$(new_repo)"
 sed -i.bak 's/good-tool - a valid fixture tool/no leading synopsis/' "$r/utilities/good-tool/main"
 expect_fail "utility bad --help synopsis" "$r" "line 1 of --help must be"
-
-# --- skill rules (spot checks) ---
-r="$(new_repo)"
-sed -i.bak '/^description: A valid fixture skill\.$/d' "$r/skills/stacia-good-skill/SKILL.md"
-expect_fail "skill missing description" "$r" "'description:' must be non-empty"
-
-r="$(new_repo)"
-mv "$r/skills/stacia-good-skill" "$r/skills/good-skill"
-sed -i.bak 's/^name: stacia-good-skill$/name: good-skill/' "$r/skills/good-skill/SKILL.md"
-expect_fail "skill missing stacia- prefix" "$r" "must be prefixed with 'stacia-'"
 
 # --- Claude Code plugin rules ---
 # A plugin's entrypoint is its manifest — .claude-plugin/plugin.json, the file
@@ -198,10 +178,10 @@ rm -f "$r/plugins/good-plugin/skills/good-plugin-skill/SKILL.md"
 expect_fail "plugin skill missing SKILL.md" "$r" \
   "skill good-plugin-skill: missing entrypoint"
 
-# A plugin's skills are namespaced by the plugin (/<plugin>:<skill>), so unlike
-# top-level skills/ they are deliberately NOT required to be stacia-prefixed.
+# A plugin's skills are namespaced by the plugin (/<plugin>:<skill>), so they
+# carry no prefix requirement — there is nothing for them to collide with.
 r="$(new_repo)"
-expect_pass "plugin skill needs no stacia- prefix" "$r"
+expect_pass "plugin skill needs no prefix" "$r"
 
 echo
 printf 'summon/test: %d passed, %d failed\n' "$pass" "$fail"
