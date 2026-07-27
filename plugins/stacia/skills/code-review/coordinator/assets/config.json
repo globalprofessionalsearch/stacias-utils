@@ -1,0 +1,38 @@
+{
+  "workflow": {
+    "maxRounds": 3,
+    "concurrency": 6
+  },
+  "timeouts": {
+    "orienteer": 360000,
+    "reconciler": 360000,
+    "reviewer": 840000,
+    "synthesizer": 480000,
+    "verifier": 120000
+  },
+  "reviewer": {
+    "maxFindings": 6,
+    "perspectives": [
+      "correctness",
+      "security",
+      "performance",
+      "api-contract",
+      "tests",
+      "adr"
+    ]
+  },
+  "reconciler": {
+    "minSeams": 3,
+    "maxSeams": 12
+  },
+  "synthesis": {
+    "followUpThreshold": 4
+  },
+  "models": {
+    "orienteer": "claude-sonnet-5",
+    "reconciler": "claude-sonnet-5",
+    "reviewer": "claude-sonnet-5",
+    "synthesizer": "claude-opus-5",
+    "verifier": "claude-sonnet-5"
+  }
+}

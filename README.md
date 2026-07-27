@@ -1,13 +1,13 @@
 # Stacia's Utils
 
-Personal command-line **utilities**, agent **skills**, and **pi-subagents
-agents** — three kinds of thing, all reached through one dispatcher: `summon`.
+Personal command-line **utilities** and a Claude Code **plugin** — two kinds of
+thing, both discovered and wired through one dispatcher: `summon`.
 
 There is no maintained list and no generated metadata. Everything describes
 itself, and `summon` discovers it live:
 
 ```bash
-summon list                 # utilities, skills, and agents (name - description)
+summon list                 # utilities and plugins (name - description)
 summon <name> --help        # how a utility works
 summon <name> [args...]     # run a utility
 ```
@@ -15,9 +15,9 @@ summon <name> [args...]     # run a utility
 ## Layout
 
 ```
-utilities/<name>/main         executable CLI tool
-skills/<name>/SKILL.md         harness-neutral agent skill
-agents/**/<stacia-name>.md    pi-subagents agent definition (harness-specific)
+utilities/<name>/main                        executable CLI tool
+plugins/<name>/.claude-plugin/plugin.json    Claude Code plugin manifest
+plugins/<name>/skills/<skill>/SKILL.md       a plugin's skills
 ```
 
 Everything else at the repo root is infrastructure.
@@ -26,69 +26,72 @@ Everything else at the repo root is infrastructure.
 
 - **Utilities**: `utilities/<name>/main` is executable and its `--help` exits 0
   and prints `<name> - <one-line description>` on line 1.
-- **Skills**: `skills/<name>/SKILL.md` is `stacia-`-prefixed, with frontmatter
-  `name` (== dir) and a non-empty `description`. (Harness-neutral content is a
-  best practice, not linted.)
-- **Agents**: `agents/**/<name>.md` is a pi-subagents definition; frontmatter
-  `name` is `stacia-`-prefixed, equals the filename stem, and is unique, with a
-  non-empty `description`. (Harness-specific by nature.)
+- **Plugins**: `plugins/<name>/` has a `.claude-plugin/plugin.json` whose `name`
+  equals the directory, and is listed in the marketplace manifest. A plugin's
+  skills live at `plugins/<name>/skills/<skill>/SKILL.md` with frontmatter
+  `name` (== dir) and a non-empty `description`. They need no prefix — the
+  plugin already namespaces them (`/<plugin>:<skill>`).
 
-Those rules make everything auto-discoverable. `summon lint` enforces all three
-(in CI and the pre-commit hook); see `CONTRIBUTING.md`.
+Those rules make everything auto-discoverable. `summon lint` enforces both (in
+CI and the pre-commit hook); see `CONTRIBUTING.md`.
 
 ## Setup
 
 ```bash
 git clone git@github.com:globalprofessionalsearch/stacias-utils.git
 cd stacias-utils
-./summon/main setup          # enables git hooks + skills, prints shell-rc lines
+./summon/main setup          # enables git hooks, installs the plugin, prints a shell-rc line
 ```
 
-Then add the two lines it prints to your shell rc:
+Then add the line it prints to your shell rc:
 
 ```bash
 export PATH="$HOME/Documents/code/github/globalprofessionalsearch/stacias-utils/bin:$PATH"
-export PI_SUBAGENT_EXTRA_AGENT_DIRS="$HOME/Documents/code/github/globalprofessionalsearch/stacias-utils/agents"
 ```
 
-The first puts `summon` on PATH. The second exposes every agent under `agents/`
-to pi-subagents, scanned recursively — run-once, new agents auto-discovered.
+That puts `summon` on PATH. Nothing else needs exporting — run `summon setup`
+once, then `summon list`.
 
-## Skills
+Claude Code plugins install through a local marketplace: `plugins/` is itself
+the marketplace, and `summon setup` registers it once. Its manifest
+(`plugins/.claude-plugin/marketplace.json`) is authored and committed — add a
+plugin there when you add one under `plugins/`. `summon lint` checks it stays
+accurate and says what is wrong; it never rewrites it.
 
-Skills are agent-skill files (`SKILL.md`) the harness loads on demand — distinct
-from the **Agents** kind below (pi-subagents definitions). The repo ships skills
-under `skills/<name>/SKILL.md` (e.g. `stacia-code-review`, `stacia-utils-usage`,
-`stacia-utils-contributing`). Skill dirs are `stacia-`-prefixed so they can't
-collide with unrelated skills in the shared directories. Nothing here is on a
-harness search path by default — `summon setup` installs them into pi's skill
-directory by symlink:
+`setup` runs once because there is one umbrella plugin, `stacia`. Utilities live
+under `plugins/stacia/skills/<utility>/`, so adding or removing one never adds a
+plugin and never needs a re-run.
 
-- **pi** discovers skills in `~/.pi/agent/skills/` **recursively**. `summon
-  setup` plants a single umbrella symlink `~/.pi/agent/skills/stacia-utils ->
-  skills/`, so pi sees every current *and future* skill. This is **run-once**:
-  add a skill to the repo and pi picks it up with no re-run.
+## Plugins
 
-Because the symlink points back into the repo, edits to a skill's body are live
-with no re-sync. pi is the only wired harness; keeping skill bodies
-harness-neutral (a best practice, not enforced) keeps them portable to others.
+`plugins/<name>/` holds Claude Code plugins — a `.claude-plugin/plugin.json`
+manifest plus whatever skills, commands, agents, hooks, or supporting code the
+plugin needs. `summon setup` installs them into Claude Code; they are not run
+through `summon`, they are invoked in Claude Code as `/<plugin>:<skill>`.
 
-## Agents
+The repo ships one plugin, the **`stacia`** umbrella. Each utility is a
+self-contained directory under `plugins/stacia/skills/<utility>/` — `SKILL.md`
+plus whatever `bin/`, code and `test.sh` it needs — invoked as
+`/stacia:<utility>`. Deleting the directory removes the utility outright.
 
-The repo also ships [pi-subagents](https://github.com/nicobailon/pi-subagents)
-agent definitions under `agents/**/<stacia-name>.md` (e.g. the read-only
-reviewers under `agents/code-review/` used by the `stacia-code-review` skill).
-They are not on any search path by default — `summon setup` prints a single
-`PI_SUBAGENT_EXTRA_AGENT_DIRS` shell-rc line that exposes the whole `agents/`
-tree to pi-subagents, scanned **recursively**. This is **run-once**: add an agent
-and pi-subagents discovers it with no re-run, no symlink, no copy. Edits are live
-in place. (Agents are harness-specific — they target pi-subagents — unlike the
-harness-neutral skills.)
+Utilities:
+
+- **`/stacia:utils-usage`** — how to discover and run the command-line
+  utilities in this repo via `summon`. Coding assistants load this to find out
+  what exists rather than guessing.
+- **`/stacia:utils-contributing`** — how to add or modify a utility or plugin
+  here so it satisfies the contracts `summon lint` enforces.
+- **`/stacia:code-review`** — an orchestrated, read-only, multi-perspective code
+  review of a change set, optionally spanning several repos. It resolves scope
+  and charge conversationally, then runs a bounded four-stage pipeline
+  (comprehension → review → synthesis → verification) in a Claude Agent SDK
+  coordinator process with a live monitor. Its design of record is the ADR
+  series under `docs/adr/`.
 
 ## Conventions
 
 - One command on PATH: `summon` (everything else is `summon <name>`).
 - Commits / PR titles use [Conventional Commits](https://www.conventionalcommits.org/),
   enforced by the `commit-msg` hook and CI.
-- Coding assistants discover everything through the `stacia-utils-usage` skill;
-  contributors follow `stacia-utils-contributing`.
+- Coding assistants discover everything through `/stacia:utils-usage`;
+  contributors follow `/stacia:utils-contributing`.

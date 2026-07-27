@@ -1,0 +1,329 @@
+#!/usr/bin/env bash
+# ============================================================
+# launch-review - hand a resolved review request to the coordinator in its own
+#                 iTerm2 pane (so its live TUI gets a real TTY)
+#
+# Called by the stacia-code-review skill once scope + charge are resolved.
+# Everything the coordinator needs is written to a private JSON request file;
+# the ONLY things that cross the AppleScript boundary are filesystem paths we
+# generated ourselves, passed as `osascript` argv (never interpolated into the
+# script text) and re-quoted with AppleScript's `quoted form of`. No user text
+# — charge, branch names, repo paths — is ever spliced into AppleScript source.
+# ============================================================
+set -euo pipefail
+
+NAME="launch-review"
+
+# --- locate ourselves through any symlinks. This utility is self-contained:
+# bin/ and coordinator/ are siblings under plugins/stacia/skills/code-review,
+# so everything resolves relative to this script and nothing depends on where
+# the umbrella plugin is registered from.
+_self="${BASH_SOURCE[0]}"
+while [ -L "$_self" ]; do
+  _dir="$(cd -P "$(dirname "$_self")" && pwd)"
+  _self="$(readlink "$_self")"
+  case "$_self" in /*) : ;; *) _self="$_dir/$_self" ;; esac
+done
+BIN_DIR="$(cd -P "$(dirname "$_self")" && pwd)"
+SKILL_ROOT="$(dirname "$BIN_DIR")"   # plugins/stacia/skills/code-review
+COORD_DIR="$SKILL_ROOT/coordinator"
+
+err() { printf '%s: %s\n' "$NAME" "$*" >&2; }
+die() { err "$*"; exit 1; }
+
+usage() {
+  cat <<EOF
+$NAME - run the stacia-code-review coordinator in a split iTerm2 pane
+
+Usage:
+  $NAME --charge <text>
+                 --repo <abs-path> [--source <spec>]
+                [--repo <abs-path> [--source <spec>]]...
+                [--adr <id>:<title>:<abs-path>]...
+                [--here] [--dry-run]
+
+Required:
+  --charge <text>     What the change CLAIMS to accomplish, in the user's own
+                      words. Free-form; quotes, newlines and shell metachars
+                      are all safe. Never inferred from the diff — the review
+                      is scored against this statement.
+  --repo <abs-path>   Absolute path to a repo in the change set. Repeatable.
+
+Per-repo:
+  --source <spec>     The change set within the immediately preceding --repo.
+                      One of:
+                        pr:<id>
+                        range:<base>...<head>
+                        worktree            (staged + unstaged, default)
+                        worktree:all        (explicit synonym of worktree)
+                        worktree:staged     (staged only)
+                      Defaults to 'worktree' if omitted.
+
+Optional:
+  --adr <id>:<title>:<abs-path>
+                      Accepted ADR to stage as review context. Repeatable.
+                      Split on the first two colons: <title> may not contain
+                      a colon, <abs-path> may.
+  --here              Skip the iTerm split; run in the current terminal.
+  --dry-run           Print the resolved request JSON and the command that
+                      would run, then exit 0. Launches nothing.
+  -h, --help          This help.
+
+Off macOS, without osascript, or without iTerm2 installed, $NAME says so and
+falls back to --here rather than failing.
+
+Examples:
+  $NAME --charge 'Adds retry/backoff to the webhook sender.' \\
+        --repo /Users/me/code/api --source 'range:main...HEAD'
+
+  $NAME --charge 'Ports the reviewer off pi.' \\
+        --repo /Users/me/code/utils --source worktree:staged \\
+        --repo /Users/me/code/infra --source pr:412
+EOF
+}
+
+# --- JSON string encoder. Backslash and quote are escaped first, so no input
+# can terminate the string literal it lands in; the remaining C0 control bytes
+# are either mapped to their JSON escapes or dropped, so the output is always
+# well-formed regardless of what the user typed.
+json_str() {
+  local s=${1-}
+  s=${s//\\/\\\\}
+  s=${s//\"/\\\"}
+  s=${s//$'\n'/\\n}
+  s=${s//$'\r'/\\r}
+  s=${s//$'\t'/\\t}
+  s=${s//$'\b'/\\b}
+  s=${s//$'\f'/\\f}
+  s=${s//[$'\001'-$'\007'$'\013'$'\016'-$'\037'$'\177']/}
+  printf '"%s"' "$s"
+}
+
+# ---------------------------------------------------------------------------
+# Parse
+# ---------------------------------------------------------------------------
+charge=""; have_charge=0
+here=0; dry=0
+repo_paths=(); repo_sources=(); adrs=()
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -h|--help) usage; exit 0 ;;
+    --charge)
+      [[ $# -ge 2 ]] || die "--charge needs a value"
+      charge="$2"; have_charge=1; shift 2 ;;
+    --repo)
+      [[ $# -ge 2 ]] || die "--repo needs a value"
+      repo_paths+=("$2"); repo_sources+=("worktree"); shift 2 ;;
+    --source)
+      [[ $# -ge 2 ]] || die "--source needs a value"
+      [[ ${#repo_paths[@]} -gt 0 ]] || die "--source must follow a --repo"
+      repo_sources[$((${#repo_sources[@]} - 1))]="$2"; shift 2 ;;
+    --adr)
+      [[ $# -ge 2 ]] || die "--adr needs a value"
+      adrs+=("$2"); shift 2 ;;
+    --here)    here=1; shift ;;
+    --dry-run) dry=1; shift ;;
+    -*) die "unknown flag: $1 (run '$NAME --help')" ;;
+    *)  die "unexpected argument: $1 (run '$NAME --help')" ;;
+  esac
+done
+
+# ---------------------------------------------------------------------------
+# Validate. The charge is a hard gate here as well as in the skill: the
+# coordinator scores the change against it and has nothing to do without one.
+# ---------------------------------------------------------------------------
+[[ $have_charge -eq 1 ]] || die "--charge is required (what the change claims to accomplish)"
+[[ -n "${charge//[[:space:]]/}" ]] || die "--charge must not be blank"
+[[ ${#repo_paths[@]} -gt 0 ]] || die "at least one --repo is required"
+
+source_re='^(worktree|worktree:all|worktree:staged|pr:[^[:space:]]+|range:[^[:space:]]+\.\.\.[^[:space:]]+)$'
+resolved_paths=()
+for i in "${!repo_paths[@]}"; do
+  p="${repo_paths[$i]}"
+  s="${repo_sources[$i]}"
+  [[ -d "$p" ]] || die "--repo: not a directory: $p"
+  [[ -d "$p/.git" || -f "$p/.git" ]] || die "--repo: not a git repo (no .git): $p"
+  [[ "$s" =~ $source_re ]] || die "--source: bad spec '$s' for $p (see '$NAME --help')"
+  resolved_paths+=("$(cd -P "$p" && pwd)")
+done
+
+adr_ids=(); adr_titles=(); adr_paths=()
+for a in "${adrs[@]:-}"; do
+  [[ -n "$a" ]] || continue
+  id="${a%%:*}"; rest="${a#*:}"
+  [[ "$rest" != "$a" ]] || die "--adr: expected <id>:<title>:<path>, got '$a'"
+  title="${rest%%:*}"; apath="${rest#*:}"
+  [[ "$apath" != "$rest" ]] || die "--adr: expected <id>:<title>:<path>, got '$a'"
+  [[ -n "$id" && -n "$title" && -n "$apath" ]] || die "--adr: empty field in '$a'"
+  [[ -f "$apath" ]] || die "--adr: not a file: $apath"
+  adr_ids+=("$id"); adr_titles+=("$title"); adr_paths+=("$apath")
+done
+
+[[ -d "$COORD_DIR" ]] || die "coordinator not found at $COORD_DIR"
+[[ -f "$COORD_DIR/cli.ts" ]] || die "coordinator entrypoint not found: $COORD_DIR/cli.ts"
+
+NODE_BIN="${STACIA_CODE_REVIEW_NODE:-node}"
+if ! NODE_BIN="$(command -v "$NODE_BIN" 2>/dev/null)"; then
+  die "node not found on PATH (the coordinator is a Node program)"
+fi
+
+# ---------------------------------------------------------------------------
+# Build the request file. This — not the AppleScript command line — is how the
+# charge and the repo specs reach the coordinator, so free-form text never has
+# to survive an AppleScript round-trip or a shell re-parse.
+# ---------------------------------------------------------------------------
+req_root="${TMPDIR:-/tmp}/stacia-code-review"
+mkdir -p "$req_root"; chmod 700 "$req_root" 2>/dev/null || true
+# Opportunistically reap request dirs from previous runs (kept for a day so a
+# failed run is still debuggable).
+find "$req_root" -maxdepth 1 -type d -name 'req.*' -mtime +1 -exec rm -rf {} + 2>/dev/null || true
+
+req_dir="$(mktemp -d "$req_root/req.XXXXXXXX")"
+REQ="$req_dir/request.json"
+
+# Allocate the run directory HERE rather than in the coordinator, so this
+# script can hand it back to the caller. The pane is fire-and-forget: once we
+# split it we never hear from it again, so anything the calling session needs
+# to know has to be known before we exit. That includes the one path worth
+# knowing — where the bundles, findings, log and report will land.
+#
+# The helper still owns allocation and mkdir (ADR-0003); we are just an
+# earlier caller of `init` than the coordinator used to be. Every other
+# subcommand already takes `--run <dir>`, so passing it forward is the
+# contract working as designed.
+HELPER="$COORD_DIR/helper/code-review-workdir.py"
+[[ -f "$HELPER" ]] || die "run-directory helper not found: $HELPER"
+
+repo_names=()
+for p in "${resolved_paths[@]}"; do repo_names+=("$(basename "$p")"); done
+
+if ! manifest_json="$(python3 "$HELPER" init "${repo_names[@]}" 2>&1)"; then
+  die "could not allocate a run directory: $manifest_json"
+fi
+RUN_DIR="$(printf '%s' "$manifest_json" | python3 -c 'import json,sys; print(json.load(sys.stdin)["run_dir"])')" \
+  || die "run-directory helper returned no run_dir"
+
+{
+  printf '{\n'
+  printf '  "version": 1,\n'
+  printf '  "charge": %s,\n' "$(json_str "$charge")"
+  printf '  "cwd": %s,\n' "$(json_str "$PWD")"
+  printf '  "run_dir": %s,\n' "$(json_str "$RUN_DIR")"
+  printf '  "repos": [\n'
+  for i in "${!resolved_paths[@]}"; do
+    printf '    { "path": %s, "source": %s }' \
+      "$(json_str "${resolved_paths[$i]}")" "$(json_str "${repo_sources[$i]}")"
+    [[ $i -lt $((${#resolved_paths[@]} - 1)) ]] && printf ','
+    printf '\n'
+  done
+  printf '  ],\n'
+  printf '  "adrs": [\n'
+  for i in "${!adr_ids[@]}"; do
+    printf '    { "id": %s, "title": %s, "path": %s }' \
+      "$(json_str "${adr_ids[$i]}")" "$(json_str "${adr_titles[$i]}")" "$(json_str "${adr_paths[$i]}")"
+    [[ $i -lt $((${#adr_ids[@]} - 1)) ]] && printf ','
+    printf '\n'
+  done
+  printf '  ]\n'
+  printf '}\n'
+} > "$REQ"
+chmod 600 "$REQ"
+
+# The coordinator's deps are installed on demand, same as test.sh does.
+need_install=0
+[[ -d "$COORD_DIR/node_modules" ]] || need_install=1
+
+if [[ $dry -eq 1 ]]; then
+  printf '%s: request %s\n' "$NAME" "$REQ"
+  cat "$REQ"
+  printf '%s: run directory: %s\n' "$NAME" "$RUN_DIR"
+  printf '%s: would run: %s %s/cli.ts --request %s\n' \
+    "$NAME" "$NODE_BIN" "$COORD_DIR" "$REQ"
+  [[ $need_install -eq 1 ]] && printf '%s: (preceded by `npm ci` — node_modules is missing)\n' "$NAME"
+  exit 0
+fi
+
+# ---------------------------------------------------------------------------
+# Launch
+# ---------------------------------------------------------------------------
+run_here() {
+  printf '%s: running in this terminal; the coordinator degrades to line-oriented\n' "$NAME" >&2
+  printf '%s: progress output when stdin is not a TTY.\n' "$NAME" >&2
+  cd "$COORD_DIR"
+  if [[ $need_install -eq 1 ]]; then
+    printf '%s: installing coordinator deps (npm ci)…\n' "$NAME" >&2
+    npm ci --no-audit --no-fund
+  fi
+  exec "$NODE_BIN" "$COORD_DIR/cli.ts" --request "$REQ"
+}
+
+if [[ $here -eq 1 ]]; then
+  run_here
+fi
+
+if [[ "$(uname -s)" != "Darwin" ]]; then
+  err "not macOS — no iTerm2 pane to split."
+  run_here
+fi
+if ! command -v osascript >/dev/null 2>&1; then
+  err "osascript not available — cannot split an iTerm2 pane."
+  run_here
+fi
+if ! osascript -e 'id of application "iTerm2"' >/dev/null 2>&1; then
+  err "iTerm2 is not installed — cannot split a pane."
+  run_here
+fi
+if [[ "${TERM_PROGRAM:-}" != "iTerm.app" ]]; then
+  err "note: current terminal is '${TERM_PROGRAM:-unknown}', not iTerm2 — the review pane will open in iTerm2."
+fi
+
+# Only three values cross into AppleScript, all of them paths this script
+# produced: the coordinator dir, the node binary, and the request file. They go
+# in as `argv` (the heredoc is single-quoted, so bash expands nothing) and are
+# re-quoted with `quoted form of` before landing in a shell command line.
+# `$need_install` is passed as "1"/"0" and the npm prefix is an AppleScript
+# literal, so not even that is assembled from outside data.
+if ! osascript - "$COORD_DIR" "$NODE_BIN" "$REQ" "$need_install" <<'APPLESCRIPT'
+on run argv
+  set coordDir to item 1 of argv
+  set nodeBin to item 2 of argv
+  set reqFile to item 3 of argv
+  set needInstall to item 4 of argv
+
+  if needInstall is "1" then
+    set installStep to "npm ci --no-audit --no-fund && "
+  else
+    set installStep to ""
+  end if
+
+  set cmd to "cd " & quoted form of coordDir & " && clear && " & installStep & ¬
+    quoted form of nodeBin & " ./cli.ts --request " & quoted form of reqFile
+
+  tell application "iTerm2"
+    activate
+    if (count of windows) = 0 then
+      set newSession to (current session of (create window with default profile))
+    else
+      tell current session of current window
+        set newSession to (split horizontally with default profile)
+      end tell
+    end if
+    tell newSession
+      write text cmd
+    end tell
+  end tell
+end run
+APPLESCRIPT
+then
+  err "iTerm2 split failed."
+  run_here
+fi
+
+# The run dir is the one thing the calling session cannot learn any other way:
+# the pane owns everything after this point, and if it is closed or the
+# coordinator dies early, this line is the only pointer to the artifacts.
+printf '%s: review running in a new iTerm2 pane\n' "$NAME"
+printf '%s: run directory: %s\n' "$NAME" "$RUN_DIR"
+printf '%s: log:           %s/logs/run.jsonl\n' "$NAME" "$RUN_DIR"
+printf '%s: report (when complete): %s/report.md\n' "$NAME" "$RUN_DIR"

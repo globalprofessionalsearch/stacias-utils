@@ -1,9 +1,22 @@
 #!/usr/bin/env bash
-# Enforce the utility contract before every commit, and run the code-review
-# extension tests when it is touched (same gating as lint).
+# Enforce the utility/skill/plugin contracts before every commit, and run the
+# test suite of every touched utility (same gating as lint).
+#
+# Nothing here names a specific utility: a utility that ships a test.sh gets it
+# run when its own tree is staged. Adding one needs no edit to this hook.
 set -e
 root="$(git rev-parse --show-toplevel)"
 "$root/summon/main" lint
-if git diff --cached --name-only | grep -q '^extensions/stacia-code-review/'; then
-  "$root/extensions/stacia-code-review/test.sh"
-fi
+
+staged="$(git diff --cached --name-only)"
+
+# Utility dirs under any plugin, e.g. plugins/stacia/skills/code-review/
+printf '%s\n' "$staged" \
+  | grep -E '^plugins/[^/]+/skills/[^/]+/' \
+  | cut -d/ -f1-4 \
+  | sort -u \
+  | while IFS= read -r dir; do
+      [[ -x "$root/$dir/test.sh" ]] || continue
+      echo "› $dir"
+      "$root/$dir/test.sh"
+    done

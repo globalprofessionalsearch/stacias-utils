@@ -15,18 +15,31 @@ jobs:
       - name: Lint rule coverage (negative fixtures)
         run: ./summon/test
 
-  extension-tests:
+  code-review-tests:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      # >= 24: the coordinator's bin entry is `node ./cli.ts`, run through
+      # Node's built-in type stripping rather than a build step.
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "24"
       - uses: actions/setup-python@v5
         with:
           python-version: "3.x"
-      - name: Test the code-review extension
-        run: ./extensions/stacia-code-review/test.sh
+      # Names no utility: every plugins/*/skills/*/test.sh runs. Adding a
+      # utility with tests needs no edit here.
+      - name: Test every utility that ships tests
+        run: |
+          found=0
+          for t in plugins/*/skills/*/test.sh; do
+            [ -x "$t" ] || continue
+            found=1
+            echo "::group::$t"
+            "$t"
+            echo "::endgroup::"
+          done
+          [ "$found" = 1 ] || echo "no utility test suites found"
 
   commit:
     if: github.event_name == 'pull_request'

@@ -2,16 +2,13 @@
 
 The repo holds two kinds of thing, each in its own top-level directory. Strict
 conventions govern them; `summon lint` (pre-commit hook + CI) rejects anything
-that breaks one. There is no metadata to maintain — the help text and the
-frontmatter *are* the contracts.
+that breaks one. There is no metadata to maintain — the help text, the
+frontmatter, and the plugin manifest *are* the contracts.
 
 ```
 utilities/<name>/main         executable CLI tool
-skills/<name>/SKILL.md         harness-neutral agent skill
+plugins/<name>/                Claude Code plugin
 ```
-
-A skill may additionally ship a workflow-tool `agentType` binding in its own dir
-(see the Skill contract) — that is part of the skill, not a separate kind.
 
 Everything else at the repo root (`bin/`, `summon/`, `.github/`, ...) is
 infrastructure.
@@ -39,7 +36,7 @@ utilities/my-tool/
 
    Name matches the directory; description is non-empty.
 
-### Add one
+### Add a utility
 
 ```bash
 mkdir -p utilities/my-tool
@@ -49,71 +46,70 @@ git add utilities/my-tool
 git commit -m "feat: add my-tool" # Conventional Commits, enforced
 ```
 
-## Skill contract
+## Plugin contract
 
-A skill is a directory under `skills/` named in `kebab-case` and **prefixed with
-`stacia-`**, with a `SKILL.md` whose YAML frontmatter is the contract:
+A plugin is a directory under `plugins/` named in `kebab-case`, whose
+entrypoint is its manifest:
 
 ```
-skills/stacia-my-skill/
-  SKILL.md      # frontmatter: name (== dir), description (non-empty)
-  references/   # optional supporting files
+plugins/my-plugin/
+  .claude-plugin/plugin.json    # "name" must equal the directory name
+  skills/<skill>/SKILL.md       # optional: the plugin's own skills
+  ...                           # commands, agents, hooks, supporting code
 ```
 
-`SKILL.md` must:
+The manifest is what Claude Code reads — a directory without a valid
+`.claude-plugin/plugin.json` is not a plugin. A plugin's skills each need a
+`SKILL.md` opening with a YAML frontmatter block whose `name:` equals the skill
+directory and whose `description:` is non-empty (that description is what
+`summon list` shows, and what Claude Code matches on to decide when to load the
+skill). They take no prefix — the plugin namespaces them already, and they are
+invoked as `/<plugin>:<skill>`.
 
-1. Open with a YAML frontmatter block (`---`).
-2. Set `name:` equal to the directory name (which starts with `stacia-`).
-3. Set a non-empty `description:` (this is what `summon list` shows).
+`summon setup` installs plugins into Claude Code; they are never run through
+`summon`.
 
-The `stacia-` prefix is enforced so a skill can't shadow, or be shadowed by,
-unrelated skills that land in the shared harness skill directories.
+Installs are marketplace-mediated. `plugins/.claude-plugin/marketplace.json` is
+an authored file — a product of development, like any other source file — and
+adding a plugin means adding it there too. Nothing generates or rewrites it;
+`summon lint` checks it stays accurate against what is on disk and names what
+is wrong (`name`, each entry's `source`, and plugins listed-but-absent or
+present-but-unlisted). Owner and description wording are editorial and not
+linted beyond being non-empty.
 
-**Harness-neutrality (best practice, not linted):** write skill bodies so a
-`SKILL.md` isn't coupled to one harness. Describe behavior abstractly ("launch
-parallel read-only subagents, one per perspective, in a single message") rather
-than naming a specific harness's delegation tool or execution flags. pi is the
-only harness `summon setup` wires today; keeping skills neutral keeps them
-portable to others.
+The repo ships one plugin: the `stacia` umbrella at `plugins/stacia/`. A utility
+is a self-contained directory under `plugins/stacia/skills/<utility>/` — its
+`SKILL.md` plus whatever `bin/`, code and `test.sh` it needs — invoked as
+`/stacia:<utility>`. Adding or removing one is a mkdir or an rm: it never adds a
+plugin, so `summon setup` does not need re-running.
 
-`summon setup` installs skills into pi:
-
-- **pi** (recursive discovery): one umbrella symlink `~/.pi/agent/skills/stacia-utils
-  -> skills/`. Run-once — new skills are auto-discovered without re-running setup.
-
-Skill-body edits are live (the symlink points back into the repo).
-
-**Skill-owned workflow `agentType` bindings.** A skill that drives the
-pi-dynamic-workflows `workflow` tool may ship an `agentType` *binding*: a
-frontmatter-only Markdown file in its own skill dir that binds a subagent's tool
-allow-list. The `workflow` tool resolves `agentType` names from `~/.pi/agents/`,
-so `summon setup` symlinks the binding there (user scope, any repo). The
-code-review skill ships `skills/stacia-code-review/stacia-review-readonly.md`,
-granting only read/search tools — this is what makes its review fan-out
-tool-level read-only. `summon lint` enforces it: frontmatter block, a
-`stacia-`-prefixed `name:`, and a `tools:` **YAML array** (`tools: [read, ...]`;
-a comma *string* is silently ignored by the workflow tool) restricted to
-non-mutating tools (`read, grep, find, ls, ffgrep, fffind`). The binding lives
-with the skill it serves — no separate top-level directory.
-
-### Add one
+### Add a utility to the `stacia` plugin
 
 ```bash
-mkdir -p skills/stacia-my-skill
-$EDITOR skills/stacia-my-skill/SKILL.md
-summon lint                          # must pass
-summon setup                         # one-time: plant the pi umbrella symlink
-git add skills/stacia-my-skill
-git commit -m "feat: add stacia-my-skill skill"
+mkdir -p plugins/stacia/skills/my-utility
+$EDITOR plugins/stacia/skills/my-utility/SKILL.md   # frontmatter: name (== dir), description
+summon lint                                          # must pass
+git add plugins/stacia/skills/my-utility
+git commit -m "feat: add my-utility"
 ```
+
+No `summon setup` re-run: the plugin is already registered, and its skills ship
+with it.
+
+The code-review utility (`plugins/stacia/skills/code-review/`) has its design of
+record in the ADR series under `docs/adr/`. Read the relevant ADRs before
+changing its coordinator, personas, or schemas — several of its constraints
+(read-only subagent confinement, structured output, the TypeScript/Python
+helper boundary) are decisions with recorded rationale, not incidental
+implementation.
 
 ## Reserved names
 
 `list`, `lint`, `commit-lint`, `setup`, `help`, `summon` — dispatcher builtins.
-No utility or skill may use them.
+No utility may use them.
 
 ## What belongs here
 
-- ✅ Personal tools and skills used across projects; workflow automation.
+- ✅ Personal tools and Claude Code skills used across projects; workflow automation.
 - ❌ Project-specific scripts (keep them in the project).
 - ❌ One-off experiments (use `experiments/`).

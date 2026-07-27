@@ -1,0 +1,14 @@
+{
+  "name": "stacia-utils",
+  "owner": {
+    "name": "Stacia Colasurdo"
+  },
+  "description": "Claude Code plugins published from Stacia's stacias-utils repo. Add a plugin here when you add it under plugins/; `summon lint` checks this file stays accurate.",
+  "plugins": [
+    {
+      "name": "stacia",
+      "source": "./stacia",
+      "description": "Stacia's utilities for Claude Code. One umbrella plugin: each utility is a self-contained directory under skills/, invoked as /stacia:<utility>. Registered once by `summon setup`; adding or removing a utility never requires re-registering."
+    }
+  ]
+}
