@@ -1475,20 +1475,20 @@ async def main(connection):
     await tab.async_set_title(project_name)
 
     # ── Build layout ──────────────────────────────────────────
-    pi_dev = tab.current_session
-    nvim = await pi_dev.async_split_pane(vertical=True)
-    pi_review = await pi_dev.async_split_pane(vertical=False)
+    claude_dev = tab.current_session
+    nvim = await claude_dev.async_split_pane(vertical=True)
+    claude_review = await claude_dev.async_split_pane(vertical=False)
     scratch1 = await nvim.async_split_pane(vertical=False)
     scratch2 = await scratch1.async_split_pane(vertical=False)
     scratch3 = await scratch2.async_split_pane(vertical=False)
 
     # ── Adjust pane sizes ─────────────────────────────────────
-    total_rows = pi_dev.grid_size.height + pi_review.grid_size.height
+    total_rows = claude_dev.grid_size.height + claude_review.grid_size.height
     half  = math.floor(total_rows / 2)
     third = math.floor(total_rows / 6)
 
-    pi_dev.preferred_size    = iterm2.Size(pi_dev.grid_size.width, half)
-    pi_review.preferred_size = iterm2.Size(pi_review.grid_size.width, total_rows - half)
+    claude_dev.preferred_size    = iterm2.Size(claude_dev.grid_size.width, half)
+    claude_review.preferred_size = iterm2.Size(claude_review.grid_size.width, total_rows - half)
     nvim.preferred_size          = iterm2.Size(nvim.grid_size.width, half)
     scratch1.preferred_size      = iterm2.Size(scratch1.grid_size.width, third)
     scratch2.preferred_size      = iterm2.Size(scratch2.grid_size.width, third)
@@ -1497,8 +1497,8 @@ async def main(connection):
     await tab.async_update_layout()
 
     # ── Set colors + background ───────────────────────────────
-    await set_pane_profile(pi_dev,    0,  0,  0,  bg_image)
-    await set_pane_profile(pi_review, 0,  0,  80, bg_image)
+    await set_pane_profile(claude_dev,    0,  0,  0,  bg_image)
+    await set_pane_profile(claude_review, 0,  0,  80, bg_image)
     await set_pane_profile(nvim,          0,  0,  0,  bg_image)
     await set_pane_profile(scratch1,      0,  40, 0,  bg_image)
     await set_pane_profile(scratch2,      0,  40, 0,  bg_image)
@@ -1506,8 +1506,8 @@ async def main(connection):
 
     # ── Name each pane ────────────────────────────────────────
     pane_names = {
-        pi_dev:    f"{project_name}:pi-dev",
-        pi_review: f"{project_name}:pi-review",
+        claude_dev:    f"{project_name}:claude-dev",
+        claude_review: f"{project_name}:claude-review",
         nvim:          f"{project_name}:nvim",
         scratch1:      f"{project_name}:scratch-1",
         scratch2:      f"{project_name}:scratch-2",
@@ -1519,11 +1519,11 @@ async def main(connection):
     # ── Send commands ─────────────────────────────────────────
     cd = f"cd {base_dir}\n"
 
-    await pi_dev.async_send_text(cd)
-    await pi_dev.async_send_text("pi\n")
+    await claude_dev.async_send_text(cd)
+    await claude_dev.async_send_text("claude\n")
 
-    await pi_review.async_send_text(cd)
-    await pi_review.async_send_text("pi\n")
+    await claude_review.async_send_text(cd)
+    await claude_review.async_send_text("claude\n")
 
     await nvim.async_send_text(cd)
     await nvim.async_send_text("nvim .\n")
@@ -1531,6 +1531,6 @@ async def main(connection):
     for scratch in [scratch1, scratch2, scratch3]:
         await scratch.async_send_text(cd)
 
-    await pi_dev.async_activate()
+    await claude_dev.async_activate()
 
 iterm2.run_until_complete(main)
