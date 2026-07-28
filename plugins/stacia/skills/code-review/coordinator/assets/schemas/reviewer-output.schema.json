@@ -59,8 +59,8 @@
                 "description": "File path (repo-relative)"
               },
               "line": {
-                "type": "integer",
-                "description": "Line number. Must be a number, not a quoted string."
+                "type": ["integer", "string"],
+                "description": "Line number"
               }
             }
           },

@@ -17,7 +17,7 @@ import { type Activity, type ActivityState, type MonitorState, bar, fmtDur, fmtN
 // biome-ignore lint/suspicious/noExplicitAny: node stream handles are structurally typed here
 type Any = any;
 
-export type Color = "plain" | "accent" | "muted" | "dim" | "ok" | "warn" | "err" | "sel";
+export type Color = "plain" | "accent" | "muted" | "dim" | "ok" | "warn" | "err" | "sel" | "cost";
 
 export interface Row {
 	t: string;
@@ -26,13 +26,14 @@ export interface Row {
 
 const CODES: Record<Color, string> = {
 	plain: "",
-	accent: "36",
+	accent: "34;1",
 	muted: "90",
 	dim: "2",
-	ok: "32",
+	ok: "36",
 	warn: "33",
-	err: "31",
+	err: "31;1",
 	sel: "7",
+	cost: "35",
 };
 
 /** The whole of what `theme.fg` used to do. */
@@ -123,6 +124,7 @@ const GLYPH: Record<ActivityState, string> = {
 	done: "✓",
 	failed: "✗",
 	killed: "☠",
+	suspended: "⏸",
 };
 
 const STATE_COLOR: Record<ActivityState, Color> = {
@@ -131,17 +133,26 @@ const STATE_COLOR: Record<ActivityState, Color> = {
 	done: "ok",
 	failed: "err",
 	killed: "warn",
+	suspended: "warn",
 };
 
 const FOOTER = "↑↓ select · pgup/pgdn log · k kill · c/esc cancel-all · q quit";
+const FOOTER_EXTENSION = "y grant extension · n deny · ↑↓ select · c/esc cancel-all · q quit";
 
 function agentRow(a: Activity, selected: boolean, now: number): string {
 	const rd = a.maxRounds > 1 ? `r${a.round}/${a.maxRounds}` : "";
 	const el = a.startedAt ? fmtDur((a.endedAt || now) - a.startedAt) : "";
 	const tok = `${a.usageSeen || a.tokens === 0 ? "" : "~"}${fmtNum(a.tokens)}t`;
 	const ctx = a.inputTokens ? `${fmtNum(a.inputTokens)} ctx` : "";
+	const remaining =
+		a.state === "running" && a.timeoutMs > 0 && a.startedAt > 0
+			? fmtDur(Math.max(0, a.timeoutMs - (now - a.startedAt)))
+			: "";
+	const timer = remaining ? `${el}/${remaining}` : el;
 	let status = a.currentTool.slice(0, 14);
-	if (a.state === "running" && a.currentActivity && a.activitySince) {
+	if (a.state === "suspended") {
+		status = "awaiting extension";
+	} else if (a.state === "running" && a.currentActivity && a.activitySince) {
 		const secs = Math.round((now - a.activitySince) / 1000);
 		status = `${a.currentActivity.slice(0, 12)} ${secs}s`;
 	} else if (a.state === "running" && !a.currentActivity && now - (a.lastEventAt || a.startedAt || 0) > 2500) {
@@ -152,12 +163,12 @@ function agentRow(a: Activity, selected: boolean, now: number): string {
 		selected ? ">" : " ",
 		GLYPH[a.state],
 		a.role.padEnd(13),
-		a.state.padEnd(7),
+		a.state.padEnd(9),
 		bar(a.tokenRate),
 		tok.padStart(7),
 		ctx.padStart(9),
 		rd.padEnd(6),
-		el.padStart(6),
+		timer.padStart(10),
 		` ${status}`,
 	].join(" ");
 }
@@ -174,8 +185,9 @@ export function frame(state: MonitorState, view: View): Row[] {
 	const cost = vals.reduce((s, a) => s + a.costUsd, 0);
 
 	const head: Row[] = [];
+	const elapsed = fmtDur(view.now - view.started);
 	head.push({
-		t: `code-review — ${state.phase} — ${fmtDur(view.now - view.started)}${state.cancelled ? " — CANCELLED" : ""}`,
+		t: `code-review — ${state.phase} — ${elapsed}${state.cancelled ? " — CANCELLED" : ""}`,
 		c: state.cancelled ? "err" : "accent",
 	});
 	const cov = state.coverage();
@@ -214,9 +226,13 @@ export function frame(state: MonitorState, view: View): Row[] {
 	const fail = active?.fail ? `  fail: ${active.fail}` : "";
 	head.push({ t: `events [${active?.label ?? "-"}] ${where}${more}${fail}`, c: active?.fail ? "err" : "muted" });
 
+	const hasSuspended = vals.some((a) => a.state === "suspended");
+	const suspendedAgent = vals.find((a) => a.state === "suspended");
+	const footer = hasSuspended ? `${suspendedAgent?.label} timed out — ${FOOTER_EXTENSION}` : FOOTER;
+
 	const rows = [...head];
 	for (let i = 0; i < logH; i++) rows.push({ t: `  ${slice[i] ?? ""}`, c: "dim" });
-	rows.push({ t: FOOTER, c: "accent" });
+	rows.push({ t: footer, c: hasSuspended ? "warn" : "accent" });
 	return rows.slice(0, height);
 }
 
@@ -293,6 +309,8 @@ export interface TuiActions {
 	kill(a: Activity): void;
 	cancelAll(): void;
 	quit(): void;
+	grantExtension?(): void;
+	denyExtension?(): void;
 }
 
 export class Tui implements Painter {
@@ -362,6 +380,12 @@ export class Tui implements Painter {
 				if (a) this.actions.kill(a);
 				break;
 			}
+			case "y":
+				this.actions.grantExtension?.();
+				break;
+			case "n":
+				this.actions.denyExtension?.();
+				break;
 			case "c":
 			case "escape":
 				this.actions.cancelAll();

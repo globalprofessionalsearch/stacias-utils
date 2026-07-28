@@ -78,7 +78,7 @@
                 "type": "string"
               },
               "line": {
-                "type": "integer"
+                "type": ["integer", "string"]
               }
             }
           },

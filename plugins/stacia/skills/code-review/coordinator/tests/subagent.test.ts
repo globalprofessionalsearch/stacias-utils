@@ -3,18 +3,13 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { MonitorState } from "../monitor-state.ts";
-import type { Monitor, QueryFn, SubagentSpec } from "../subagent.ts";
-import { runSubagent, subagentOptions } from "../subagent.ts";
+import type { Monitor, QueryFn, ResultHolder, SubagentSpec } from "../subagent.ts";
+import { createResultHolder, createSubmitResultServer, runSubagent, schemaToZodShape, subagentOptions } from "../subagent.ts";
+import { SUBMIT_MCP_TOOL } from "../confine.ts";
 
 // Unit tests for the failure-shape mapping. No real API calls: `runSubagent`
-// takes an injectable `query` so each of the three documented failure shapes
+// takes an injectable `query` and `resultHolder` so each failure mode
 // (plus success, timeout and cancellation) can be driven deterministically.
-//
-//   1. result subtype === "error_max_structured_output_retries"
-//   2. result subtype === "success" with structured_output ABSENT
-//   3. query() THROWS after yielding an error result (single-shot mode)
-//
-// All three must map to null, because the coordinator treats null as failure.
 
 // biome-ignore lint/suspicious/noExplicitAny: opaque SDK message payloads
 type Any = any;
@@ -67,13 +62,6 @@ function harness(): Harness {
 	};
 }
 
-const successResult = (structured: unknown) => ({
-	type: "result",
-	subtype: "success",
-	is_error: false,
-	structured_output: structured,
-});
-
 /** An async-generator stub standing in for the SDK's `query()`. */
 function stubQuery(
 	messages: unknown[],
@@ -98,79 +86,82 @@ function stubQuery(
 	return { fn, calls };
 }
 
+const successResult = () => ({
+	type: "result",
+	subtype: "success",
+	is_error: false,
+});
+
 describe("runSubagent — success", () => {
-	it("returns the structured output and marks the activity done", async () => {
+	it("returns the captured result and marks the activity done", async () => {
 		const h = harness();
 		const spec = h.spec();
-		const { fn } = stubQuery([successResult({ ok: true })]);
-		const out = await runSubagent(spec, { query: fn });
+		const holder = createResultHolder();
+		holder.value = { ok: true };
+		const { fn } = stubQuery([successResult()]);
+		const out = await runSubagent(spec, { query: fn, resultHolder: holder });
 		expect(out).toEqual({ ok: true });
 		expect(spec.activity.state).toBe("done");
 		expect(spec.activity.fail).toBeUndefined();
 	});
 
-	it("returns falsy-but-present structured output rather than treating it as failure", async () => {
-		// `structured_output: false` / `0` / `""` are legitimate payloads for some
-		// schemas; only undefined/null mean "the model never produced one".
+	it("returns falsy-but-present result rather than treating it as failure", async () => {
 		const h = harness();
 		const spec = h.spec();
-		const { fn } = stubQuery([successResult({ ok: false })]);
-		expect(await runSubagent(spec, { query: fn })).toEqual({ ok: false });
+		const holder = createResultHolder();
+		holder.value = { ok: false };
+		const { fn } = stubQuery([successResult()]);
+		expect(await runSubagent(spec, { query: fn, resultHolder: holder })).toEqual({ ok: false });
 		expect(spec.activity.state).toBe("done");
 	});
 });
 
-describe("runSubagent — failure shape 1: error_max_structured_output_retries", () => {
-	it("returns null and records the exhausted retry loop", async () => {
+describe("runSubagent — submit_result never called", () => {
+	it("returns null when the agent finishes without calling submit_result", async () => {
 		const h = harness();
 		const spec = h.spec();
-		const { fn } = stubQuery([
-			{ type: "result", subtype: "error_max_structured_output_retries", is_error: true, errors: [] },
-		]);
-		expect(await runSubagent(spec, { query: fn })).toBeNull();
+		const holder = createResultHolder();
+		const { fn } = stubQuery([successResult()]);
+		expect(await runSubagent(spec, { query: fn, resultHolder: holder })).toBeNull();
 		expect(spec.activity.state).toBe("failed");
-		expect(spec.activity.fail).toMatch(/retries exhausted/);
+		expect(spec.activity.fail).toMatch(/never called submit_result/);
 	});
 });
 
-describe("runSubagent — failure shape 2: success with structured_output absent", () => {
-	it("returns null when structured_output is missing entirely", async () => {
+describe("runSubagent — validation failures exhausted", () => {
+	it("returns null when all attempts fail validation", async () => {
 		const h = harness();
 		const spec = h.spec();
-		const { fn } = stubQuery([{ type: "result", subtype: "success", is_error: false }]);
-		expect(await runSubagent(spec, { query: fn })).toBeNull();
+		const holder = createResultHolder();
+		holder.attempts = 5;
+		holder.lastErrors = ['$: missing required "ok"'];
+		const { fn } = stubQuery([successResult()]);
+		expect(await runSubagent(spec, { query: fn, resultHolder: holder })).toBeNull();
 		expect(spec.activity.state).toBe("failed");
-		expect(spec.activity.fail).toMatch(/no structured output/i);
-	});
-
-	it("returns null when structured_output is null", async () => {
-		const h = harness();
-		const spec = h.spec();
-		const { fn } = stubQuery([successResult(null)]);
-		expect(await runSubagent(spec, { query: fn })).toBeNull();
-		expect(spec.activity.state).toBe("failed");
+		expect(spec.activity.fail).toMatch(/submit_result validation failed after 5 attempt/);
 	});
 });
 
-describe("runSubagent — failure shape 3: query() throws", () => {
+describe("runSubagent — query errors", () => {
 	it("returns null when query() throws after yielding an error result", async () => {
 		const h = harness();
 		const spec = h.spec();
+		const holder = createResultHolder();
 		const { fn } = stubQuery(
 			[{ type: "result", subtype: "error_during_execution", is_error: true, errors: ["boom"] }],
 			{ throwAfter: new Error("query failed after error result") },
 		);
-		expect(await runSubagent(spec, { query: fn })).toBeNull();
+		expect(await runSubagent(spec, { query: fn, resultHolder: holder })).toBeNull();
 		expect(spec.activity.state).toBe("failed");
-		// The result message's reason is more specific than the rethrow, so it wins.
 		expect(spec.activity.fail).toMatch(/error_during_execution/);
 	});
 
 	it("returns null when query() throws with no result message at all", async () => {
 		const h = harness();
 		const spec = h.spec();
+		const holder = createResultHolder();
 		const { fn } = stubQuery([], { throwAfter: new Error("spawn failed") });
-		expect(await runSubagent(spec, { query: fn })).toBeNull();
+		expect(await runSubagent(spec, { query: fn, resultHolder: holder })).toBeNull();
 		expect(spec.activity.state).toBe("failed");
 		expect(spec.activity.fail).toBe("spawn failed");
 	});
@@ -178,8 +169,9 @@ describe("runSubagent — failure shape 3: query() throws", () => {
 	it("returns null when query() throws a non-Error", async () => {
 		const h = harness();
 		const spec = h.spec();
+		const holder = createResultHolder();
 		const { fn } = stubQuery([], { throwAfter: "string rejection" });
-		expect(await runSubagent(spec, { query: fn })).toBeNull();
+		expect(await runSubagent(spec, { query: fn, resultHolder: holder })).toBeNull();
 		expect(spec.activity.fail).toBe("string rejection");
 	});
 });
@@ -188,17 +180,19 @@ describe("runSubagent — other terminations", () => {
 	it("returns null when the stream ends without any result message", async () => {
 		const h = harness();
 		const spec = h.spec();
+		const holder = createResultHolder();
 		const { fn } = stubQuery([{ type: "assistant", message: { content: [] } }]);
-		expect(await runSubagent(spec, { query: fn })).toBeNull();
+		expect(await runSubagent(spec, { query: fn, resultHolder: holder })).toBeNull();
 		expect(spec.activity.state).toBe("failed");
-		expect(spec.activity.fail).toMatch(/no result message/);
+		expect(spec.activity.fail).toMatch(/never called submit_result/);
 	});
 
 	it("times out and returns null", async () => {
 		const h = harness();
 		const spec = h.spec({ timeoutMs: 20 });
+		const holder = createResultHolder();
 		const { fn } = stubQuery([], { hangUntilAborted: true });
-		expect(await runSubagent(spec, { query: fn })).toBeNull();
+		expect(await runSubagent(spec, { query: fn, resultHolder: holder })).toBeNull();
 		expect(spec.activity.state).toBe("failed");
 		expect(spec.activity.fail).toMatch(/^timeout after/);
 	});
@@ -221,15 +215,13 @@ describe("runSubagent — other terminations", () => {
 
 describe("runSubagent — abort plumbing", () => {
 	it("parks an AbortController on activity.session so cancelAll()/kill-one can abort it", async () => {
-		// MonitorState.cancelAll() calls `a.session?.abort?.()`; an AbortController
-		// satisfies that shape, which is why monitor-state.ts needs no change.
 		const h = harness();
 		const spec = h.spec({ timeoutMs: 5000 });
+		const holder = createResultHolder();
 		let seenSignal: AbortSignal | undefined;
 		const fn: QueryFn = (params) => {
 			seenSignal = (params.options as Any)?.abortController?.signal;
 			return (async function* () {
-				// cancelAll() marks every in-flight agent killed and aborts it.
 				h.state.cancelAll();
 				await new Promise<void>((resolve) => {
 					seenSignal?.addEventListener("abort", () => resolve(), { once: true });
@@ -238,7 +230,7 @@ describe("runSubagent — abort plumbing", () => {
 				throw new Error("aborted");
 			})();
 		};
-		expect(await runSubagent(spec, { query: fn })).toBeNull();
+		expect(await runSubagent(spec, { query: fn, resultHolder: holder })).toBeNull();
 		expect(spec.activity.session).toBeInstanceOf(AbortController);
 		expect(seenSignal?.aborted).toBe(true);
 		expect(spec.activity.state).toBe("killed");
@@ -247,9 +239,11 @@ describe("runSubagent — abort plumbing", () => {
 	it("forwards every message to the monitor", async () => {
 		const h = harness();
 		const spec = h.spec();
-		const msgs = [{ type: "system", subtype: "init" }, successResult({ ok: true })];
+		const holder = createResultHolder();
+		holder.value = { ok: true };
+		const msgs = [{ type: "system", subtype: "init" }, successResult()];
 		const { fn } = stubQuery(msgs);
-		await runSubagent(spec, { query: fn });
+		await runSubagent(spec, { query: fn, resultHolder: holder });
 		expect(h.monitor.applied).toEqual(msgs);
 	});
 });
@@ -258,20 +252,30 @@ describe("subagentOptions", () => {
 	it("passes the caller's prompt and options through to query()", async () => {
 		const h = harness();
 		const spec = h.spec();
-		const { fn, calls } = stubQuery([successResult({ ok: true })]);
-		await runSubagent(spec, { query: fn });
+		const holder = createResultHolder();
+		holder.value = { ok: true };
+		const { fn, calls } = stubQuery([successResult()]);
+		await runSubagent(spec, { query: fn, resultHolder: holder });
 		expect(calls).toHaveLength(1);
 		expect(calls[0].prompt).toBe("review this");
-		expect(calls[0].options?.systemPrompt).toBe("you are a reviewer");
+		expect(calls[0].options?.systemPrompt).toContain("you are a reviewer");
+		expect(calls[0].options?.systemPrompt).toContain("submit_result");
 		expect(calls[0].options?.model).toBe("claude-sonnet-5");
 		expect(calls[0].options?.cwd).toBe(tmpDir);
 	});
 
-	it("declares the schema as a json_schema output format", () => {
+	it("includes the submit_result MCP tool in the tools list", () => {
 		const h = harness();
 		const spec = h.spec();
 		const opts = subagentOptions(spec, new AbortController()) as Any;
-		expect(opts.outputFormat).toEqual({ type: "json_schema", schema: spec.schema });
+		expect(opts.tools).toEqual([...["Read", "Grep", "Glob"], SUBMIT_MCP_TOOL]);
+	});
+
+	it("does not declare outputFormat", () => {
+		const h = harness();
+		const spec = h.spec();
+		const opts = subagentOptions(spec, new AbortController()) as Any;
+		expect(opts.outputFormat).toBeUndefined();
 	});
 
 	it("wires the caller's AbortController through", () => {
@@ -281,19 +285,99 @@ describe("subagentOptions", () => {
 		expect(opts.abortController).toBe(controller);
 	});
 
-	it("isolates the subagent from ambient skills, plugins and MCP servers", () => {
-		// pi's nine-method bareLoader collapses to these.
+	it("isolates the subagent from ambient skills and plugins", () => {
 		const h = harness();
 		const opts = subagentOptions(h.spec(), new AbortController()) as Any;
 		expect(opts.settingSources).toEqual([]);
 		expect(opts.skills).toEqual([]);
 		expect(opts.plugins).toEqual([]);
-		expect(opts.mcpServers).toEqual({});
 	});
 
-	it("uses a plain-string systemPrompt, which fully replaces the default prompt", () => {
+	it("appends submit_result instruction to the system prompt", () => {
 		const h = harness();
 		const opts = subagentOptions(h.spec(), new AbortController()) as Any;
 		expect(typeof opts.systemPrompt).toBe("string");
+		expect(opts.systemPrompt).toContain("call the submit_result tool");
+	});
+});
+
+describe("schemaToZodShape", () => {
+	it("converts top-level properties to named Zod fields", () => {
+		const shape = schemaToZodShape({
+			type: "object",
+			required: ["name"],
+			properties: { name: { type: "string" }, count: { type: "integer" } },
+		});
+		expect(Object.keys(shape)).toEqual(["name", "count"]);
+	});
+
+	it("handles nested objects and arrays", () => {
+		const shape = schemaToZodShape({
+			type: "object",
+			required: ["items"],
+			properties: {
+				items: {
+					type: "array",
+					items: {
+						type: "object",
+						required: ["file"],
+						properties: { file: { type: "string" }, line: { type: "integer" } },
+					},
+				},
+			},
+		});
+		expect(Object.keys(shape)).toEqual(["items"]);
+	});
+
+	it("falls back to { output: unknown } for non-object schemas", () => {
+		expect(Object.keys(schemaToZodShape({ type: "string" }))).toEqual(["output"]);
+		expect(Object.keys(schemaToZodShape(null))).toEqual(["output"]);
+	});
+});
+
+describe("createSubmitResultServer", () => {
+	const schema = {
+		type: "object",
+		properties: { name: { type: "string" }, count: { type: "integer" } },
+		required: ["name", "count"],
+	};
+
+	function getHandler(server: Any) {
+		return server.instance._registeredTools.submit_result.handler;
+	}
+
+	it("accepts valid output passed as named parameters", async () => {
+		const holder = createResultHolder();
+		const attempts: Array<{ n: number; errs: string[] }> = [];
+		const server = createSubmitResultServer(schema, holder, 5, (n, errs) => attempts.push({ n, errs }));
+		const handler = getHandler(server);
+		const result = await handler({ name: "test", count: 3 }, {});
+		expect(result.isError).toBeUndefined();
+		expect(holder.value).toEqual({ name: "test", count: 3 });
+		expect(holder.attempts).toBe(1);
+		expect(attempts).toEqual([{ n: 1, errs: [] }]);
+	});
+
+	it("rejects invalid output with clear error messages", async () => {
+		const holder = createResultHolder();
+		const server = createSubmitResultServer(schema, holder, 5);
+		const handler = getHandler(server);
+		const result = await handler({ name: 42 }, {});
+		expect(result.isError).toBe(true);
+		expect(result.content[0].text).toContain("Validation failed");
+		expect(result.content[0].text).toContain("attempt 1/5");
+		expect(holder.value).toBeNull();
+		expect(holder.attempts).toBe(1);
+		expect(holder.lastErrors.length).toBeGreaterThan(0);
+	});
+
+	it("indicates final attempt when maxAttempts is reached", async () => {
+		const holder = createResultHolder();
+		const server = createSubmitResultServer(schema, holder, 2);
+		const handler = getHandler(server);
+		await handler({}, {});
+		const result = await handler({}, {});
+		expect(result.content[0].text).toContain("final attempt");
+		expect(holder.attempts).toBe(2);
 	});
 });

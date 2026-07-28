@@ -7,29 +7,36 @@
  * The topology, personas, schemas and bounds are unchanged from the pi version
  * — this is a substrate port, not a redesign. What changed here:
  *   - resolveModel(role, models, rt) -> modelFor(role, models); no ModelRuntime
- *   - the schemaBlock() prompt suffix is gone: the SDK's outputFormat carries
- *     the JSON Schema, so telling the model to call submit_result would be
- *     describing a mechanism that no longer exists
- *   - maxAttempts is gone: the SDK owns the structured-output retry loop
+ *   - structured output via an in-process MCP submit_result tool rather than
+ *     the SDK's outputFormat — gives us full visibility into validation
+ *     failures and control over the error messages the model sees
  *   - perspectives come from config instead of a hardcoded const (the pi
  *     version accepted reviewer.perspectives and then silently ignored it)
  */
 
+import * as fs from "node:fs";
+import * as path from "node:path";
 import type { Assets, Manifest } from "./assets.ts";
-import type { Assets } from "./assets.ts";
 import type { Config } from "./config.ts";
 import type { Role } from "./models.ts";
 import { modelFor } from "./models.ts";
-import type { Activity } from "./monitor-state.ts";
+import type { Activity, ActivityState } from "./monitor-state.ts";
 import type { Monitor } from "./monitor.ts";
 import type { RunLog } from "./run-log.ts";
 import { pool } from "./pool.ts";
+import type { SubagentSpec } from "./subagent.ts";
 import { runSubagent } from "./subagent.ts";
 import { timeoutFor } from "./timeouts.ts";
 import { injectBounds } from "./validate.ts";
 
 // biome-ignore lint/suspicious/noExplicitAny: JSON payloads
 type Any = any;
+
+function saveAgentOutput(runDir: string, label: string, output: Any): void {
+	try {
+		fs.writeFileSync(path.join(runDir, "logs", `${label}.json`), JSON.stringify(output, null, 2));
+	} catch {}
+}
 
 export interface RepoInput {
 	repo: string;
@@ -68,6 +75,34 @@ export function required<T>(result: T | null, what: string, a: Activity, monitor
 	// Halt siblings BEFORE unwinding, so nothing keeps spending after this point.
 	monitor.cancelAll(`${what} failed`);
 	throw new Error(`${what} failed (${why}) — every agent is required, so the review is halted.`);
+}
+
+/**
+ * Run a subagent with timeout-extension support. If the agent times out and
+ * hasn't already been extended, the TUI prompts the user. Granted: retry with
+ * a fresh timer. Denied: return null. One extension per agent.
+ */
+async function withExtension(spec: SubagentSpec, monitor: Monitor): Promise<Any | null> {
+	const result = await runSubagent(spec);
+	if (result !== null) return result;
+	if (!spec.activity.fail?.startsWith("timeout")) return null;
+	if (spec.activity.extended) return null;
+
+	spec.activity.state = "suspended" as ActivityState;
+	monitor.pushEvent(spec.activity, "timed out — awaiting user decision");
+	const granted = await monitor.requestExtension(spec.activity);
+
+	if (!granted) {
+		if (spec.activity.state === "suspended") spec.activity.state = "failed";
+		return null;
+	}
+
+	spec.activity.extended = true;
+	spec.activity.state = "queued";
+	spec.activity.fail = undefined;
+	spec.activity.endedAt = 0;
+	monitor.pushEvent(spec.activity, "extension granted — restarting with fresh timer");
+	return runSubagent(spec);
 }
 
 function sanitizeCharge(charge: string): string {
@@ -180,17 +215,20 @@ export async function runReview(input: ReviewInput): Promise<Any> {
 		],
 		concurrency,
 		(t) =>
-			runSubagent({
-				activity: t.a,
+			withExtension(
+				{
+					activity: t.a,
+					monitor,
+					model: orientModel,
+					cwd,
+					systemPrompt: t.persona,
+					userPrompt: `Charge: ${charge}\n\n${orientContext}Change set:\n${bundleContext}\n\n${t.dir}`,
+					allowedRoots,
+					schema: assets.schemas.orientation,
+					timeoutMs: timeout("orienteer"),
+				},
 				monitor,
-				model: orientModel,
-				cwd,
-				systemPrompt: t.persona,
-				userPrompt: `Charge: ${charge}\n\n${orientContext}Change set:\n${bundleContext}\n\n${t.dir}`,
-				allowedRoots,
-				schema: assets.schemas.orientation,
-				timeoutMs: timeout("orienteer"),
-			}),
+			),
 	);
 	checkCancel();
 	// BOTH orienteers are required. The pi version substituted an empty stub for
@@ -200,25 +238,31 @@ export async function runReview(input: ReviewInput): Promise<Any> {
 	// from half the evidence while looking complete.
 	const orientationA = required(oa, "Orienteer A (claim→code)", orientA, monitor, log);
 	const orientationB = required(ob, "Orienteer B (code→claim)", orientB, monitor, log);
+	saveAgentOutput(manifest.run_dir, "orient-a", orientationA);
+	saveAgentOutput(manifest.run_dir, "orient-b", orientationB);
 
 	// ---- Reconcile ----
 	const recon = monitor.register("reconciler", "reconciler");
-	const seamMap = await runSubagent({
-		activity: recon,
+	const seamMap = await withExtension(
+		{
+			activity: recon,
+			monitor,
+			model: model("reconciler"),
+			cwd,
+			systemPrompt: assets.personas.reconciler,
+			userPrompt:
+				`Charge: ${charge}\n\nSeam bounds: ${cfg.reconciler.minSeams}-${cfg.reconciler.maxSeams} seams.\n\n` +
+				`Orienteer A (claim→code):\n${untrusted("ORIENTEER A JSON", JSON.stringify(orientationA))}\n\nOrienteer B (code→claim):\n${untrusted("ORIENTEER B JSON", JSON.stringify(orientationB))}\n\n` +
+				`Merge these into a unified orientation and seam map.`,
+			allowedRoots,
+			schema: assets.schemas.seamMap,
+			timeoutMs: timeout("reconciler"),
+		},
 		monitor,
-		model: model("reconciler"),
-		cwd,
-		systemPrompt: assets.personas.reconciler,
-		userPrompt:
-			`Charge: ${charge}\n\nSeam bounds: ${cfg.reconciler.minSeams}-${cfg.reconciler.maxSeams} seams.\n\n` +
-			`Orienteer A (claim→code):\n${untrusted("ORIENTEER A JSON", JSON.stringify(orientationA))}\n\nOrienteer B (code→claim):\n${untrusted("ORIENTEER B JSON", JSON.stringify(orientationB))}\n\n` +
-			`Merge these into a unified orientation and seam map.`,
-		allowedRoots,
-		schema: assets.schemas.seamMap,
-		timeoutMs: timeout("reconciler"),
-	});
+	);
 	checkCancel();
 	required(seamMap, "Reconciler", recon, monitor, log);
+	saveAgentOutput(manifest.run_dir, "reconciler", seamMap);
 
 	// Register the seams so the monitor can show coverage advancing live. It infers
 	// a seam as covered when a reviewer opens one of its files — the only live
@@ -266,17 +310,20 @@ export async function runReview(input: ReviewInput): Promise<Any> {
 						? `Findings so far (no changes last round; compact summary):\n${untrusted("FINDINGS SUMMARY", summarizeFindings(findingsSoFar))}\n\n`
 						: "") +
 				`Review from the ${perspective} perspective. Focus on high-priority seams.`;
-			result = await runSubagent({
-				activity: a,
+			result = await withExtension(
+				{
+					activity: a,
+					monitor,
+					model: reviewerModel,
+					cwd,
+					systemPrompt: system,
+					userPrompt,
+					allowedRoots,
+					schema: assets.schemas.reviewer,
+					timeoutMs: timeout("reviewer"),
+				},
 				monitor,
-				model: reviewerModel,
-				cwd,
-				systemPrompt: system,
-				userPrompt,
-				allowedRoots,
-				schema: assets.schemas.reviewer,
-				timeoutMs: timeout("reviewer"),
-			});
+			);
 			// A round that fails halts the run. The pi version returned the
 			// findings gathered so far with spillover:true, which reads downstream
 			// as "this lens finished and thinks there may be more" — indistinguishable
@@ -285,9 +332,15 @@ export async function runReview(input: ReviewInput): Promise<Any> {
 			const preMerge = findingsSoFar;
 			findingsSoFar = mergeFindings(findingsSoFar, result.findings ?? []);
 			deltaSinceLastRound = diffFindings(preMerge, findingsSoFar);
-			if (!result.moreExploration || isLast) return { ...result, findings: findingsSoFar };
+			if (!result.moreExploration || isLast) {
+				const final = { ...result, findings: findingsSoFar };
+				saveAgentOutput(manifest.run_dir, perspective, final);
+				return final;
+			}
 		}
-		return { ...result, findings: findingsSoFar };
+		const final = { ...result, findings: findingsSoFar };
+		saveAgentOutput(manifest.run_dir, perspective, final);
+		return final;
 	});
 
 	const reviewFindings = reviewResults.reduce((n: number, r: Any) => n + (r?.findings?.length ?? 0), 0);
@@ -297,23 +350,27 @@ export async function runReview(input: ReviewInput): Promise<Any> {
 	checkCancel();
 	monitor.phase = "synthesis";
 	const synth = monitor.register("synthesizer", "synthesizer");
-	const synthesis = await runSubagent({
-		activity: synth,
+	const synthesis = await withExtension(
+		{
+			activity: synth,
+			monitor,
+			model: model("synthesizer"),
+			cwd,
+			systemPrompt: assets.personas.synthesizer,
+			userPrompt:
+				`Charge: ${charge}\n\nFollow-up threshold: ≥${cfg.synthesis.followUpThreshold} Major/Blocker findings triggers a recommendation.\n\n` +
+				`Orientation:\n${seamMap.merged_orientation}\n\nSeam map:\n${untrusted("SEAM MAP JSON", JSON.stringify(seamMap.seams))}\n\n` +
+				`Reviewer outputs:\n${untrusted("REVIEWER OUTPUTS JSON", JSON.stringify(reviewResults))}\n\n` +
+				`Synthesize: consolidate findings (preserve priorities), produce a charge verdict, account for every seam ` +
+				`(cleared/finding/under-explored), recommend follow-up if triggered.`,
+			allowedRoots,
+			schema: assets.schemas.synthesis,
+			timeoutMs: timeout("synthesizer"),
+		},
 		monitor,
-		model: model("synthesizer"),
-		cwd,
-		systemPrompt: assets.personas.synthesizer,
-		userPrompt:
-			`Charge: ${charge}\n\nFollow-up threshold: ≥${cfg.synthesis.followUpThreshold} Major/Blocker findings triggers a recommendation.\n\n` +
-			`Orientation:\n${seamMap.merged_orientation}\n\nSeam map:\n${untrusted("SEAM MAP JSON", JSON.stringify(seamMap.seams))}\n\n` +
-			`Reviewer outputs:\n${untrusted("REVIEWER OUTPUTS JSON", JSON.stringify(reviewResults))}\n\n` +
-			`Synthesize: consolidate findings (preserve priorities), produce a charge verdict, account for every seam ` +
-			`(cleared/finding/under-explored), recommend follow-up if triggered.`,
-		allowedRoots,
-		schema: assets.schemas.synthesis,
-		timeoutMs: timeout("synthesizer"),
-	});
+	);
 	required(synthesis, "Synthesis", synth, monitor, log);
+	saveAgentOutput(manifest.run_dir, "synthesizer", synthesis);
 
 	// Synthesis is authoritative on coverage: anything it did not mark
 	// under-explored was actually reviewed, whether or not a file-open was seen.
@@ -340,20 +397,25 @@ export async function runReview(input: ReviewInput): Promise<Any> {
 			line: finding.location?.line,
 			finding: finding.finding,
 		});
-		const v = await runSubagent({
-			activity: a,
+		const v = await withExtension(
+			{
+				activity: a,
+				monitor,
+				model: verifyModel,
+				cwd,
+				systemPrompt: assets.personas.verifier,
+				userPrompt: `Change set:\n${bundleContext}\n\nFinding to verify:\n${untrusted("FINDING JSON", JSON.stringify(finding, null, 2))}\n\nVerify this finding by reading the actual code at the cited location.`,
+				allowedRoots,
+				schema: assets.schemas.verifier,
+				timeoutMs: timeout("verifier"),
+			},
 			monitor,
-			model: verifyModel,
-			cwd,
-			systemPrompt: assets.personas.verifier,
-			userPrompt: `Change set:\n${bundleContext}\n\nFinding to verify:\n${untrusted("FINDING JSON", JSON.stringify(finding, null, 2))}\n\nVerify this finding by reading the actual code at the cited location.`,
-			allowedRoots,
-			schema: assets.schemas.verifier,
-			timeoutMs: timeout("verifier"),
-		});
+		);
 		// An unverified Blocker is the worst thing this report can contain: it is
 		// presented with the same weight as a confirmed one but nothing checked it.
-		return required(v, `Verifier for ${finding.severity} at ${finding.location?.file}:${finding.location?.line}`, a, monitor, log);
+		const verdict = required(v, `Verifier for ${finding.severity} at ${finding.location?.file}:${finding.location?.line}`, a, monitor, log);
+		saveAgentOutput(manifest.run_dir, a.label, verdict);
+		return verdict;
 	});
 
 	const verified: Any[] = [];

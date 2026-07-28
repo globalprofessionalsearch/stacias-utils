@@ -45,6 +45,7 @@ export class Monitor {
 	private quitHandler: (() => void) | null = null;
 	private readonly opts: MonitorOptions;
 	private log: RunLog;
+	private readonly pendingExtensions = new Map<string, { activity: Activity; resolve: (v: boolean) => void }>();
 
 	constructor(opts: MonitorOptions = {}) {
 		this.opts = opts;
@@ -127,9 +128,12 @@ export class Monitor {
 	cancelAll(reason = "cancelled by user"): void {
 		if (!this.state.cancelled) {
 			this.cancelReason = reason;
-			const live = [...this.state.registry.values()].filter((a) => a.state === "running" || a.state === "queued").map((a) => a.label);
+			const live = [...this.state.registry.values()]
+				.filter((a) => a.state === "running" || a.state === "queued" || a.state === "suspended")
+				.map((a) => a.label);
 			this.log.warn("run.cancel", { reason, killed: live });
 		}
+		this.rejectAllExtensions();
 		this.state.cancelAll();
 		this.painter?.render();
 	}
@@ -151,6 +155,42 @@ export class Monitor {
 		return this.state.coverage();
 	}
 
+	// ---- timeout extension prompts -------------------------------------------
+
+	/**
+	 * Ask the user whether to grant a timeout extension for `a`.
+	 *
+	 * The TUI detects the suspended state and shows y/n. Returns true if granted.
+	 * cancel-all resolves all pending prompts with false.
+	 */
+	requestExtension(a: Activity): Promise<boolean> {
+		return new Promise<boolean>((resolve) => {
+			this.pendingExtensions.set(a.label, { activity: a, resolve });
+			this.log.info("agent.extension.requested", { agent: a.label, role: a.role });
+			this.painter?.render();
+		});
+	}
+
+	/** Resolve the first pending extension prompt (FIFO). */
+	private resolveFirstExtension(granted: boolean): void {
+		const first = this.pendingExtensions.entries().next();
+		if (first.done) return;
+		const [label, { activity, resolve }] = first.value;
+		this.pendingExtensions.delete(label);
+		this.log.info("agent.extension.resolved", { agent: label, role: activity.role, granted });
+		resolve(granted);
+		this.painter?.render();
+	}
+
+	/** Reject all pending extension prompts (called from cancelAll). */
+	private rejectAllExtensions(): void {
+		for (const [label, { resolve }] of this.pendingExtensions) {
+			this.log.info("agent.extension.resolved", { agent: label, granted: false, reason: "cancel-all" });
+			resolve(false);
+		}
+		this.pendingExtensions.clear();
+	}
+
 	/** Called when the user presses `q` (or ctrl-c). Default: cancel and tear down. */
 	onQuit(cb: () => void): void {
 		this.quitHandler = cb;
@@ -169,7 +209,13 @@ export class Monitor {
 			? new Tui(
 					this.state,
 					this.term,
-					{ kill: (a) => this.kill(a), cancelAll: () => this.cancelAll(), quit: () => this.quit() },
+					{
+						kill: (a) => this.kill(a),
+						cancelAll: () => this.cancelAll(),
+						quit: () => this.quit(),
+						grantExtension: () => this.resolveFirstExtension(true),
+						denyExtension: () => this.resolveFirstExtension(false),
+					},
 					this.opts.colors ?? true,
 				)
 			: new LinePainter(this.state, this.opts.write ?? ((s) => process.stdout.write(s)));

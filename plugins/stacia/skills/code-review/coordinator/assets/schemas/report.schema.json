@@ -40,7 +40,7 @@
             "required": ["file", "line"],
             "properties": {
               "file": { "type": "string" },
-              "line": { "type": "integer" }
+              "line": { "type": ["integer", "string"] }
             }
           },
           "evidence": { "type": "string" },
@@ -60,7 +60,7 @@
             "type": "object",
             "properties": {
               "file": { "type": "string" },
-              "line": { "type": "integer" }
+              "line": { "type": ["integer", "string"] }
             }
           },
           "finding": { "type": "string" },

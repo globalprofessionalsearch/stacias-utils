@@ -11,7 +11,7 @@
 // biome-ignore lint/suspicious/noExplicitAny: SDK message shapes are opaque here
 type Any = any;
 
-export type ActivityState = "queued" | "running" | "done" | "failed" | "killed";
+export type ActivityState = "queued" | "running" | "done" | "failed" | "killed" | "suspended";
 
 export interface Activity {
 	label: string;
@@ -37,6 +37,8 @@ export interface Activity {
 	currentActivity: string;
 	/** When the current activity started (ms epoch). 0 = no activity. */
 	activitySince: number;
+	/** Timeout budget in ms. Set by runSubagent from the spec. */
+	timeoutMs: number;
 	startedAt: number;
 	endedAt: number;
 	lastEventAt: number;
@@ -44,6 +46,8 @@ export interface Activity {
 	/** The agent's AbortController (or anything with `.abort()`), or null while queued. */
 	session: Any;
 	fail?: string;
+	/** True after one timeout extension was granted. Prevents re-prompting. */
+	extended?: boolean;
 	/** Token bookkeeping across turns — internal to applyEvent. */
 	committed: number;
 	turnTokens: number;
@@ -142,7 +146,7 @@ export class MonitorState {
 		this.eventLimit = Math.max(1, opts.eventLimit ?? 24);
 	}
 
-	/** Kill one agent. Queued agents have no controller yet, hence the optional chain. */
+	/** Kill one agent. Queued and suspended agents may have no live controller. */
 	kill(a: Activity): boolean {
 		if (TERMINAL.has(a.state)) return false;
 		a.state = "killed";
@@ -155,7 +159,7 @@ export class MonitorState {
 	cancelAll(): void {
 		this.cancelled = true;
 		for (const a of this.registry.values()) {
-			if (a.state === "running" || a.state === "queued") {
+			if (a.state === "running" || a.state === "queued" || a.state === "suspended") {
 				a.state = "killed";
 				a.session?.abort?.();
 			}
@@ -180,6 +184,7 @@ export class MonitorState {
 			currentTool: "",
 			currentActivity: "",
 			activitySince: 0,
+			timeoutMs: 0,
 			startedAt: 0,
 			endedAt: 0,
 			lastEventAt: 0,
@@ -433,7 +438,7 @@ export class MonitorState {
 
 	/** Compact plain-text summary. Also the body of the non-TTY fallback. */
 	widgetLines(started: number, now = Date.now()): string[] {
-		const g = { queued: "·", running: "●", done: "✓", failed: "✗", killed: "☠" } as const;
+		const g = { queued: "·", running: "●", done: "✓", failed: "✗", killed: "☠", suspended: "⏸" } as const;
 		const vals = [...this.registry.values()];
 		const done = vals.filter((a) => a.state === "done").length;
 		const busy = vals.filter((a) => a.state === "running").length;
@@ -443,18 +448,21 @@ export class MonitorState {
 			const rd = a.maxRounds > 1 ? ` r${a.round}/${a.maxRounds}` : "";
 			const tok = `${a.usageSeen || a.tokens === 0 ? "" : "~"}${fmtNum(a.tokens)}t`;
 			let status = a.currentTool.slice(0, 12);
-			if (a.state === "running" && a.currentActivity && a.activitySince) {
+			if (a.state === "suspended") {
+				status = "awaiting extension";
+			} else if (a.state === "running" && a.currentActivity && a.activitySince) {
 				const elapsed = Math.round((now - a.activitySince) / 1000);
 				status = `${a.currentActivity.slice(0, 10)} ${elapsed}s`;
 			} else if (a.state === "running" && !a.currentActivity && now - (a.lastEventAt || a.startedAt || 0) > 2500) {
-				// No stream_event tells us when the model enters thinking — the SDK
-				// doesn't yield partial messages unless explicitly opted in. After tool
-				// calls finish and no new activity starts, the model is thinking.
 				const since = a.lastEventAt || a.startedAt || 0;
 				const elapsed = Math.round((now - since) / 1000);
 				status = `thinking ${elapsed}s`;
 			}
-			lines.push(`  ${g[a.state]} ${a.role.padEnd(13)} ${bar(a.tokenRate)} ${tok.padStart(7)}${rd} ${status}`);
+			const remaining =
+				a.state === "running" && a.timeoutMs > 0 && a.startedAt > 0
+					? ` [${fmtDur(Math.max(0, a.timeoutMs - (now - a.startedAt)))} left]`
+					: "";
+			lines.push(`  ${g[a.state]} ${a.role.padEnd(13)} ${bar(a.tokenRate)} ${tok.padStart(7)}${rd} ${status}${remaining}`);
 		}
 		const cov = this.coverage();
 		const seams = cov.total ? ` · seams ${cov.covered}/${cov.total}` : "";

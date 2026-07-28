@@ -32,7 +32,12 @@ export function validate(value: Json, schema: Json, path = "$"): string[] {
 	if (schema.type) {
 		const types: string[] = Array.isArray(schema.type) ? schema.type : [schema.type];
 		if (!types.some((t) => typeMatches(value, t))) {
-			errs.push(`${path}: expected ${types.join("|")}, got ${typeOf(value)}`);
+			let hint = "";
+			if (types.includes("object") && schema.properties) {
+				const keys = Object.keys(schema.properties);
+				hint = ` — expected an object with properties {${keys.join(", ")}}`;
+			}
+			errs.push(`${path}: expected ${types.join("|")}, got ${typeOf(value)}${hint}`);
 			return errs; // type wrong → downstream checks are noise
 		}
 	}
