@@ -227,6 +227,8 @@ export async function runReview(input: ReviewInput): Promise<Any> {
 	// reference. Synthesis supplies the authoritative accounting further down.
 	monitor.setSeams((seamMap.seams ?? []).map((s: Any) => ({ id: s.id, files: (s.files ?? []).map((f: Any) => f.file) })));
 
+	log?.info("phase.complete", { phase: "comprehension", seams: seamMap.seams?.length ?? 0 });
+
 	// ---- Review: K-round loop per perspective, perspectives in parallel ----
 	checkCancel();
 	monitor.phase = "review";
@@ -289,6 +291,9 @@ export async function runReview(input: ReviewInput): Promise<Any> {
 		return { ...result, findings: findingsSoFar };
 	});
 
+	const reviewFindings = reviewResults.reduce((n: number, r: Any) => n + (r?.findings?.length ?? 0), 0);
+	log?.info("phase.complete", { phase: "review", perspectives: perspectives.length, findings: reviewFindings });
+
 	// ---- Synthesis ----
 	checkCancel();
 	monitor.phase = "synthesis";
@@ -315,6 +320,13 @@ export async function runReview(input: ReviewInput): Promise<Any> {
 	// under-explored was actually reviewed, whether or not a file-open was seen.
 	monitor.coverSeams((synthesis.seam_accounting ?? []).filter((s: Any) => s.state !== "under-explored").map((s: Any) => s.seam_id));
 
+	log?.info("phase.complete", {
+		phase: "synthesis",
+		verdict: synthesis.verdict,
+		consolidated: (synthesis.consolidated_findings ?? []).length,
+		toVerify: (synthesis.consolidated_findings ?? []).filter((f: Any) => f.severity === "Blocker" || f.severity === "Major").length,
+	});
+
 	// ---- Verification: confirm Blocker/Major findings in parallel ----
 	checkCancel();
 	monitor.phase = "verification";
@@ -322,6 +334,13 @@ export async function runReview(input: ReviewInput): Promise<Any> {
 	const verifyModel = model("verifier");
 	const verdicts = await pool(toVerify, concurrency, async (finding, idx) => {
 		const a = monitor.register(`verify:${idx}`, "verifier");
+		log?.info("verifier.target", {
+			agent: a.label,
+			severity: finding.severity,
+			file: finding.location?.file,
+			line: finding.location?.line,
+			finding: finding.finding,
+		});
 		const v = await runSubagent({
 			activity: a,
 			monitor,

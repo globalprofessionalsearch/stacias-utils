@@ -132,8 +132,14 @@ export async function runSubagent(spec: SubagentSpec, deps: SubagentDeps = {}): 
 
 	try {
 		const run = deps.query ?? (sdkQuery as unknown as QueryFn);
+		monitor.pushEvent(a, `query started (timeout ${Math.round(timeoutMs / 1000)}s)`);
+		let firstMessage = true;
 		for await (const message of run({ prompt: spec.userPrompt, options: subagentOptions(spec, controller) })) {
 			a.lastEventAt = Date.now();
+			if (firstMessage) {
+				monitor.pushEvent(a, "first message from SDK");
+				firstMessage = false;
+			}
 			monitor.applyEvent?.(a, message);
 			if (!isResult(message)) continue;
 			sawResult = true;
