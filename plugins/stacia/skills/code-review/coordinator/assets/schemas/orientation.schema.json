@@ -3,7 +3,11 @@
   "title": "OrienteerOutput",
   "description": "Output from an orienteer agent: a comprehension model of the change with clear/unclear alignment regions",
   "type": "object",
-  "required": ["model", "clear_alignment", "unclear_alignment"],
+  "required": [
+    "model",
+    "clear_alignment",
+    "unclear_alignment"
+  ],
   "properties": {
     "model": {
       "type": "string",
@@ -14,7 +18,12 @@
       "description": "Regions where the change plainly serves the charge",
       "items": {
         "type": "object",
-        "required": ["region", "file", "line", "rationale"],
+        "required": [
+          "region",
+          "file",
+          "line",
+          "rationale"
+        ],
         "properties": {
           "region": {
             "type": "string",
@@ -26,7 +35,7 @@
           },
           "line": {
             "type": "integer",
-            "description": "Primary line number for this region"
+            "description": "Primary line number for this region. Must be a number, not a quoted string."
           },
           "rationale": {
             "type": "string",
@@ -40,7 +49,12 @@
       "description": "Regions where it is not evident the change serves the charge",
       "items": {
         "type": "object",
-        "required": ["region", "file", "line", "rationale"],
+        "required": [
+          "region",
+          "file",
+          "line",
+          "rationale"
+        ],
         "properties": {
           "region": {
             "type": "string",
@@ -52,7 +66,7 @@
           },
           "line": {
             "type": "integer",
-            "description": "Primary line number for this region"
+            "description": "Primary line number for this region. Must be a number, not a quoted string."
           },
           "rationale": {
             "type": "string",

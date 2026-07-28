@@ -16,7 +16,7 @@
  */
 
 import type { Assets, Manifest } from "./assets.ts";
-import { PERSPECTIVES } from "./assets.ts";
+import type { Assets } from "./assets.ts";
 import type { Config } from "./config.ts";
 import type { Role } from "./models.ts";
 import { modelFor } from "./models.ts";
@@ -129,14 +129,13 @@ function summarizeFindings(findings: Any[]): string {
 }
 
 /**
- * Which perspectives to run. The pi version iterated a hardcoded const and
- * ignored `reviewer.perspectives` entirely; here the config is honoured, but
- * an unknown name is a hard error rather than a silently-skipped reviewer
- * (there would be no persona to load for it).
+ * Which perspectives to run. Validates the configured list against the set of
+ * actually-present reviewer definitions (discovered from assets/reviewers/).
+ * An unknown name is a hard error — there would be no persona to load for it.
  */
-export function resolvePerspectives(cfg: Config): string[] {
+export function resolvePerspectives(cfg: Config, assets: Assets): string[] {
 	const configured = cfg.reviewer.perspectives ?? [];
-	const known = new Set<string>(PERSPECTIVES as unknown as string[]);
+	const known = new Set<string>(Object.keys(assets.personas.reviewers));
 	const unknown = configured.filter((p) => !known.has(p));
 	if (unknown.length) {
 		throw new Error(`config.reviewer.perspectives: unknown perspective(s) ${unknown.join(", ")}. Known: ${[...known].join(", ")}.`);
@@ -154,7 +153,7 @@ export async function runReview(input: ReviewInput): Promise<Any> {
 	const allowedRoots = [...input.repos.map((r) => r.path), manifest.run_dir];
 	const concurrency = cfg.workflow.concurrency ?? 6;
 	const K = cfg.workflow.maxRounds ?? 3;
-	const perspectives = resolvePerspectives(cfg);
+	const perspectives = resolvePerspectives(cfg, assets);
 	const checkCancel = () => {
 		if (signal?.aborted) throw new Error("review cancelled by user");
 		if (monitor.cancelled) throw new Error(`review halted — ${monitor.cancelReason ?? "cancelled"}`);

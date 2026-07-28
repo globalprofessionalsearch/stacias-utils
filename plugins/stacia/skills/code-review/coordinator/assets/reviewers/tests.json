@@ -1,0 +1,22 @@
+{
+  "perspective": "tests",
+  "role": "Assess whether the change is adequately and meaningfully tested. For each notable behavior change, ask 'what test would fail if this were wrong?' If the answer is 'none,' that's a finding.",
+  "focus": [
+    { "area": "Coverage of the change", "details": "Is the new/modified behavior actually exercised? Are there new code paths with no test?" },
+    { "area": "Missing cases", "details": "Edge cases, error paths, boundary values, and failure modes that correctness/security/perf reviewers would worry about — are they tested?" },
+    { "area": "Test quality", "details": "Tests that assert nothing meaningful, tautological tests, tests that pass regardless of the change, over-mocking that hides real behavior." },
+    { "area": "Determinism", "details": "Flakiness risks — time, ordering, randomness, network, shared state, sleeps instead of synchronization." },
+    { "area": "Regression protection", "details": "Does a test exist that would fail if the bug being fixed reappeared?" },
+    { "area": "Level fit", "details": "Unit vs integration vs e2e — is the behavior tested at the right level? Are expensive paths covered by something?" },
+    { "area": "Fixtures/data", "details": "Realistic test data, cleanup, isolation between tests." }
+  ],
+  "severity": {
+    "Blocker": "The change's primary behavior — the thing the charge says it accomplishes — has no test at all. A regression in the core functionality would be invisible to CI.",
+    "Major": "A significant code path (error handling, an important edge case, a security-relevant branch) added by this change is untested. Or: an existing test is tautological and would pass even if the change were reverted.",
+    "Minor": "A secondary code path or edge case lacks coverage, but the core behavior is tested. Or: a test works but is fragile (time-dependent, order-dependent, over-mocked).",
+    "Nit": "A test-quality issue with no coverage gap — a fixture that could be more realistic, a test name that doesn't describe what it tests, or a missing cleanup that doesn't affect isolation today."
+  },
+  "method": "Cross-reference seams that other reviewers would find concerning — are those areas tested? Identify the most important behavior the change introduces and check whether a test exercises it.",
+  "rationale_instruction": "States what could regress undetected — name the behavior and the condition that would go uncaught.",
+  "suggestion_instruction": "What test to add or strengthen — be specific about the assertion, not just 'add a test'."
+}

@@ -3,7 +3,10 @@
   "title": "SeamMap",
   "description": "Reconciled orientation from two orienteers: merged model + priority-ranked seams (3-12)",
   "type": "object",
-  "required": ["merged_orientation", "seams"],
+  "required": [
+    "merged_orientation",
+    "seams"
+  ],
   "properties": {
     "merged_orientation": {
       "type": "string",
@@ -14,20 +17,35 @@
       "description": "Priority-ranked list of seams. Seams are regions warranting reviewer attention: unclear alignment or orienteer disagreement.",
       "items": {
         "type": "object",
-        "required": ["id", "priority", "type", "region", "files", "rationale"],
+        "required": [
+          "id",
+          "priority",
+          "type",
+          "region",
+          "files",
+          "rationale"
+        ],
         "properties": {
           "id": {
             "type": "integer",
-            "description": "Unique seam identifier (1-indexed)"
+            "description": "Unique seam identifier (1-indexed). Must be a number, not a quoted string."
           },
           "priority": {
             "type": "string",
-            "enum": ["high", "medium", "low"],
+            "enum": [
+              "high",
+              "medium",
+              "low"
+            ],
             "description": "Review priority. High = disagreement or both unclear. Medium = one unclear. Low = clear but worth noting."
           },
           "type": {
             "type": "string",
-            "enum": ["disagreement", "unclear", "notable"],
+            "enum": [
+              "disagreement",
+              "unclear",
+              "notable"
+            ],
             "description": "Seam type: disagreement (orienteers differ), unclear (alignment uncertain), notable (clear but architecturally interesting)"
           },
           "region": {
@@ -39,7 +57,10 @@
             "description": "Files involved in this seam",
             "items": {
               "type": "object",
-              "required": ["file", "line"],
+              "required": [
+                "file",
+                "line"
+              ],
               "properties": {
                 "file": {
                   "type": "string",
@@ -47,7 +68,7 @@
                 },
                 "line": {
                   "type": "integer",
-                  "description": "Primary line number"
+                  "description": "Primary line number. Must be a number, not a quoted string."
                 }
               }
             }

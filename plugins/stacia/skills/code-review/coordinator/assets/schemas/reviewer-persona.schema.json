@@ -1,0 +1,57 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ReviewerPersona",
+  "description": "Structured definition of a perspective reviewer. Rendered into a system prompt at runtime by render-persona.ts, with common-reviewer-rules.md as the shared frame.",
+  "type": "object",
+  "required": ["perspective", "role", "focus", "method", "severity"],
+  "properties": {
+    "perspective": {
+      "type": "string",
+      "description": "The perspective name, matching the enum in reviewer-output.schema.json."
+    },
+    "role": {
+      "type": "string",
+      "description": "One-sentence role statement: what this reviewer is looking for."
+    },
+    "focus": {
+      "type": "array",
+      "description": "The areas this reviewer examines, in priority order.",
+      "items": {
+        "type": "object",
+        "required": ["area", "details"],
+        "properties": {
+          "area": { "type": "string", "description": "Short name for the focus area." },
+          "details": { "type": "string", "description": "What to look for in this area." }
+        }
+      },
+      "minItems": 1
+    },
+    "method": {
+      "type": "string",
+      "description": "How this reviewer should approach the investigation."
+    },
+    "severity": {
+      "type": "object",
+      "description": "Per-perspective calibration of what each severity level means. The generic definitions in common-reviewer-rules.md are intentionally vague — these replace them with concrete criteria for this perspective.",
+      "required": ["Blocker", "Major", "Minor", "Nit"],
+      "properties": {
+        "Blocker": { "type": "string", "description": "What constitutes a Blocker from this perspective. Must not merge." },
+        "Major": { "type": "string", "description": "What constitutes a Major from this perspective. Fix before merge." },
+        "Minor": { "type": "string", "description": "What constitutes a Minor from this perspective. Fix soon." },
+        "Nit": { "type": "string", "description": "What constitutes a Nit from this perspective. Non-blocking." }
+      }
+    },
+    "rationale_instruction": {
+      "type": "string",
+      "description": "What the rationale field should contain for this perspective."
+    },
+    "suggestion_instruction": {
+      "type": "string",
+      "description": "What the suggestion field should contain for this perspective."
+    },
+    "extra_context": {
+      "type": "string",
+      "description": "Additional instructions specific to this perspective (e.g., the ADR reviewer's context-loading instructions)."
+    }
+  }
+}

@@ -8,6 +8,8 @@ import { execFile } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
+import { type ReviewerPersona, renderReviewerPersona } from "./render-persona.ts";
+import { validate } from "./validate.ts";
 
 // biome-ignore lint/suspicious/noExplicitAny: parsed JSON schema/config
 type Json = any;
@@ -48,7 +50,24 @@ export interface Manifest {
 	repos: Array<{ repo: string; slug: string; bundle: string; findings: string }>;
 }
 
-const PERSPECTIVES = ["correctness", "security", "performance", "api-contract", "tests", "adr"] as const;
+/**
+ * Discover the available perspectives by scanning assets/reviewers/*.json.
+ * Adding or removing a reviewer is a file add/remove — no code changes.
+ */
+function discoverPerspectives(assetsDir: string): string[] {
+	const dir = path.join(assetsDir, "reviewers");
+	if (!fs.existsSync(dir)) return [];
+	return fs
+		.readdirSync(dir)
+		.filter((f) => f.endsWith(".json"))
+		.map((f) => f.replace(/\.json$/, ""))
+		.sort();
+}
+
+// Resolved at load time from the directory scan. Exported so the coordinator
+// can validate config.reviewer.perspectives against the set of actually-present
+// reviewer definitions.
+let PERSPECTIVES: readonly string[] = [];
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 
@@ -68,8 +87,17 @@ export function loadAssets(): Assets {
 		verifier: readJson("schemas/verifier-output.schema.json"),
 		report: readJson("schemas/report.schema.json"),
 	};
+	PERSPECTIVES = discoverPerspectives(assetsDir);
+	if (!PERSPECTIVES.length) throw new Error("no reviewer personas found in assets/reviewers/");
+
+	const reviewerPersonaSchema = readJson("schemas/reviewer-persona.schema.json");
 	const reviewers: Record<string, string> = {};
-	for (const p of PERSPECTIVES) reviewers[p] = read(`references/reviewer-${p}.md`);
+	for (const p of PERSPECTIVES) {
+		const raw = readJson(`reviewers/${p}.json`);
+		const errs = validate(raw, reviewerPersonaSchema);
+		if (errs.length) throw new Error(`reviewer persona ${p}: schema validation failed: ${errs.join("; ")}`);
+		reviewers[p] = renderReviewerPersona(raw as ReviewerPersona);
+	}
 	return {
 		assetsDir,
 		helper: path.join(HERE, "helper", "code-review-workdir.py"),

@@ -1,0 +1,22 @@
+{
+  "perspective": "correctness",
+  "role": "Find ways the change produces wrong results or fails under realistic conditions.",
+  "focus": [
+    { "area": "Logic errors", "details": "Off-by-one, inverted conditions, wrong operators, bad defaults." },
+    { "area": "Edge cases", "details": "Empty/null/zero, boundary values, very large inputs, unicode, timezones, negative numbers, duplicate keys." },
+    { "area": "Error handling", "details": "Swallowed errors, missing checks on fallible calls, partial failures, error paths that leave state inconsistent." },
+    { "area": "Concurrency", "details": "Races, unguarded shared state, non-atomic read-modify-write, deadlocks, ordering assumptions, async/await misuse." },
+    { "area": "Data integrity", "details": "Lost updates, non-idempotent retries, transactions that don't cover all the mutations they should." },
+    { "area": "Resource handling", "details": "Leaks (handles, connections, goroutines), unclosed resources on error paths." },
+    { "area": "Control flow", "details": "Unreachable code, fallthrough, early returns that skip cleanup." }
+  ],
+  "severity": {
+    "Blocker": "The change produces wrong results in normal operation, corrupts data, or causes a crash/hang on inputs the system routinely sees. A user or downstream consumer will hit this.",
+    "Major": "Incorrect under realistic but less common conditions — specific edge cases, error paths, concurrent access patterns. Will surface in production but not on every request.",
+    "Minor": "Incorrect under unusual or extreme conditions — very large inputs, rare interleavings, obscure unicode edge cases. Worth fixing but unlikely to be the first thing a user hits.",
+    "Nit": "Technically imprecise but functionally harmless — unreachable dead code, a redundant null check, a default that happens to be correct for all current callers."
+  },
+  "method": "Trace changed code paths including failure and edge paths — not just the happy path. Reason about what inputs or interleavings break the new behavior. Prefer concrete, reproducible findings over speculation.",
+  "rationale_instruction": "States why it's wrong and what breaks — name the input or condition that triggers the failure.",
+  "suggestion_instruction": "A concrete fix, not just 'handle this case'."
+}
