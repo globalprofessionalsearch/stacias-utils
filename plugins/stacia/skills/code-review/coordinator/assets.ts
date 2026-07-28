@@ -24,7 +24,7 @@ export interface Assets {
 		synthesizer: string;
 		verifier: string;
 	};
-	schemas: { orientation: Json; seamMap: Json; reviewer: Json; synthesis: Json; verifier: Json };
+	schemas: { orientation: Json; seamMap: Json; reviewer: Json; synthesis: Json; verifier: Json; report: Json };
 }
 
 export interface RepoRef {
@@ -37,7 +37,7 @@ export interface RepoRef {
 
 export interface Manifest {
 	run_dir: string;
-	report: string;
+	report_json: string;
 	report_html: string;
 	/** Append-only JSONL run log. Path allocated by the helper's `init`. */
 	log: string;
@@ -66,6 +66,7 @@ export function loadAssets(): Assets {
 		reviewer: readJson("schemas/reviewer-output.schema.json"),
 		synthesis: readJson("schemas/synthesis.schema.json"),
 		verifier: readJson("schemas/verifier-output.schema.json"),
+		report: readJson("schemas/report.schema.json"),
 	};
 	const reviewers: Record<string, string> = {};
 	for (const p of PERSPECTIVES) reviewers[p] = read(`references/reviewer-${p}.md`);

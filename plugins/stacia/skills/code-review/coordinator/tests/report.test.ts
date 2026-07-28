@@ -1,47 +1,71 @@
+import * as fs from "node:fs";
+import * as path from "node:path";
 import { describe, expect, it } from "vitest";
-import { JSDOM } from "jsdom";
-import { marked } from "marked";
-import createDOMPurify from "dompurify";
 
 /**
- * Replicates report-template.html's render pipeline:
- *   document.getElementById('content').innerHTML = DOMPurify.sanitize(marked.parse(md));
- * against a jsdom window, so we can assert the XSS mitigation without a browser.
+ * Tests the JSON inliner (render_report_html.py) produces a page that:
+ * 1. Parses back to the same data (no loss from escaping)
+ * 2. Cannot be broken out of by attacker-influenced findings text
+ *
+ * These are the replacement for the marked+DOMPurify tests (ADR-0005), which
+ * tested a sanitization pipeline that no longer exists. The new template uses
+ * Vue text interpolation ({{ }}) with no v-html, so there is no HTML parsing
+ * to sanitize. The remaining risk is the JSON data island: a finding
+ * containing `</script>` could terminate the tag and inject markup. The
+ * inliner escapes `<` to `\u003c`; these tests verify that.
  */
-function renderReport(md: string): string {
-  const window = new JSDOM("").window as unknown as Parameters<typeof createDOMPurify>[0];
-  const DOMPurify = createDOMPurify(window);
-  return DOMPurify.sanitize(marked.parse(md) as string);
+
+const HELPER_DIR = path.resolve(__dirname, "../helper");
+const INLINER = path.join(HELPER_DIR, "render_report_html.py");
+const SAMPLE = path.join(HELPER_DIR, "report.sample.json");
+
+function renderFixture(): string {
+	const { execFileSync } = require("node:child_process");
+	const out = path.join(__dirname, "../../.report-test-out.html");
+	execFileSync("python3", [INLINER, SAMPLE, out]);
+	const html = fs.readFileSync(out, "utf8");
+	fs.unlinkSync(out);
+	return html;
 }
 
-describe("report-template render pipeline (marked.parse -> DOMPurify.sanitize)", () => {
-  it("strips <script> and on* handlers from attacker-influenced findings text", () => {
-    const payload = "# t\n\n<img src=x onerror=alert(1)> and <script>alert(1)</script>";
+function extractIsland(html: string): string {
+	const start = html.indexOf('id="review-data">') + 'id="review-data">'.length;
+	const end = html.indexOf("</script>", start);
+	return html.slice(start, end);
+}
 
-    const sanitized = renderReport(payload);
+describe("report HTML — data island integrity", () => {
+	let html: string;
+	let island: string;
 
-    expect(sanitized).not.toMatch(/onerror/i);
-    expect(sanitized).not.toMatch(/<script/i);
-    expect(sanitized).not.toMatch(/alert\(1\)/);
-  });
+	it("renders without error", () => {
+		html = renderFixture();
+		expect(html).toBeTruthy();
+	});
 
-  it("preserves benign markdown structure (heading survives)", () => {
-    const payload = "# t\n\n<img src=x onerror=alert(1)> and <script>alert(1)</script>";
+	it("the data island is valid JSON and round-trips the fixture", () => {
+		island = extractIsland(html);
+		const parsed = JSON.parse(island);
+		const original = JSON.parse(fs.readFileSync(SAMPLE, "utf8"));
+		expect(parsed.verdict).toBe(original.verdict);
+		expect(parsed.consolidated_findings.length).toBe(original.consolidated_findings.length);
+	});
 
-    const sanitized = renderReport(payload);
+	it("the </script> in the fixture's evidence is escaped in the island", () => {
+		expect(island).not.toContain("</script>");
+		expect(island).toContain("\\u003c/script\\u003e");
+	});
 
-    expect(sanitized).toMatch(/<h1[^>]*>t<\/h1>/);
-  });
+	it("the escaped value parses back to the literal </script> string", () => {
+		const parsed = JSON.parse(island);
+		const nasty = parsed.consolidated_findings.find((f: { evidence?: string }) => f.evidence && f.evidence.includes("</script>"));
+		expect(nasty).toBeTruthy();
+		expect(nasty.evidence).toContain("</script>");
+	});
 
-  it("preserves an ordinary benign markdown document unchanged in structure", () => {
-    const md = "## Findings\n\n- item one\n- item two\n\n**bold** and `code`.";
-
-    const sanitized = renderReport(md);
-
-    expect(sanitized).toContain("<h2");
-    expect(sanitized).toContain("Findings");
-    expect(sanitized).toContain("<li>item one</li>");
-    expect(sanitized).toContain("<strong>bold</strong>");
-    expect(sanitized).toContain("<code>code</code>");
-  });
+	it("no v-html directive appears in the page markup", () => {
+		// The comment explaining why v-html must not be used naturally mentions
+		// the word; match only the attribute form (v-html=) which is the actual risk.
+		expect(html).not.toMatch(/v-html\s*=/);
+	});
 });

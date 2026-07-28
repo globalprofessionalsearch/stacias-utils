@@ -1,0 +1,98 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ReviewReport",
+  "description": "The final, schema-validated review artifact. Replaces both findings/synthesis.json (unvalidated) and report.md (now rendered from this).",
+  "type": "object",
+  "required": ["version", "charge", "generatedAt", "repos", "verdict", "verdict_rationale", "consolidated_findings", "seam_accounting", "follow_up_recommended", "caveats", "summary", "verification_stats"],
+  "properties": {
+    "version": { "type": "integer", "description": "Schema version, currently 1" },
+    "charge": { "type": "string", "description": "What the change claims to accomplish" },
+    "generatedAt": { "type": "string", "description": "ISO 8601 timestamp" },
+    "runDir": { "type": "string", "description": "Absolute path to the run directory" },
+    "repos": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["repo", "slug", "source"],
+        "properties": {
+          "repo": { "type": "string" },
+          "slug": { "type": "string" },
+          "source": { "type": "string" },
+          "path": { "type": "string" }
+        }
+      }
+    },
+    "verdict": { "type": "string", "enum": ["met", "partial", "unclear"] },
+    "verdict_rationale": { "type": "string" },
+    "summary": { "type": "string" },
+    "consolidated_findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["severity", "confidence", "location", "finding", "rationale"],
+        "properties": {
+          "severity": { "type": "string", "enum": ["Blocker", "Major", "Minor", "Nit"] },
+          "confidence": { "type": "string", "enum": ["high", "medium", "low"] },
+          "verification": { "type": "string" },
+          "corroborated_by": { "type": "array", "items": { "type": "string" } },
+          "location": {
+            "type": "object",
+            "required": ["file", "line"],
+            "properties": {
+              "file": { "type": "string" },
+              "line": { "type": "integer" }
+            }
+          },
+          "evidence": { "type": "string" },
+          "finding": { "type": "string" },
+          "rationale": { "type": "string" },
+          "suggestion": { "type": "string" }
+        }
+      }
+    },
+    "dismissed_findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "severity": { "type": "string" },
+          "location": {
+            "type": "object",
+            "properties": {
+              "file": { "type": "string" },
+              "line": { "type": "integer" }
+            }
+          },
+          "finding": { "type": "string" },
+          "dismissal_reason": { "type": "string" }
+        }
+      }
+    },
+    "seam_accounting": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["seam_id", "state"],
+        "properties": {
+          "seam_id": { "type": "integer" },
+          "state": { "type": "string", "enum": ["cleared", "finding", "under-explored"] },
+          "finding_indices": { "type": "array", "items": { "type": "integer" } },
+          "note": { "type": "string" }
+        }
+      }
+    },
+    "follow_up_recommended": { "type": "boolean" },
+    "follow_up_reason": { "type": "string" },
+    "caveats": { "type": "array", "items": { "type": "string" } },
+    "coverage_notes": { "type": "array", "items": { "type": "string" } },
+    "verification_stats": {
+      "type": "object",
+      "properties": {
+        "verified": { "type": "integer" },
+        "confirmed": { "type": "integer" },
+        "corrected": { "type": "integer" },
+        "dismissed": { "type": "integer" }
+      }
+    }
+  }
+}

@@ -23,12 +23,13 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { addContext, buildBundle, initRun, loadAssets, loadManifest, type Manifest, writeFindings, writeReport, writeStatus } from "./assets.ts";
+import { addContext, buildBundle, initRun, loadAssets, loadManifest, type Manifest, writeReport, writeStatus } from "./assets.ts";
 import { loadConfig } from "./config.ts";
 import { type RepoInput, runReview } from "./coordinator.ts";
 import { Monitor } from "./monitor.ts";
-import { renderReport } from "./render-report.ts";
+import { buildReport } from "./render-report.ts";
 import { NULL_LOG, RunLog } from "./run-log.ts";
+import { validate } from "./validate.ts";
 
 // biome-ignore lint/suspicious/noExplicitAny: request/synthesis are JSON payloads
 type Any = any;
@@ -120,12 +121,23 @@ export async function performReview(req: ReviewRequest, monitor: Monitor, signal
 	const notes: string[] = [];
 	const synthesis = await runReview({ charge: req.charge, repos, manifest, assets, config, monitor, notes, signal, log: monitor.runLog });
 
-	await writeFindings(assets.helper, manifest.run_dir, "synthesis", JSON.stringify(synthesis, null, 2));
-	const report = await writeReport(assets.helper, manifest.run_dir, renderReport(req.charge, synthesis));
+	const report = buildReport({
+		charge: req.charge,
+		repos: repos.map((r, i) => ({ repo: r.repo, slug: r.slug, source: req.repos[i].source, path: r.path })),
+		synthesis,
+		runDir: manifest.run_dir,
+	});
+	const errs = validate(report, assets.schemas.report);
+	if (errs.length) {
+		monitor.runLog.warn("report.validation", { errors: errs });
+	}
+	const reportJson = JSON.stringify(report, null, 2);
+	const written = await writeReport(assets.helper, manifest.run_dir, reportJson);
+	const htmlPath = written.split("\n").find((l) => l.endsWith(".html")) ?? manifest.report_html;
 
-	const findings: Any[] = synthesis.consolidated_findings ?? [];
+	const findings: Any[] = report.consolidated_findings ?? [];
 	const counts = ["Blocker", "Major", "Minor", "Nit"].map((s) => `${findings.filter((f: Any) => f.severity === s).length} ${s}`).join(" · ");
-	return { synthesis, counts, report, run_dir: manifest.run_dir, findings };
+	return { synthesis, counts, report: htmlPath, run_dir: manifest.run_dir, findings };
 }
 
 /** Severity tallies, as a machine-readable object for status.json. */
@@ -223,11 +235,11 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
 	try {
 		const { synthesis, counts, report, run_dir, findings } = await performReview(req, monitor, controller.signal, onRunDir);
 		await signalDone(
-			buildStatus({ state: "complete", runDir: run_dir, charge: req.charge, startedAt, verdict: synthesis.verdict, findings, report: report.split("\n")[0] }),
+			buildStatus({ state: "complete", runDir: run_dir, charge: req.charge, startedAt, verdict: synthesis.verdict, findings, report }),
 		);
 		monitor.stop();
 		await log.close();
-		process.stdout.write(`\nReview complete — verdict: ${synthesis.verdict}\n${counts}\nReport: ${report.split("\n")[0]}\nRun dir: ${run_dir}\n`);
+		process.stdout.write(`\nReview complete — verdict: ${synthesis.verdict}\n${counts}\nReport: file://${report}\nRun dir: ${run_dir}\n`);
 		return 0;
 	} catch (err) {
 		// The run didn't finish normally — make sure in-flight sibling subagents

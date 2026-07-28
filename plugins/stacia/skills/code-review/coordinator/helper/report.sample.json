@@ -1,0 +1,101 @@
+{
+  "version": 1,
+  "charge": "Adds retry/backoff to the webhook sender so transient 5xx responses stop dropping events.",
+  "generatedAt": "2026-07-28T17:04:11.000Z",
+  "runDir": "/Users/joe/.cache/stacia-code-review/runs/20260728T170155Z-9f3ac1",
+  "repos": [
+    { "repo": "api", "slug": "api", "source": "pr:412", "path": "/Users/joe/code/api" },
+    { "repo": "infra", "slug": "infra", "source": "worktree:staged", "path": "/Users/joe/code/infra" }
+  ],
+  "verdict": "partial",
+  "verdict_rationale": "Retry and backoff are implemented for the sender, but the dead-letter path the charge implies is only partly wired and nothing bounds total retry duration.",
+  "summary": "Retry/backoff lands, but unbounded retries and an unwired DLQ mean events can still be lost or duplicated.",
+  "consolidated_findings": [
+    {
+      "severity": "Blocker",
+      "confidence": "high",
+      "verification": "confirmed",
+      "corroborated_by": ["correctness", "performance"],
+      "location": { "file": "src/webhooks/sender.ts", "line": 142 },
+      "evidence": "while (true) {\n  try { return await post(url, body); }\n  catch (e) { await sleep(backoff(attempt++)); }\n}",
+      "finding": "The retry loop has no maximum attempt count and no overall deadline.",
+      "rationale": "A persistently failing endpoint pins a worker forever. With the pool at 8 and one bad tenant, the whole sender stalls — the charge says transient failures stop dropping events, but this converts a transient failure into a permanent outage.",
+      "suggestion": "Bound by attempts and by wall clock; surface exhaustion to the dead-letter path rather than looping."
+    },
+    {
+      "severity": "Major",
+      "confidence": "high",
+      "verification": "corrected",
+      "corroborated_by": ["correctness"],
+      "location": { "file": "src/webhooks/sender.ts", "line": 96 },
+      "evidence": "if (res.status >= 500) throw new RetryableError(res);",
+      "finding": "429 responses are treated as non-retryable and dropped.",
+      "rationale": "Rate limiting is the most common transient failure for webhook delivery. Excluding it defeats the charge for exactly the case it matters most.",
+      "suggestion": "Treat 429 as retryable and honour Retry-After when present."
+    },
+    {
+      "severity": "Major",
+      "confidence": "medium",
+      "verification": "confirmed",
+      "corroborated_by": ["tests"],
+      "location": { "file": "src/webhooks/sender.test.ts", "line": 1 },
+      "evidence": "No test exercises the retry path. The suite covers only the 200 case.",
+      "finding": "The retry behaviour this change exists to add is untested.",
+      "rationale": "Nothing would fail if backoff were removed tomorrow. For a change whose entire purpose is retry semantics, the absence of a test is itself the finding.",
+      "suggestion": "Add cases for 5xx-then-success, 429 with Retry-After, and attempt exhaustion."
+    },
+    {
+      "severity": "Minor",
+      "confidence": "medium",
+      "verification": "confirmed",
+      "location": { "file": "src/webhooks/backoff.ts", "line": 18 },
+      "evidence": "const delay = base * Math.pow(2, attempt);",
+      "finding": "Backoff has no jitter.",
+      "rationale": "Synchronised clients retry in lockstep after an outage, producing a thundering herd against an endpoint that is already struggling.",
+      "suggestion": "Apply full or decorrelated jitter."
+    },
+    {
+      "severity": "Minor",
+      "confidence": "low",
+      "verification": "confirmed",
+      "location": { "file": "infra/queues/webhook-dlq.tf", "line": 7 },
+      "evidence": "resource \"aws_sqs_queue\" \"webhook_dlq\" { name = \"webhook-dlq\" }",
+      "finding": "The dead-letter queue is declared but nothing references it.",
+      "rationale": "The charge implies exhausted retries land somewhere recoverable. The queue exists in infra but the sender has no path to it, so exhaustion still means loss.",
+      "suggestion": "Wire the sender's exhaustion path to this queue, or drop the resource until it is used."
+    },
+    {
+      "severity": "Nit",
+      "confidence": "high",
+      "verification": "confirmed",
+      "location": { "file": "src/webhooks/sender.ts", "line": 12 },
+      "evidence": "// TODO: make this configurable </script><img src=x onerror=alert('xss')>",
+      "finding": "Stale TODO left in the diff, and this text deliberately contains a script-closing sequence.",
+      "rationale": "This finding exists in the fixture to prove the inlining escape works. If the report renders at all, the </script> above did not break out of the data island.",
+      "suggestion": "Remove the TODO."
+    }
+  ],
+  "dismissed_findings": [
+    {
+      "severity": "Major",
+      "location": { "file": "src/webhooks/sender.ts", "line": 201 },
+      "finding": "Claimed the retry loop leaks a socket handle on each attempt.",
+      "dismissal_reason": "The client is reused across attempts; the verifier read the code at the cited line and found no per-attempt allocation."
+    }
+  ],
+  "seam_accounting": [
+    { "seam_id": 1, "state": "finding", "finding_indices": [0, 3], "note": "Retry loop bounds and backoff shape." },
+    { "seam_id": 2, "state": "finding", "finding_indices": [1] },
+    { "seam_id": 3, "state": "cleared", "note": "Signature verification unchanged by this diff." },
+    { "seam_id": 4, "state": "under-explored", "note": "Cross-repo: the infra queue's redrive policy was not read." },
+    { "seam_id": 5, "state": "cleared" }
+  ],
+  "follow_up_recommended": true,
+  "follow_up_reason": "Three Major-or-above findings, and the dead-letter path spans both repos — worth re-reviewing once exhaustion is wired.",
+  "caveats": [
+    "Seam 4 under-explored: the infra redrive policy was not read.",
+    "The api bundle exceeded the inline threshold for one file; findings there are capped at Low confidence."
+  ],
+  "coverage_notes": [],
+  "verification_stats": { "verified": 3, "confirmed": 2, "corrected": 1, "dismissed": 1 }
+}

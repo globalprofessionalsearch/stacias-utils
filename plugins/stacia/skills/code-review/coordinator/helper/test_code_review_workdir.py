@@ -1,6 +1,5 @@
-"""Tests for code-review-workdir.py — focused on the write-findings slug routing
-and the reserved 'synthesis' slug (the cross-language contract with the TS
-coordinator). Runnable via `pytest` or directly with `python3`.
+"""Tests for code-review-workdir.py — slug routing, write commands, and the
+atomic status signal. Runnable via `pytest` or directly with `python3`.
 """
 
 import json
@@ -27,16 +26,6 @@ def _init(tmp, *repos):
     return json.loads(proc.stdout)
 
 
-def test_write_findings_synthesis_slug(tmp_path):
-    man = _init(tmp_path, "myrepo")
-    run = man["run_dir"]
-    proc = _run(["write-findings", "--run", run, "--slug", "synthesis"], tmp_path, stdin='{"verdict":"met"}')
-    assert proc.returncode == 0, proc.stderr
-    out = Path(run) / "findings" / "synthesis.json"
-    assert out.is_file()
-    assert json.loads(out.read_text())["verdict"] == "met"
-
-
 def test_write_findings_repo_slug(tmp_path):
     man = _init(tmp_path, "myrepo")
     run = man["run_dir"]
@@ -46,33 +35,13 @@ def test_write_findings_repo_slug(tmp_path):
     assert Path(man["repos"][0]["findings"]).is_file()
 
 
-def test_reserved_synthesis_slug_is_never_a_repo(tmp_path):
-    # a repo whose basename slugifies to 'synthesis' must NOT take the reserved slug
-    man = _init(tmp_path, "synthesis", "other")
-    slugs = [r["slug"] for r in man["repos"]]
-    assert "synthesis" not in slugs, slugs
-    assert slugs[0].startswith("synthesis-"), slugs
-
-    run = man["run_dir"]
-    # synthesis findings still route to findings/synthesis.json, not the repo's file
-    _run(["write-findings", "--run", run, "--slug", "synthesis"], tmp_path, stdin='{"verdict":"partial"}')
-    synth = Path(run) / "findings" / "synthesis.json"
-    assert synth.is_file()
-    assert json.loads(synth.read_text())["verdict"] == "partial"
-    # the repo's own findings file is distinct
-    assert Path(man["repos"][0]["findings"]).name != "synthesis.json"
-
-
 def test_derived_slug_collision_is_disambiguated(tmp_path):
-    # "synthesis" is bumped off the reserved slug to "synthesis-1" -- but a
-    # second repo whose basename literally IS "synthesis-1" must not collide
-    # with that derived slug. unique_slugs() must disambiguate against the set
-    # of already-ASSIGNED FINAL slugs, not just against each base name's own
-    # collision count.
-    man = _init(tmp_path, "synthesis", "synthesis-1", "other")
+    # Two repos with the same basename must get distinct slugs, and a repo
+    # whose basename is literally the first repo's derived suffix must not
+    # collide with it.
+    man = _init(tmp_path, "api", "api", "api-1")
     slugs = [r["slug"] for r in man["repos"]]
     assert len(slugs) == len(set(slugs)), slugs
-    assert "synthesis" not in slugs, slugs
 
 
 def test_findings_slug_cannot_escape_run_dir(tmp_path):

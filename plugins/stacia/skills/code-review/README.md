@@ -133,7 +133,7 @@ session would otherwise never hear from the review again. `bin/await-review`
 closes that loop.
 
 The coordinator writes `<run-dir>/status.json` exactly once, on **both** the
-success and failure paths — `report.md` alone is not a completion signal
+success and failure paths — `report.html` alone is not a completion signal
 because a failed run never produces one. The write is atomic (temp +
 `os.replace`) precisely because the waiter polls for the file's existence: a
 half-written file would be read as "done".
@@ -142,7 +142,7 @@ half-written file would be read as "done".
 { "version": 1, "state": "complete", "runDir": "…", "charge": "…",
   "startedAt": "…", "endedAt": "…",
   "verdict": "partial", "counts": { "Blocker": 1, "Major": 3, "Minor": 2, "Nit": 0 },
-  "report": "…/report.md" }
+  "report": "…/report.html" }
 ```
 
 `state` is `complete` or `failed`; a failed status carries `error` instead of

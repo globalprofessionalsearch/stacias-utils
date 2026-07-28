@@ -149,7 +149,7 @@ directory before it does:
 launch-review: review running in a new iTerm2 pane
 launch-review: run directory: …/runs/20260727T215846Z-177e95
 launch-review: log:           …/runs/20260727T215846Z-177e95/logs/run.jsonl
-launch-review: report (when complete): …/runs/20260727T215846Z-177e95/report.md
+launch-review: report (when complete): …/runs/20260727T215846Z-177e95/report.html
 ```
 
 **Relay the run directory to her**, then start the waiter so this session finds
@@ -169,7 +169,7 @@ this session. It prints the outcome for you.
 
 This is the *only* sanctioned way to track the review. It is not polling on
 your part: you start one background process and go idle. Do not tail the run
-directory, do not check for `report.md`, do not run `await-review` in the
+directory, do not check for `report.html`, do not run `await-review` in the
 foreground (that would block the session for the whole review).
 
 Skip the waiter only if she asks you to just fire and forget.
@@ -179,7 +179,7 @@ Skip the waiter only if she asks you to just fire and forget.
 Report what it printed and nothing more:
 
 > Review complete — verdict: partial. 1 Blocker · 3 Major · 2 Minor · 0 Nit.
-> Report: …/report.md
+> Report: file://…/report.html
 
 or, if the review failed:
 
@@ -188,7 +188,7 @@ or, if the review failed:
 
 The verdict and counts come from the coordinator's own `status.json`. **You did
 not review anything** — you are relaying a result, not forming one. Do not open
-`report.md` to elaborate unless she asks; if she does, that is a normal file
+the report to elaborate unless she asks; if she does, that is a normal file
 read at her request, not you reviewing.
 
 If it reports a timeout (`no status.json after …`), say so plainly: the

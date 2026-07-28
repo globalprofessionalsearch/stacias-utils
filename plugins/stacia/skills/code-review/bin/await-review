@@ -90,7 +90,7 @@ if state == "complete":
     print(f"Review complete — verdict: {s.get('verdict', '?')}")
     print(tally)
     if s.get("report"):
-        print(f"Report: {s['report']}")
+        print(f"Report: file://{s['report']}")
     print(f"Run directory: {run_dir}")
     raise SystemExit(0)
 

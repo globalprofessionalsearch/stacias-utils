@@ -18,8 +18,8 @@ Layout (base = ${XDG_CACHE_HOME:-$HOME/.cache}/stacia-code-review):
         logs/run.jsonl           # append-only run log (path allocated here,
                                  # written by the coordinator; see manifest.log)
         status.json              # terminal state: complete | failed (atomic)
-        report.md                # final assembled report
-        report.html              # HTML wrapper (renders report.md client-side)
+        report.json              # schema-validated review artifact
+        report.html              # self-contained viewer (report.json inlined)
 
 Subcommands
 -----------
@@ -38,7 +38,7 @@ Subcommands
     write-bundle    --run <dir> --slug <slug>     (raw bundle on stdin; fallback)
     write-findings  --run <dir> --slug <slug>     (JSON on stdin; validated)
     write-status    --run <dir>                   (JSON on stdin; atomic)
-    write-report    --run <dir>                   (content on stdin)
+    write-report    --run <dir>                   (report JSON on stdin → report.json + report.html)
 
 Every write/build command resolves its destination from the run's manifest.json,
 validates the result (real diff hunks, non-empty), and prints the absolute path it
@@ -74,28 +74,19 @@ def slugify(name: str) -> str:
     return slug or "repo"
 
 
-# Slugs not available to repos: write-findings routes this slug to the
-# top-level findings/synthesis.json (the reviewer synthesis output), not to
-# a per-repo findings file. A repo whose basename slugifies to "synthesis"
-# must not be allowed to collide with -- and overwrite -- that file. The TS
-# side agrees: it writes synthesis via slug "synthesis".
-RESERVED_SLUGS = {"synthesis"}
 
 
 def unique_slugs(repos):
     # Disambiguate by the set of already-ASSIGNED FINAL slugs, not just base
-    # names -- a repo whose basename is literally "synthesis-1" must never
-    # collide with another repo ("synthesis") that got bumped to "synthesis-1"
-    # for hitting RESERVED_SLUGS. So each candidate is checked against every
-    # slug already handed out, not merely against its own base's collision
-    # count.
+    # names. Each candidate is checked against every slug already handed out,
+    # not merely against its own base's collision count.
     assigned = set()
     result = []
     for repo in repos:
         base = slugify(repo)
         candidate = base
         suffix = 0
-        while candidate in assigned or candidate in RESERVED_SLUGS:
+        while candidate in assigned:
             suffix += 1
             candidate = f"{base}-{suffix}"
         assigned.add(candidate)
@@ -375,7 +366,7 @@ def cmd_init(args) -> int:
 
     manifest = {
         "run_dir": str(run_dir),
-        "report": str(run_dir / "report.md"),
+        "report_json": str(run_dir / "report.json"),
         "report_html": str(report_html),
         # Append-only JSONL run log. The helper allocates the path and makes the
         # directory (it owns every path and mkdir for a run); the coordinator
@@ -516,11 +507,34 @@ def cmd_write_status(args) -> int:
 
 
 def cmd_write_report(args) -> int:
-    _, manifest = load_manifest(args.run)
-    Path(manifest["report"]).write_text(read_stdin())
-    print(manifest["report"])
-    if manifest.get("report_html"):
-        print(manifest["report_html"])
+    """Write the final report: report.json (validated) + report.html (inlined).
+
+    stdin is the report JSON. The helper writes it to manifest["report_json"],
+    then inlines it into report-template.html to produce manifest["report_html"].
+    The old report.md is gone — both artifacts are produced from one source.
+    """
+    from render_report_html import encode_review_json, inline_report
+
+    run_dir, manifest = load_manifest(args.run)
+    payload = read_stdin()
+    try:
+        report = json.loads(payload)
+    except json.JSONDecodeError as exc:
+        return die(f"report is not valid JSON: {exc}")
+
+    # Write the JSON artifact
+    json_path = Path(manifest["report_json"])
+    json_path.write_text(json.dumps(report, indent=2, ensure_ascii=False) + "\n")
+    print(str(json_path))
+
+    # Render and write the HTML
+    template_path = Path(__file__).parent / "report-template.html"
+    if template_path.is_file():
+        html = inline_report(report, template_path.read_text())
+        html_path = Path(manifest["report_html"])
+        html_path.write_text(html)
+        print(str(html_path))
+
     return 0
 
 
