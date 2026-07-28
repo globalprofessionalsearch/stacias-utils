@@ -3,7 +3,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { loadManifest } from "../assets.ts";
-import { failureReport, parseArgs, readRequest, userConfigPath } from "../cli.ts";
+import { buildStatus, failureReport, parseArgs, readRequest, severityCounts, userConfigPath } from "../cli.ts";
 
 // The launcher (bin/launch-review) validates repo paths, source grammar and ADR
 // paths before writing request.json, so cli.ts deliberately does NOT re-check
@@ -180,5 +180,88 @@ describe("loadManifest", () => {
 		const dir = fs.mkdtempSync(path.join(tmpDir, "run-"));
 		fs.writeFileSync(path.join(dir, "manifest.json"), "{ not json");
 		expect(() => loadManifest(dir)).toThrowError(/is not valid JSON/);
+	});
+});
+
+describe("severityCounts", () => {
+	it("tallies every severity, including zeros", () => {
+		expect(severityCounts([{ severity: "Blocker" }, { severity: "Major" }, { severity: "Major" }])).toEqual({
+			Blocker: 1,
+			Major: 2,
+			Minor: 0,
+			Nit: 0,
+		});
+	});
+
+	it("ignores unknown severities rather than inventing keys", () => {
+		expect(severityCounts([{ severity: "Catastrophic" }])).toEqual({ Blocker: 0, Major: 0, Minor: 0, Nit: 0 });
+	});
+
+	it("tolerates an empty or absent list", () => {
+		expect(severityCounts([])).toEqual({ Blocker: 0, Major: 0, Minor: 0, Nit: 0 });
+		expect(severityCounts(undefined as unknown as [])).toEqual({ Blocker: 0, Major: 0, Minor: 0, Nit: 0 });
+	});
+
+	it("tolerates malformed findings", () => {
+		expect(() => severityCounts([null, {}, { severity: null }] as unknown as [])).not.toThrow();
+	});
+});
+
+describe("buildStatus", () => {
+	// status.json is the completion signal await-review polls for. It must be
+	// written on BOTH paths — a run that ends without one is indistinguishable
+	// from one still in progress.
+	const base = { runDir: "/runs/abc", charge: "adds retry", startedAt: "2026-07-28T12:00:00.000Z" };
+
+	it("marks a completed run with verdict, counts and report", () => {
+		const s = buildStatus({
+			...base,
+			state: "complete",
+			verdict: "partial",
+			findings: [{ severity: "Blocker" }, { severity: "Minor" }],
+			report: "/runs/abc/report.md",
+		});
+		expect(s).toMatchObject({
+			version: 1,
+			state: "complete",
+			verdict: "partial",
+			report: "/runs/abc/report.md",
+			counts: { Blocker: 1, Major: 0, Minor: 1, Nit: 0 },
+		});
+	});
+
+	it("marks a failed run with the error message and no verdict", () => {
+		const s = buildStatus({ ...base, state: "failed", error: new Error("Orienteer A failed (timeout)") });
+		expect(s).toMatchObject({ state: "failed", error: "Orienteer A failed (timeout)" });
+		expect(s.verdict).toBeUndefined();
+		expect(s.counts).toBeUndefined();
+	});
+
+	it("handles a non-Error failure value", () => {
+		expect(buildStatus({ ...base, state: "failed", error: "plain string" }).error).toBe("plain string");
+	});
+
+	it("never leaves the error empty, even with nothing thrown", () => {
+		expect(buildStatus({ ...base, state: "failed", error: undefined }).error).toBe("unknown failure");
+	});
+
+	it("always carries the charge and both timestamps", () => {
+		const s = buildStatus({ ...base, state: "complete", verdict: "met", findings: [] });
+		expect(s.charge).toBe("adds retry");
+		expect(s.startedAt).toBe("2026-07-28T12:00:00.000Z");
+		expect(typeof s.endedAt).toBe("string");
+	});
+
+	it("records a null runDir rather than omitting it, when the run never got one", () => {
+		expect(buildStatus({ ...base, runDir: null, state: "failed", error: "died early" }).runDir).toBeNull();
+	});
+
+	it("defaults a missing verdict rather than emitting undefined", () => {
+		expect(buildStatus({ ...base, state: "complete", findings: [] }).verdict).toBe("unclear");
+	});
+
+	it("is JSON-serialisable — it is written to disk verbatim", () => {
+		const s = buildStatus({ ...base, state: "complete", verdict: "met", findings: [{ severity: "Nit" }] });
+		expect(JSON.parse(JSON.stringify(s))).toEqual(s);
 	});
 });

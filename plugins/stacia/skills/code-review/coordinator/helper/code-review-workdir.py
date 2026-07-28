@@ -17,6 +17,7 @@ Layout (base = ${XDG_CACHE_HOME:-$HOME/.cache}/stacia-code-review):
         findings/<slug>.json     # raw per-perspective reviewer results per repo
         logs/run.jsonl           # append-only run log (path allocated here,
                                  # written by the coordinator; see manifest.log)
+        status.json              # terminal state: complete | failed (atomic)
         report.md                # final assembled report
         report.html              # HTML wrapper (renders report.md client-side)
 
@@ -36,6 +37,7 @@ Subcommands
         demand -- large context never travels through workflow args by value.
     write-bundle    --run <dir> --slug <slug>     (raw bundle on stdin; fallback)
     write-findings  --run <dir> --slug <slug>     (JSON on stdin; validated)
+    write-status    --run <dir>                   (JSON on stdin; atomic)
     write-report    --run <dir>                   (content on stdin)
 
 Every write/build command resolves its destination from the run's manifest.json,
@@ -380,6 +382,9 @@ def cmd_init(args) -> int:
         # opens an append stream to it, because a subprocess per log line would
         # cost more than the run itself.
         "log": str(logs_dir / "run.jsonl"),
+        # Terminal state, written once at the end on either path. This is the
+        # completion signal bin/await-review polls for.
+        "status": str(run_dir / "status.json"),
         "multi_repo": multi,
         "context": [],
         "repos": [
@@ -483,6 +488,33 @@ def cmd_write_findings(args) -> int:
     return _write_json(target, f"findings for {args.slug!r}")
 
 
+def cmd_write_status(args) -> int:
+    """Write the run's terminal state.
+
+    Unlike every other write here, this one is ATOMIC (temp file + os.replace).
+    status.json is the completion signal: `bin/await-review` polls for its
+    existence, so a half-written file would be seen as "done" and parsed as
+    truncated JSON. os.replace is atomic within a filesystem, so a reader sees
+    either no file or a whole one.
+
+    Written on BOTH the success and failure paths. A run that produced no
+    status at all means the coordinator died hard -- which is exactly what the
+    waiter's timeout is for.
+    """
+    _, manifest = load_manifest(args.run)
+    payload = read_stdin()
+    try:
+        json.loads(payload)
+    except json.JSONDecodeError as exc:
+        return die(f"status is not valid JSON: {exc}")
+    target = Path(manifest["status"])
+    tmp = target.with_suffix(".json.tmp")
+    tmp.write_text(payload)
+    os.replace(tmp, target)
+    print(str(target))
+    return 0
+
+
 def cmd_write_report(args) -> int:
     _, manifest = load_manifest(args.run)
     Path(manifest["report"]).write_text(read_stdin())
@@ -529,6 +561,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--run", required=True)
     p.add_argument("--slug", required=True)
     p.set_defaults(func=cmd_write_findings)
+
+    p = sub.add_parser("write-status", help="Write the run's terminal state, atomically (stdin).")
+    p.add_argument("--run", required=True)
+    p.set_defaults(func=cmd_write_status)
 
     p = sub.add_parser("write-report", help="Write the final report (stdin).")
     p.add_argument("--run", required=True)

@@ -15,6 +15,7 @@ deleting the directory removes it outright:
 plugins/stacia/skills/code-review/
   SKILL.md              the entry point: resolves scope + charge
   bin/launch-review     hands the resolved request to a new iTerm2 pane
+  bin/await-review      blocks until the review ends; the completion signal
   coordinator/          the Agent SDK program that runs the review
   test.sh               one test entrypoint (pre-commit hook + CI)
 ```
@@ -124,6 +125,35 @@ Off macOS, without `osascript`, without iTerm2 installed, if the split fails, or
 with `--here`, the launcher prints why and runs the coordinator in the current
 terminal instead of failing. In that mode stdin is usually not a TTY, and the
 coordinator degrades to line-oriented progress output.
+
+## Knowing when it finished
+
+The launcher is fire-and-forget: it splits a pane and exits, so the calling
+session would otherwise never hear from the review again. `bin/await-review`
+closes that loop.
+
+The coordinator writes `<run-dir>/status.json` exactly once, on **both** the
+success and failure paths — `report.md` alone is not a completion signal
+because a failed run never produces one. The write is atomic (temp +
+`os.replace`) precisely because the waiter polls for the file's existence: a
+half-written file would be read as "done".
+
+```json
+{ "version": 1, "state": "complete", "runDir": "…", "charge": "…",
+  "startedAt": "…", "endedAt": "…",
+  "verdict": "partial", "counts": { "Blocker": 1, "Major": 3, "Minor": 2, "Nit": 0 },
+  "report": "…/report.md" }
+```
+
+`state` is `complete` or `failed`; a failed status carries `error` instead of
+the verdict block.
+
+The calling session runs `await-review <run-dir>` **in the background**. It
+blocks until `status.json` appears, prints the outcome, and exits — and that
+exit is what wakes the session. Exit codes: `0` complete, `1` failed, `3`
+timed out or unreadable. The timeout (`STACIA_AWAIT_TIMEOUT`, default two
+hours) exists for the one case the signal cannot cover: a coordinator killed
+hard enough that it never writes a status at all.
 
 ## Contract with the coordinator
 

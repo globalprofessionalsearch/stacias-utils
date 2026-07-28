@@ -85,6 +85,47 @@ def test_findings_slug_cannot_escape_run_dir(tmp_path):
     assert all(str(run / "findings") in str(p) for p in escaped), escaped
 
 
+def test_write_status_is_recorded_in_the_manifest(tmp_path):
+    man = _init(tmp_path, "myrepo")
+    assert man["status"].endswith("/status.json")
+    assert man["status"].startswith(man["run_dir"])
+
+
+def test_write_status_writes_the_payload(tmp_path):
+    man = _init(tmp_path, "myrepo")
+    run = Path(man["run_dir"])
+    _run(["write-status", "--run", str(run)], tmp_path,
+         stdin='{"state":"complete","verdict":"met"}')
+    assert json.loads((run / "status.json").read_text())["verdict"] == "met"
+
+
+def test_write_status_leaves_no_temp_file(tmp_path):
+    # status.json is written temp-then-rename so a poller never sees a partial
+    # file. The temp must not survive, or the run dir accumulates litter.
+    man = _init(tmp_path, "myrepo")
+    run = Path(man["run_dir"])
+    _run(["write-status", "--run", str(run)], tmp_path, stdin='{"state":"failed"}')
+    assert list(run.glob("*.tmp")) == []
+
+
+def test_write_status_rejects_invalid_json(tmp_path):
+    # A corrupt signal is worse than none: the waiter would report the run as
+    # terminated with an unreadable outcome.
+    man = _init(tmp_path, "myrepo")
+    run = Path(man["run_dir"])
+    proc = _run(["write-status", "--run", str(run)], tmp_path, stdin="{ nope")
+    assert proc.returncode != 0
+    assert not (run / "status.json").exists()
+
+
+def test_write_status_overwrites_a_previous_status(tmp_path):
+    man = _init(tmp_path, "myrepo")
+    run = Path(man["run_dir"])
+    _run(["write-status", "--run", str(run)], tmp_path, stdin='{"state":"complete"}')
+    _run(["write-status", "--run", str(run)], tmp_path, stdin='{"state":"failed"}')
+    assert json.loads((run / "status.json").read_text())["state"] == "failed"
+
+
 if __name__ == "__main__":
     import tempfile
 

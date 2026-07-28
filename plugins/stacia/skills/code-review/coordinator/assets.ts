@@ -41,6 +41,8 @@ export interface Manifest {
 	report_html: string;
 	/** Append-only JSONL run log. Path allocated by the helper's `init`. */
 	log: string;
+	/** Terminal state (`complete` | `failed`), written once at the end. */
+	status: string;
 	multi_repo: boolean;
 	context: Array<{ id: string; kind: string; title: string; path: string }>;
 	repos: Array<{ repo: string; slug: string; bundle: string; findings: string }>;
@@ -135,6 +137,15 @@ export function addContext(helper: string, runDir: string, kind: string, id: str
 
 export function writeFindings(helper: string, runDir: string, slug: string, json: string): Promise<string> {
 	return runHelper(helper, ["write-findings", "--run", runDir, "--slug", slug], json);
+}
+
+/**
+ * Write the run's terminal state. The helper writes this ATOMICALLY, because
+ * `bin/await-review` polls for the file's existence as the completion signal —
+ * a half-written file would be read as "done".
+ */
+export function writeStatus(helper: string, runDir: string, json: string): Promise<string> {
+	return runHelper(helper, ["write-status", "--run", runDir], json);
 }
 
 export function writeReport(helper: string, runDir: string, markdown: string): Promise<string> {
