@@ -149,21 +149,55 @@ directory before it does:
 launch-review: review running in a new iTerm2 pane
 launch-review: run directory: …/runs/20260727T215846Z-177e95
 launch-review: log:           …/runs/20260727T215846Z-177e95/logs/run.jsonl
-launch-review: report (when complete): …/runs/20260727T215846Z-177e95/report.md
+launch-review: report (when complete): …/runs/20260727T215846Z-177e95/report.html
 ```
 
-**Relay the run directory to her.** It is the only thing this session will ever
-know about the review — the pane owns everything after the split, so if it is
-closed or the coordinator dies early, that path is the only way back to the
-artifacts.
+**Relay the run directory to her**, then start the waiter so this session finds
+out when the review ends.
 
-Then stop. Do not poll for it, do not tail the run directory, do not read the
-report when it appears, and do not attempt your own review in the meantime. If
-she asks about the review later, give her the path again; do not go looking.
+## Waiting for it
 
-If it reports that it fell back to running in this terminal (not macOS, no
-iTerm2), say so: the run will occupy this session until it finishes and the
-live monitor degrades to line-oriented progress output.
+Run this **in the background**, with the run directory the launcher just
+printed:
+
+```bash
+"${CLAUDE_PLUGIN_ROOT}/skills/code-review/bin/await-review" /abs/run/dir
+```
+
+It blocks until the review terminates, then exits — and that exit is what wakes
+this session. It prints the outcome for you.
+
+This is the *only* sanctioned way to track the review. It is not polling on
+your part: you start one background process and go idle. Do not tail the run
+directory, do not check for `report.html`, do not run `await-review` in the
+foreground (that would block the session for the whole review).
+
+Skip the waiter only if she asks you to just fire and forget.
+
+### When it wakes you
+
+Report what it printed and nothing more:
+
+> Review complete — verdict: partial. 1 Blocker · 3 Major · 2 Minor · 0 Nit.
+> Report: file://…/report.html
+
+or, if the review failed:
+
+> Review UNSUCCESSFUL: Orienteer A (claim→code) failed (timeout after 360s).
+> Run directory: … · Log: …/logs/run.jsonl
+
+The verdict and counts come from the coordinator's own `status.json`. **You did
+not review anything** — you are relaying a result, not forming one. Do not open
+the report to elaborate unless she asks; if she does, that is a normal file
+read at her request, not you reviewing.
+
+If it reports a timeout (`no status.json after …`), say so plainly: the
+coordinator may still be running or may have been killed, and the run directory
+is where to look. Do not re-run the review to find out.
+
+If the launcher reported it fell back to running in this terminal (not macOS,
+no iTerm2), do **not** start the waiter — the review already occupies this
+session and will report when it finishes.
 
 ## Out of scope for you
 

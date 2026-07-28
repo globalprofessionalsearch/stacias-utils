@@ -1,6 +1,5 @@
-"""Tests for code-review-workdir.py — focused on the write-findings slug routing
-and the reserved 'synthesis' slug (the cross-language contract with the TS
-coordinator). Runnable via `pytest` or directly with `python3`.
+"""Tests for code-review-workdir.py — slug routing, write commands, and the
+atomic status signal. Runnable via `pytest` or directly with `python3`.
 """
 
 import json
@@ -27,16 +26,6 @@ def _init(tmp, *repos):
     return json.loads(proc.stdout)
 
 
-def test_write_findings_synthesis_slug(tmp_path):
-    man = _init(tmp_path, "myrepo")
-    run = man["run_dir"]
-    proc = _run(["write-findings", "--run", run, "--slug", "synthesis"], tmp_path, stdin='{"verdict":"met"}')
-    assert proc.returncode == 0, proc.stderr
-    out = Path(run) / "findings" / "synthesis.json"
-    assert out.is_file()
-    assert json.loads(out.read_text())["verdict"] == "met"
-
-
 def test_write_findings_repo_slug(tmp_path):
     man = _init(tmp_path, "myrepo")
     run = man["run_dir"]
@@ -46,33 +35,13 @@ def test_write_findings_repo_slug(tmp_path):
     assert Path(man["repos"][0]["findings"]).is_file()
 
 
-def test_reserved_synthesis_slug_is_never_a_repo(tmp_path):
-    # a repo whose basename slugifies to 'synthesis' must NOT take the reserved slug
-    man = _init(tmp_path, "synthesis", "other")
-    slugs = [r["slug"] for r in man["repos"]]
-    assert "synthesis" not in slugs, slugs
-    assert slugs[0].startswith("synthesis-"), slugs
-
-    run = man["run_dir"]
-    # synthesis findings still route to findings/synthesis.json, not the repo's file
-    _run(["write-findings", "--run", run, "--slug", "synthesis"], tmp_path, stdin='{"verdict":"partial"}')
-    synth = Path(run) / "findings" / "synthesis.json"
-    assert synth.is_file()
-    assert json.loads(synth.read_text())["verdict"] == "partial"
-    # the repo's own findings file is distinct
-    assert Path(man["repos"][0]["findings"]).name != "synthesis.json"
-
-
 def test_derived_slug_collision_is_disambiguated(tmp_path):
-    # "synthesis" is bumped off the reserved slug to "synthesis-1" -- but a
-    # second repo whose basename literally IS "synthesis-1" must not collide
-    # with that derived slug. unique_slugs() must disambiguate against the set
-    # of already-ASSIGNED FINAL slugs, not just against each base name's own
-    # collision count.
-    man = _init(tmp_path, "synthesis", "synthesis-1", "other")
+    # Two repos with the same basename must get distinct slugs, and a repo
+    # whose basename is literally the first repo's derived suffix must not
+    # collide with it.
+    man = _init(tmp_path, "api", "api", "api-1")
     slugs = [r["slug"] for r in man["repos"]]
     assert len(slugs) == len(set(slugs)), slugs
-    assert "synthesis" not in slugs, slugs
 
 
 def test_findings_slug_cannot_escape_run_dir(tmp_path):
@@ -83,6 +52,47 @@ def test_findings_slug_cannot_escape_run_dir(tmp_path):
     assert not (run.parent.parent / "evil.json").exists()
     escaped = list(run.parent.rglob("evil.json"))
     assert all(str(run / "findings") in str(p) for p in escaped), escaped
+
+
+def test_write_status_is_recorded_in_the_manifest(tmp_path):
+    man = _init(tmp_path, "myrepo")
+    assert man["status"].endswith("/status.json")
+    assert man["status"].startswith(man["run_dir"])
+
+
+def test_write_status_writes_the_payload(tmp_path):
+    man = _init(tmp_path, "myrepo")
+    run = Path(man["run_dir"])
+    _run(["write-status", "--run", str(run)], tmp_path,
+         stdin='{"state":"complete","verdict":"met"}')
+    assert json.loads((run / "status.json").read_text())["verdict"] == "met"
+
+
+def test_write_status_leaves_no_temp_file(tmp_path):
+    # status.json is written temp-then-rename so a poller never sees a partial
+    # file. The temp must not survive, or the run dir accumulates litter.
+    man = _init(tmp_path, "myrepo")
+    run = Path(man["run_dir"])
+    _run(["write-status", "--run", str(run)], tmp_path, stdin='{"state":"failed"}')
+    assert list(run.glob("*.tmp")) == []
+
+
+def test_write_status_rejects_invalid_json(tmp_path):
+    # A corrupt signal is worse than none: the waiter would report the run as
+    # terminated with an unreadable outcome.
+    man = _init(tmp_path, "myrepo")
+    run = Path(man["run_dir"])
+    proc = _run(["write-status", "--run", str(run)], tmp_path, stdin="{ nope")
+    assert proc.returncode != 0
+    assert not (run / "status.json").exists()
+
+
+def test_write_status_overwrites_a_previous_status(tmp_path):
+    man = _init(tmp_path, "myrepo")
+    run = Path(man["run_dir"])
+    _run(["write-status", "--run", str(run)], tmp_path, stdin='{"state":"complete"}')
+    _run(["write-status", "--run", str(run)], tmp_path, stdin='{"state":"failed"}')
+    assert json.loads((run / "status.json").read_text())["state"] == "failed"
 
 
 if __name__ == "__main__":

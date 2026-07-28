@@ -3,36 +3,65 @@
   "title": "ReviewerOutput",
   "description": "Output from a perspective reviewer: prioritized findings + spillover signal",
   "type": "object",
-  "required": ["perspective", "findings", "spillover", "moreExploration"],
+  "required": [
+    "perspective",
+    "findings",
+    "spillover",
+    "moreExploration"
+  ],
   "properties": {
     "perspective": {
       "type": "string",
-      "enum": ["correctness", "security", "performance", "api-contract", "tests", "adr"],
-      "description": "The reviewer's perspective"
+      "description": "The reviewer's perspective. Must match a file in assets/reviewers/."
     },
     "findings": {
       "type": "array",
       "description": "Prioritized findings, ordered by severity: Blocker > Major > Minor > Nit.",
       "items": {
         "type": "object",
-        "required": ["severity", "confidence", "location", "evidence", "finding", "rationale"],
+        "required": [
+          "severity",
+          "confidence",
+          "location",
+          "evidence",
+          "finding",
+          "rationale"
+        ],
         "properties": {
           "severity": {
             "type": "string",
-            "enum": ["Blocker", "Major", "Minor", "Nit"],
+            "enum": [
+              "Blocker",
+              "Major",
+              "Minor",
+              "Nit"
+            ],
             "description": "Impact severity"
           },
           "confidence": {
             "type": "string",
-            "enum": ["high", "medium", "low"],
+            "enum": [
+              "high",
+              "medium",
+              "low"
+            ],
             "description": "Confidence in the finding. Lower if exploration was cut short."
           },
           "location": {
             "type": "object",
-            "required": ["file", "line"],
+            "required": [
+              "file",
+              "line"
+            ],
             "properties": {
-              "file": { "type": "string", "description": "File path (repo-relative)" },
-              "line": { "type": "integer", "description": "Line number" }
+              "file": {
+                "type": "string",
+                "description": "File path (repo-relative)"
+              },
+              "line": {
+                "type": ["integer", "string"],
+                "description": "Line number"
+              }
             }
           },
           "evidence": {

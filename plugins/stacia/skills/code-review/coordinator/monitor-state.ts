@@ -11,7 +11,7 @@
 // biome-ignore lint/suspicious/noExplicitAny: SDK message shapes are opaque here
 type Any = any;
 
-export type ActivityState = "queued" | "running" | "done" | "failed" | "killed";
+export type ActivityState = "queued" | "running" | "done" | "failed" | "killed" | "suspended";
 
 export interface Activity {
 	label: string;
@@ -33,6 +33,12 @@ export interface Activity {
 	usageSeen: boolean;
 	toolCalls: number;
 	currentTool: string;
+	/** What the agent is currently doing — "thinking", a tool name, or "" (between activities). */
+	currentActivity: string;
+	/** When the current activity started (ms epoch). 0 = no activity. */
+	activitySince: number;
+	/** Timeout budget in ms. Set by runSubagent from the spec. */
+	timeoutMs: number;
 	startedAt: number;
 	endedAt: number;
 	lastEventAt: number;
@@ -40,6 +46,8 @@ export interface Activity {
 	/** The agent's AbortController (or anything with `.abort()`), or null while queued. */
 	session: Any;
 	fail?: string;
+	/** True after one timeout extension was granted. Prevents re-prompting. */
+	extended?: boolean;
 	/** Token bookkeeping across turns — internal to applyEvent. */
 	committed: number;
 	turnTokens: number;
@@ -138,7 +146,7 @@ export class MonitorState {
 		this.eventLimit = Math.max(1, opts.eventLimit ?? 24);
 	}
 
-	/** Kill one agent. Queued agents have no controller yet, hence the optional chain. */
+	/** Kill one agent. Queued and suspended agents may have no live controller. */
 	kill(a: Activity): boolean {
 		if (TERMINAL.has(a.state)) return false;
 		a.state = "killed";
@@ -151,7 +159,7 @@ export class MonitorState {
 	cancelAll(): void {
 		this.cancelled = true;
 		for (const a of this.registry.values()) {
-			if (a.state === "running" || a.state === "queued") {
+			if (a.state === "running" || a.state === "queued" || a.state === "suspended") {
 				a.state = "killed";
 				a.session?.abort?.();
 			}
@@ -174,6 +182,9 @@ export class MonitorState {
 			usageSeen: false,
 			toolCalls: 0,
 			currentTool: "",
+			currentActivity: "",
+			activitySince: 0,
+			timeoutMs: 0,
 			startedAt: 0,
 			endedAt: 0,
 			lastEventAt: 0,
@@ -298,10 +309,21 @@ export class MonitorState {
 			case "content_block_start":
 				if (ev.content_block?.type === "tool_use") {
 					this.startTool(a, ev.content_block.id, ev.content_block.name, ev.content_block.input);
+				} else if (ev.content_block?.type === "thinking") {
+					this.setActivity(a, "thinking");
+				} else if (ev.content_block?.type === "text") {
+					this.setActivity(a, "writing");
 				}
 				break;
 			case "content_block_delta":
 				if (ev.delta?.type === "text_delta") a.chars += String(ev.delta.text ?? "").length;
+				break;
+			case "content_block_stop":
+				// Clear the activity if the current one matches what just ended.
+				// Tool ends are handled in endTool; this catches thinking/writing.
+				if (a.currentActivity === "thinking" || a.currentActivity === "writing") {
+					this.setActivity(a, "");
+				}
 				break;
 		}
 	}
@@ -328,6 +350,7 @@ export class MonitorState {
 			if (b?.type !== "tool_result") continue;
 			const name = a.toolIds.get(String(b.tool_use_id)) || a.currentTool || "tool";
 			a.currentTool = "";
+			this.setActivity(a, "");
 			if (b.is_error) this.pushEvent(a, `! ${name} error`);
 		}
 	}
@@ -344,6 +367,7 @@ export class MonitorState {
 		}
 		if (typeof r.total_cost_usd === "number") a.costUsd = r.total_cost_usd;
 		a.currentTool = "";
+		this.setActivity(a, "");
 		if (typeof r.subtype === "string" && r.subtype !== "success") {
 			a.fail = a.fail ?? r.subtype;
 			this.pushEvent(a, `! ${r.subtype}`);
@@ -353,6 +377,7 @@ export class MonitorState {
 	private systemMessage(a: Activity, m: Any): void {
 		if (m.subtype === "permission_denied") {
 			a.currentTool = "";
+			this.setActivity(a, "");
 			const why = m.decision_reason ? `: ${m.decision_reason}` : "";
 			this.pushEvent(a, `! denied ${m.tool_name ?? "tool"}${why}`);
 		} else if (m.subtype === "api_retry") {
@@ -385,6 +410,13 @@ export class MonitorState {
 		a.tokens = a.usageSeen ? a.committed + a.turnTokens : Math.round(a.chars / 4);
 	}
 
+	private setActivity(a: Activity, activity: string): void {
+		if (a.currentActivity !== activity) {
+			a.currentActivity = activity;
+			a.activitySince = activity ? Date.now() : 0;
+		}
+	}
+
 	private startTool(a: Activity, id: unknown, name: unknown, input?: Any): void {
 		const n = typeof name === "string" && name ? name : "tool";
 		const key = typeof id === "string" && id ? id : `${n}#${a.toolCalls}`;
@@ -396,6 +428,7 @@ export class MonitorState {
 		a.toolIds.set(key, n);
 		a.toolCalls += 1;
 		a.currentTool = n;
+		this.setActivity(a, n);
 		const target = toolTarget(input);
 		this.pushEvent(a, target ? `> ${n} ${target}` : `> ${n}`);
 		this.noteFiles(filesFrom(input));
@@ -405,7 +438,7 @@ export class MonitorState {
 
 	/** Compact plain-text summary. Also the body of the non-TTY fallback. */
 	widgetLines(started: number, now = Date.now()): string[] {
-		const g = { queued: "·", running: "●", done: "✓", failed: "✗", killed: "☠" } as const;
+		const g = { queued: "·", running: "●", done: "✓", failed: "✗", killed: "☠", suspended: "⏸" } as const;
 		const vals = [...this.registry.values()];
 		const done = vals.filter((a) => a.state === "done").length;
 		const busy = vals.filter((a) => a.state === "running").length;
@@ -413,9 +446,23 @@ export class MonitorState {
 		const lines = [`code-review — ${this.phase} — ${fmtDur(now - started)}`];
 		for (const a of vals) {
 			const rd = a.maxRounds > 1 ? ` r${a.round}/${a.maxRounds}` : "";
-			const idle = a.state === "running" && now - a.lastEventAt > 2500 ? " idle" : "";
 			const tok = `${a.usageSeen || a.tokens === 0 ? "" : "~"}${fmtNum(a.tokens)}t`;
-			lines.push(`  ${g[a.state]} ${a.role.padEnd(13)} ${bar(a.tokenRate)} ${tok.padStart(7)}${rd} ${a.currentTool.slice(0, 12)}${idle}`);
+			let status = a.currentTool.slice(0, 12);
+			if (a.state === "suspended") {
+				status = "awaiting extension";
+			} else if (a.state === "running" && a.currentActivity && a.activitySince) {
+				const elapsed = Math.round((now - a.activitySince) / 1000);
+				status = `${a.currentActivity.slice(0, 10)} ${elapsed}s`;
+			} else if (a.state === "running" && !a.currentActivity && now - (a.lastEventAt || a.startedAt || 0) > 2500) {
+				const since = a.lastEventAt || a.startedAt || 0;
+				const elapsed = Math.round((now - since) / 1000);
+				status = `thinking ${elapsed}s`;
+			}
+			const remaining =
+				a.state === "running" && a.timeoutMs > 0 && a.startedAt > 0
+					? ` [${fmtDur(Math.max(0, a.timeoutMs - (now - a.startedAt)))} left]`
+					: "";
+			lines.push(`  ${g[a.state]} ${a.role.padEnd(13)} ${bar(a.tokenRate)} ${tok.padStart(7)}${rd} ${status}${remaining}`);
 		}
 		const cov = this.coverage();
 		const seams = cov.total ? ` · seams ${cov.covered}/${cov.total}` : "";

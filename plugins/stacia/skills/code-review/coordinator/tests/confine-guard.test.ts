@@ -2,7 +2,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { confinedToolPolicy, READ_ONLY_TOOLS, resolveLikeClaudeCode } from "../confine.ts";
+import { confinedToolPolicy, READ_ONLY_TOOLS, SUBMIT_MCP_TOOL, resolveLikeClaudeCode } from "../confine.ts";
 import { MonitorState } from "../monitor-state.ts";
 import type { SubagentSpec } from "../subagent.ts";
 import { subagentOptions } from "../subagent.ts";
@@ -75,7 +75,7 @@ describe("options object — the guard's preconditions", () => {
 
 	it("restricts the tool set with `tools`, which is the allow-list that restricts", () => {
 		const opts = subagentOptions(spec(), new AbortController()) as Any;
-		expect(opts.tools).toEqual([...READ_ONLY_TOOLS]);
+		expect(opts.tools).toEqual([...READ_ONLY_TOOLS, SUBMIT_MCP_TOOL]);
 	});
 
 	it("sets settingSources: [] so user/project allow-rules cannot pre-approve the call", () => {
@@ -215,8 +215,8 @@ describe("tools outside the read-only set", () => {
 		}
 	});
 
-	it("allows StructuredOutput, which carries the result payload and no path", async () => {
-		expect((await guard()("StructuredOutput", { ok: true })).behavior).toBe("allow");
+	it("allows the submit_result MCP tool, which carries no path", async () => {
+		expect((await guard())(SUBMIT_MCP_TOOL, { output: { ok: true } })).resolves.toMatchObject({ behavior: "allow" });
 	});
 });
 

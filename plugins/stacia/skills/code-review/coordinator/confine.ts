@@ -33,14 +33,11 @@ type Any = any;
 /** The only tools a review subagent may call. Mirrored into `Options.tools`. */
 export const READ_ONLY_TOOLS = ["Read", "Grep", "Glob"] as const;
 
-/**
- * Tools allowed through without a path check because they carry no path-shaped
- * input. `StructuredOutput` is injected by `outputFormat` and auto-allows at
- * the tool level (its own `checkPermissions` returns allow, so it should never
- * reach here) — listed anyway so a future change in that behavior does not
- * deadlock every subagent against this guard's default-deny.
- */
-const PATHLESS_TOOLS = new Set(["StructuredOutput"]);
+export const SUBMIT_SERVER_NAME = "review";
+export const SUBMIT_TOOL_NAME = "submit_result";
+export const SUBMIT_MCP_TOOL = `mcp__${SUBMIT_SERVER_NAME}__${SUBMIT_TOOL_NAME}`;
+
+const PATHLESS_TOOLS = new Set([SUBMIT_MCP_TOOL]);
 
 /**
  * Which inputs of each allowed tool are path-shaped, verified against

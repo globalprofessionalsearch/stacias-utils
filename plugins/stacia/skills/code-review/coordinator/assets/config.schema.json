@@ -2,12 +2,22 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "stacia-code-review config",
   "type": "object",
-  "required": ["workflow", "timeouts", "reviewer", "reconciler", "synthesis", "models"],
+  "required": [
+    "workflow",
+    "timeouts",
+    "reviewer",
+    "reconciler",
+    "synthesis",
+    "models"
+  ],
   "additionalProperties": false,
   "properties": {
     "workflow": {
       "type": "object",
-      "required": ["maxRounds", "concurrency"],
+      "required": [
+        "maxRounds",
+        "concurrency"
+      ],
       "additionalProperties": false,
       "properties": {
         "maxRounds": {
@@ -27,19 +37,53 @@
     "timeouts": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["orienteer", "reconciler", "reviewer", "synthesizer", "verifier"],
+      "required": [
+        "orienteer",
+        "reconciler",
+        "reviewer",
+        "synthesizer",
+        "verifier"
+      ],
       "description": "Wall-clock budget per agent role, in milliseconds. Applies to EACH invocation of that role — a reviewer running K rounds gets its budget afresh per round. All roles required; there is no default and no fallback. Replaces the retired workflow.roundTimeoutMs.",
       "properties": {
-        "orienteer": { "type": "integer", "minimum": 10000, "maximum": 1800000, "description": "ms per orienteer run (one per orienteer)" },
-        "reconciler": { "type": "integer", "minimum": 10000, "maximum": 1800000, "description": "ms per reconciler run (one per review)" },
-        "reviewer": { "type": "integer", "minimum": 10000, "maximum": 1800000, "description": "ms per reviewer round (K rounds per perspective)" },
-        "synthesizer": { "type": "integer", "minimum": 10000, "maximum": 1800000, "description": "ms per synthesis run (one per review)" },
-        "verifier": { "type": "integer", "minimum": 10000, "maximum": 1800000, "description": "ms per verification (one per Blocker/Major finding)" }
+        "orienteer": {
+          "type": "integer",
+          "minimum": 10000,
+          "maximum": 1800000,
+          "description": "ms per orienteer run (one per orienteer)"
+        },
+        "reconciler": {
+          "type": "integer",
+          "minimum": 10000,
+          "maximum": 1800000,
+          "description": "ms per reconciler run (one per review)"
+        },
+        "reviewer": {
+          "type": "integer",
+          "minimum": 10000,
+          "maximum": 1800000,
+          "description": "ms per reviewer round (K rounds per perspective)"
+        },
+        "synthesizer": {
+          "type": "integer",
+          "minimum": 10000,
+          "maximum": 1800000,
+          "description": "ms per synthesis run (one per review)"
+        },
+        "verifier": {
+          "type": "integer",
+          "minimum": 10000,
+          "maximum": 1800000,
+          "description": "ms per verification (one per Blocker/Major finding)"
+        }
       }
     },
     "reviewer": {
       "type": "object",
-      "required": ["maxFindings", "perspectives"],
+      "required": [
+        "maxFindings",
+        "perspectives"
+      ],
       "additionalProperties": false,
       "properties": {
         "maxFindings": {
@@ -53,15 +97,18 @@
           "minItems": 1,
           "items": {
             "type": "string",
-            "enum": ["correctness", "security", "performance", "api-contract", "tests", "adr"]
+            "description": "Perspective name. Must match a file in assets/reviewers/."
           },
-          "description": "Review perspectives to run"
+          "description": "Review perspectives to run. Each must have a matching assets/reviewers/<name>.json."
         }
       }
     },
     "reconciler": {
       "type": "object",
-      "required": ["minSeams", "maxSeams"],
+      "required": [
+        "minSeams",
+        "maxSeams"
+      ],
       "additionalProperties": false,
       "properties": {
         "minSeams": {
@@ -80,7 +127,9 @@
     },
     "synthesis": {
       "type": "object",
-      "required": ["followUpThreshold"],
+      "required": [
+        "followUpThreshold"
+      ],
       "additionalProperties": false,
       "properties": {
         "followUpThreshold": {
@@ -94,14 +143,35 @@
     "models": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["orienteer", "reconciler", "reviewer", "synthesizer", "verifier"],
+      "required": [
+        "orienteer",
+        "reconciler",
+        "reviewer",
+        "synthesizer",
+        "verifier"
+      ],
       "description": "Explicit model id per agent role, as passed to the Agent SDK's query({ options: { model } }). Bare ids only — the retired pi \"provider/id\" form is rejected. All roles required; there is no default and no host-model fallback.",
       "properties": {
-        "orienteer": { "type": "string", "description": "model id, e.g. claude-sonnet-5" },
-        "reconciler": { "type": "string", "description": "model id, e.g. claude-sonnet-5" },
-        "reviewer": { "type": "string", "description": "model id, e.g. claude-sonnet-5" },
-        "synthesizer": { "type": "string", "description": "model id, e.g. claude-opus-5" },
-        "verifier": { "type": "string", "description": "model id, e.g. claude-sonnet-5" }
+        "orienteer": {
+          "type": "string",
+          "description": "model id, e.g. claude-sonnet-5"
+        },
+        "reconciler": {
+          "type": "string",
+          "description": "model id, e.g. claude-sonnet-5"
+        },
+        "reviewer": {
+          "type": "string",
+          "description": "model id, e.g. claude-sonnet-5"
+        },
+        "synthesizer": {
+          "type": "string",
+          "description": "model id, e.g. claude-opus-5"
+        },
+        "verifier": {
+          "type": "string",
+          "description": "model id, e.g. claude-sonnet-5"
+        }
       }
     }
   }

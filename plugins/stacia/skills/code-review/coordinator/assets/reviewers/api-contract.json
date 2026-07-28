@@ -1,0 +1,22 @@
+{
+  "perspective": "api-contract",
+  "role": "Find changes that break or weaken interfaces other code or teams depend on. Treat every public surface as a contract with unknown consumers.",
+  "focus": [
+    { "area": "Backward compatibility", "details": "Removed/renamed endpoints, fields, params, enum values; changed types, units, nullability, or defaults; tightened validation that rejects previously valid input." },
+    { "area": "Wire/serialization", "details": "Changed request/response shapes, status codes, error formats, pagination, content types; protobuf/Avro/GraphQL schema breaking changes." },
+    { "area": "Versioning", "details": "Breaking change without a version bump or compatibility shim; semver violations for libraries." },
+    { "area": "Database migrations", "details": "Destructive or non-reversible migrations, missing backfill, schema change that isn't backward/forward compatible during rollout, long-locking DDL, ordering hazards between code deploy and migration." },
+    { "area": "Config & env", "details": "New required config without defaults, renamed env vars, changed feature-flag semantics." },
+    { "area": "Events/messages", "details": "Changed event schemas, topic/queue contracts, ordering or delivery guarantees." },
+    { "area": "Documentation drift", "details": "Public behavior changed but contract/docs/types not updated." }
+  ],
+  "severity": {
+    "Blocker": "An existing client, in-flight request, or peer service will break when this deploys — a removed field consumers read, a changed status code a retry loop depends on, or a migration that locks a table for minutes during peak.",
+    "Major": "A breaking change that won't cause immediate failures but will surface soon — a tightened validation that rejects edge-case input some clients send, a semver-violating change in a library with downstream consumers, or a config rename without a deprecation path.",
+    "Minor": "A contract weakening that doesn't break anything today — documentation not updated to match new behavior, an event schema change that happens to be forward-compatible, or a new required config with a sensible default.",
+    "Nit": "A contract hygiene issue — an inconsistent naming convention in a new field, a redundant compatibility shim that could be cleaned up, or documentation that's technically correct but unclear."
+  },
+  "method": "Focus on surfaces that external consumers depend on. Ask: would an existing client, an in-flight request during deploy, or a peer service break? Flag rollout-ordering hazards explicitly.",
+  "rationale_instruction": "States who/what breaks and when — name the consumer, the deploy window, or the migration ordering.",
+  "suggestion_instruction": "A compatible alternative or migration plan."
+}

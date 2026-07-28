@@ -23,12 +23,13 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { addContext, buildBundle, initRun, loadAssets, loadManifest, type Manifest, writeFindings, writeReport } from "./assets.ts";
+import { addContext, buildBundle, initRun, loadAssets, loadManifest, type Manifest, writeReport, writeStatus } from "./assets.ts";
 import { loadConfig } from "./config.ts";
 import { type RepoInput, runReview } from "./coordinator.ts";
 import { Monitor } from "./monitor.ts";
-import { renderReport } from "./render-report.ts";
+import { buildReport } from "./render-report.ts";
 import { NULL_LOG, RunLog } from "./run-log.ts";
+import { validate } from "./validate.ts";
 
 // biome-ignore lint/suspicious/noExplicitAny: request/synthesis are JSON payloads
 type Any = any;
@@ -120,12 +121,66 @@ export async function performReview(req: ReviewRequest, monitor: Monitor, signal
 	const notes: string[] = [];
 	const synthesis = await runReview({ charge: req.charge, repos, manifest, assets, config, monitor, notes, signal, log: monitor.runLog });
 
-	await writeFindings(assets.helper, manifest.run_dir, "synthesis", JSON.stringify(synthesis, null, 2));
-	const report = await writeReport(assets.helper, manifest.run_dir, renderReport(req.charge, synthesis));
+	const report = buildReport({
+		charge: req.charge,
+		repos: repos.map((r, i) => ({ repo: r.repo, slug: r.slug, source: req.repos[i].source, path: r.path })),
+		synthesis,
+		runDir: manifest.run_dir,
+	});
+	const errs = validate(report, assets.schemas.report);
+	if (errs.length) {
+		monitor.runLog.warn("report.validation", { errors: errs });
+	}
+	const reportJson = JSON.stringify(report, null, 2);
+	const written = await writeReport(assets.helper, manifest.run_dir, reportJson);
+	const htmlPath = written.split("\n").find((l) => l.endsWith(".html")) ?? manifest.report_html;
 
-	const findings: Any[] = synthesis.consolidated_findings ?? [];
+	const findings: Any[] = report.consolidated_findings ?? [];
 	const counts = ["Blocker", "Major", "Minor", "Nit"].map((s) => `${findings.filter((f: Any) => f.severity === s).length} ${s}`).join(" · ");
-	return { synthesis, counts, report, run_dir: manifest.run_dir };
+	return { synthesis, counts, report: htmlPath, run_dir: manifest.run_dir, findings };
+}
+
+/** Severity tallies, as a machine-readable object for status.json. */
+export function severityCounts(findings: Any[]): Record<string, number> {
+	const out: Record<string, number> = { Blocker: 0, Major: 0, Minor: 0, Nit: 0 };
+	for (const f of findings ?? []) {
+		if (f?.severity in out) out[f.severity] += 1;
+	}
+	return out;
+}
+
+/**
+ * The completion signal. `bin/await-review` polls for this file, so it must be
+ * written on BOTH the success and failure paths — a run that ends without one
+ * looks identical to a run still in progress, and the waiter would block until
+ * its timeout.
+ */
+export function buildStatus(fields: {
+	state: "complete" | "failed";
+	runDir: string | null;
+	charge: string;
+	startedAt: string;
+	verdict?: string;
+	findings?: Any[];
+	report?: string;
+	error?: unknown;
+}): Record<string, Any> {
+	const status: Record<string, Any> = {
+		version: 1,
+		state: fields.state,
+		runDir: fields.runDir,
+		charge: fields.charge,
+		startedAt: fields.startedAt,
+		endedAt: new Date().toISOString(),
+	};
+	if (fields.state === "complete") {
+		status.verdict = fields.verdict ?? "unclear";
+		status.counts = severityCounts(fields.findings ?? []);
+		status.report = fields.report ?? null;
+	} else {
+		status.error = fields.error instanceof Error ? fields.error.message : String(fields.error ?? "unknown failure");
+	}
+	return status;
 }
 
 export async function main(argv: string[] = process.argv.slice(2)): Promise<number> {
@@ -148,7 +203,9 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
 	// Captured as soon as initRun allocates it, so the failure path can point at
 	// it. A failed review is exactly when the run dir matters most: the log,
 	// the bundles and any partial findings are all under there.
+	const startedAt = new Date().toISOString();
 	let runDir: string | null = null;
+	let helperPath: string | null = null;
 	let log: RunLog = NULL_LOG;
 	const onRunDir = (manifest: Manifest) => {
 		runDir = manifest.run_dir;
@@ -157,17 +214,39 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
 		log.info("run.start", { runDir, charge: req.charge, repos: req.repos, adrs: (req.adrs ?? []).map((a) => a.id) });
 	};
 
+	// Best-effort: a review that succeeded must not be reported as failed just
+	// because the signal could not be written, and a review that already failed
+	// must not have its real error replaced by a status-write error.
+	const signalDone = async (status: Record<string, Any>) => {
+		if (!runDir || !helperPath) return; // died before the run dir existed
+		try {
+			await writeStatus(helperPath, runDir, JSON.stringify(status, null, 2));
+		} catch (err) {
+			log.fail("status.write_failed", err);
+		}
+	};
+
 	try {
-		const { synthesis, counts, report, run_dir } = await performReview(req, monitor, controller.signal, onRunDir);
+		helperPath = loadAssets().helper;
+	} catch {
+		/* performReview will fail on the same thing and report it properly */
+	}
+
+	try {
+		const { synthesis, counts, report, run_dir, findings } = await performReview(req, monitor, controller.signal, onRunDir);
+		await signalDone(
+			buildStatus({ state: "complete", runDir: run_dir, charge: req.charge, startedAt, verdict: synthesis.verdict, findings, report }),
+		);
 		monitor.stop();
 		await log.close();
-		process.stdout.write(`\nReview complete — verdict: ${synthesis.verdict}\n${counts}\nReport: ${report.split("\n")[0]}\nRun dir: ${run_dir}\n`);
+		process.stdout.write(`\nReview complete — verdict: ${synthesis.verdict}\n${counts}\nReport: file://${report}\nRun dir: ${run_dir}\n`);
 		return 0;
 	} catch (err) {
 		// The run didn't finish normally — make sure in-flight sibling subagents
 		// don't keep spending tokens after we unwind.
 		monitor.cancelAll("run failed");
 		controller.abort();
+		await signalDone(buildStatus({ state: "failed", runDir, charge: req.charge, startedAt, error: err }));
 		monitor.stop();
 		log.fail("run.failed", err);
 		await log.close();

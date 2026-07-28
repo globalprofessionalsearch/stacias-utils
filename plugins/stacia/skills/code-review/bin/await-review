@@ -1,0 +1,106 @@
+#!/usr/bin/env bash
+# ============================================================
+# await-review - block until a code review finishes, then report its outcome
+#
+# The launcher is fire-and-forget: it splits an iTerm pane and exits, so the
+# calling Claude Code session never hears from the review again. This is the
+# other half of that — the session starts this in the BACKGROUND, and when the
+# review terminates this exits, which is what wakes the session back up.
+#
+# It polls for <run-dir>/status.json, which the coordinator writes atomically
+# on BOTH the success and failure paths. Polling a file rather than watching
+# the pane is deliberate: the pane is a detached process this script has no
+# handle on, and status.json is the only artifact that exists exactly once per
+# terminated run.
+# ============================================================
+set -euo pipefail
+
+NAME="await-review"
+err() { printf '%s: %s\n' "$NAME" "$*" >&2; }
+die() { err "$*"; exit 2; }
+
+# A review is bounded by the coordinator's own per-role timeouts. Worst case is
+# roughly orienteer + reconciler + K reviewer rounds + synthesis + verification,
+# which at shipped defaults is a bit over an hour. Two hours is generous headroom
+# while still terminating if the coordinator is SIGKILLed and never writes a
+# status at all — the one case that would otherwise block forever.
+TIMEOUT_SECONDS="${STACIA_AWAIT_TIMEOUT:-7200}"
+INTERVAL_SECONDS="${STACIA_AWAIT_INTERVAL:-5}"
+
+usage() {
+  cat <<EOF
+await-review - block until a code review finishes, then report its outcome
+
+Usage: await-review <run-dir>
+
+  <run-dir>   The run directory printed by \`launch-review\`.
+
+Run this in the BACKGROUND from the session that launched the review. It exits
+when the review terminates, which is the completion signal.
+
+Exit codes:
+  0  the review completed (verdict on stdout)
+  1  the review failed    (reason on stdout)
+  3  timed out waiting    (no status.json after \$STACIA_AWAIT_TIMEOUT seconds)
+
+Environment:
+  STACIA_AWAIT_TIMEOUT    seconds before giving up (default 7200)
+  STACIA_AWAIT_INTERVAL   seconds between polls    (default 5)
+EOF
+}
+
+case "${1:-}" in
+  -h|--help) usage; exit 0 ;;
+  "")        usage >&2; exit 2 ;;
+esac
+
+RUN_DIR="$1"
+[[ -d "$RUN_DIR" ]] || die "not a directory: $RUN_DIR"
+STATUS="$RUN_DIR/status.json"
+
+deadline=$(( SECONDS + TIMEOUT_SECONDS ))
+while [[ ! -f "$STATUS" ]]; do
+  if (( SECONDS >= deadline )); then
+    printf 'Review status unknown — no status.json after %ss.\n' "$TIMEOUT_SECONDS"
+    printf 'The coordinator may still be running, or may have been killed.\n'
+    printf 'Run directory: %s\n' "$RUN_DIR"
+    exit 3
+  fi
+  sleep "$INTERVAL_SECONDS"
+done
+
+# status.json is written atomically (temp + os.replace), so its existence
+# implies it is complete and parseable. Still handled defensively: a corrupt
+# signal should report as unknown rather than crash the waiter.
+python3 - "$STATUS" "$RUN_DIR" <<'PY'
+import json, sys, pathlib
+
+status_path, run_dir = pathlib.Path(sys.argv[1]), sys.argv[2]
+try:
+    s = json.loads(status_path.read_text())
+except Exception as exc:
+    print(f"Review status unreadable ({exc}).")
+    print(f"Run directory: {run_dir}")
+    raise SystemExit(3)
+
+state = s.get("state")
+if state == "complete":
+    counts = s.get("counts") or {}
+    tally = " · ".join(f"{counts.get(k, 0)} {k}" for k in ("Blocker", "Major", "Minor", "Nit"))
+    print(f"Review complete — verdict: {s.get('verdict', '?')}")
+    print(tally)
+    if s.get("report"):
+        print(f"Report: file://{s['report']}")
+    print(f"Run directory: {run_dir}")
+    raise SystemExit(0)
+
+if state == "failed":
+    print(f"Review UNSUCCESSFUL: {s.get('error', 'unknown failure')}")
+    print(f"Run directory: {run_dir}")
+    print(f"Log:           {run_dir}/logs/run.jsonl")
+    raise SystemExit(1)
+
+print(f"Review status unrecognised (state={state!r}).")
+print(f"Run directory: {run_dir}")
+raise SystemExit(3)
+PY

@@ -94,7 +94,7 @@ describe("decodeKeys", () => {
 
 describe("fg / fit / paint", () => {
 	it("fg wraps in the right SGR code and can be turned off", () => {
-		expect(fg("err", "boom")).toBe("\x1b[31mboom\x1b[0m");
+		expect(fg("err", "boom")).toBe("\x1b[31;1mboom\x1b[0m");
 		expect(fg("plain", "boom")).toBe("boom");
 		expect(fg("err", "boom", false)).toBe("boom");
 	});
@@ -108,7 +108,7 @@ describe("fg / fit / paint", () => {
 	it("paint clamps before it colorizes, so no escape is ever sliced", () => {
 		const long = "x".repeat(200);
 		const [line] = paint([{ t: long, c: "err" }], 20);
-		expect(line).toBe(`\x1b[31m${"x".repeat(19)}\x1b[0m`);
+		expect(line).toBe(`\x1b[31;1m${"x".repeat(19)}\x1b[0m`);
 		// The clamp counts payload characters only — the escapes are added after.
 		expect(line.replace(/\x1b\[[0-9;]*m/g, "").length).toBe(19);
 	});

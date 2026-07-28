@@ -8,6 +8,8 @@ import { execFile } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
+import { type ReviewerPersona, renderReviewerPersona } from "./render-persona.ts";
+import { validate } from "./validate.ts";
 
 // biome-ignore lint/suspicious/noExplicitAny: parsed JSON schema/config
 type Json = any;
@@ -24,7 +26,7 @@ export interface Assets {
 		synthesizer: string;
 		verifier: string;
 	};
-	schemas: { orientation: Json; seamMap: Json; reviewer: Json; synthesis: Json; verifier: Json };
+	schemas: { orientation: Json; seamMap: Json; reviewer: Json; synthesis: Json; verifier: Json; report: Json };
 }
 
 export interface RepoRef {
@@ -37,16 +39,35 @@ export interface RepoRef {
 
 export interface Manifest {
 	run_dir: string;
-	report: string;
+	report_json: string;
 	report_html: string;
 	/** Append-only JSONL run log. Path allocated by the helper's `init`. */
 	log: string;
+	/** Terminal state (`complete` | `failed`), written once at the end. */
+	status: string;
 	multi_repo: boolean;
 	context: Array<{ id: string; kind: string; title: string; path: string }>;
 	repos: Array<{ repo: string; slug: string; bundle: string; findings: string }>;
 }
 
-const PERSPECTIVES = ["correctness", "security", "performance", "api-contract", "tests", "adr"] as const;
+/**
+ * Discover the available perspectives by scanning assets/reviewers/*.json.
+ * Adding or removing a reviewer is a file add/remove — no code changes.
+ */
+function discoverPerspectives(assetsDir: string): string[] {
+	const dir = path.join(assetsDir, "reviewers");
+	if (!fs.existsSync(dir)) return [];
+	return fs
+		.readdirSync(dir)
+		.filter((f) => f.endsWith(".json"))
+		.map((f) => f.replace(/\.json$/, ""))
+		.sort();
+}
+
+// Resolved at load time from the directory scan. Exported so the coordinator
+// can validate config.reviewer.perspectives against the set of actually-present
+// reviewer definitions.
+let PERSPECTIVES: readonly string[] = [];
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 
@@ -64,9 +85,19 @@ export function loadAssets(): Assets {
 		reviewer: readJson("schemas/reviewer-output.schema.json"),
 		synthesis: readJson("schemas/synthesis.schema.json"),
 		verifier: readJson("schemas/verifier-output.schema.json"),
+		report: readJson("schemas/report.schema.json"),
 	};
+	PERSPECTIVES = discoverPerspectives(assetsDir);
+	if (!PERSPECTIVES.length) throw new Error("no reviewer personas found in assets/reviewers/");
+
+	const reviewerPersonaSchema = readJson("schemas/reviewer-persona.schema.json");
 	const reviewers: Record<string, string> = {};
-	for (const p of PERSPECTIVES) reviewers[p] = read(`references/reviewer-${p}.md`);
+	for (const p of PERSPECTIVES) {
+		const raw = readJson(`reviewers/${p}.json`);
+		const errs = validate(raw, reviewerPersonaSchema);
+		if (errs.length) throw new Error(`reviewer persona ${p}: schema validation failed: ${errs.join("; ")}`);
+		reviewers[p] = renderReviewerPersona(raw as ReviewerPersona);
+	}
 	return {
 		assetsDir,
 		helper: path.join(HERE, "helper", "code-review-workdir.py"),
@@ -135,6 +166,15 @@ export function addContext(helper: string, runDir: string, kind: string, id: str
 
 export function writeFindings(helper: string, runDir: string, slug: string, json: string): Promise<string> {
 	return runHelper(helper, ["write-findings", "--run", runDir, "--slug", slug], json);
+}
+
+/**
+ * Write the run's terminal state. The helper writes this ATOMICALLY, because
+ * `bin/await-review` polls for the file's existence as the completion signal —
+ * a half-written file would be read as "done".
+ */
+export function writeStatus(helper: string, runDir: string, json: string): Promise<string> {
+	return runHelper(helper, ["write-status", "--run", runDir], json);
 }
 
 export function writeReport(helper: string, runDir: string, markdown: string): Promise<string> {

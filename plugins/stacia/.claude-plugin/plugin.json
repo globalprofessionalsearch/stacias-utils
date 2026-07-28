@@ -1,7 +1,8 @@
 {
   "name": "stacia",
   "description": "Stacia's utilities for Claude Code. One umbrella plugin: each utility is a self-contained directory under skills/, invoked as /stacia:<utility>. Registered once by `summon setup`; adding or removing a utility never requires re-registering.",
-  "version": "0.1.0",
-  "author": { "name": "Stacia Colasurdo" },
+  "author": {
+    "name": "Stacia Colasurdo"
+  },
   "license": "MIT"
 }

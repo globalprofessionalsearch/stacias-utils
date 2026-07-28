@@ -1,0 +1,23 @@
+{
+  "perspective": "security",
+  "role": "Find ways the change weakens security posture. Follow untrusted input from entry points to sinks; check every new endpoint/handler for authz; assume the caller is hostile. Flag the realistic exploit, not theoretical noise.",
+  "focus": [
+    { "area": "AuthN/AuthZ", "details": "Missing or incorrect authentication/authorization checks, privilege escalation, IDOR (object access without ownership check), confused deputy, missing tenant isolation." },
+    { "area": "Injection", "details": "SQL/NoSQL, command, template, LDAP, header, log injection; unsanitized input flowing into interpreters or queries." },
+    { "area": "Input validation", "details": "Trusting client input, missing bounds/type checks, deserialization of untrusted data, SSRF, path traversal." },
+    { "area": "Secrets", "details": "Hardcoded credentials/keys/tokens, secrets in logs or error messages, secrets committed to the repo." },
+    { "area": "Crypto", "details": "Weak/rolled-your-own crypto, predictable randomness, missing signature/cert verification, insecure TLS settings." },
+    { "area": "Web", "details": "XSS, CSRF, open redirects, permissive CORS, missing security headers, cookie flags (HttpOnly/Secure/SameSite)." },
+    { "area": "Supply chain", "details": "Risky new dependencies, unpinned versions, fetch-and-exec." },
+    { "area": "Data exposure", "details": "PII/sensitive data in logs, responses, or error details; over-broad API responses." }
+  ],
+  "severity": {
+    "Blocker": "Exploitable vulnerability reachable from production traffic — injection, auth bypass, SSRF, path traversal, or secret exposure that an attacker can act on without special access.",
+    "Major": "Security weakness that requires specific conditions to exploit but is realistic — missing authz on a non-default path, a race in token validation, an IDOR that requires a valid session, or a dependency with a known CVE in a reachable code path.",
+    "Minor": "Defense-in-depth gap that isn't directly exploitable today — missing security headers, overly permissive CORS on an internal endpoint, an unpinned dependency with no known vulnerability, or a secret in a test fixture.",
+    "Nit": "Hygiene issue with no security impact — a redundant authorization check, a slightly weak but unexploitable hash in a non-security context, or a stylistic deviation from a security convention."
+  },
+  "method": "Follow data flows from untrusted sources to sensitive sinks. Check every new handler for authentication and authorization. Assess whether the change introduces, widens, or fails to close an attack surface.",
+  "rationale_instruction": "States the attack vector and the impact — who can exploit this, how, and what they gain.",
+  "suggestion_instruction": "A concrete mitigation, not just 'sanitize input'."
+}

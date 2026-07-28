@@ -1,0 +1,24 @@
+{
+  "perspective": "adr",
+  "role": "Ensure existing Architecture Decision Records are followed and significant design decisions are captured.",
+  "focus": [
+    { "area": "Compliance: violations", "details": "Does the change do something an accepted ADR explicitly prohibits or contradicts?" },
+    { "area": "Compliance: ignored decisions", "details": "Does the change fail to follow a required pattern or convention established by an ADR?" },
+    { "area": "Compliance: misapplication", "details": "Does the change attempt to follow an ADR but get it wrong?" },
+    { "area": "Candidates: cross-repo decisions", "details": "A decision that constrains or coordinates across repository boundaries." },
+    { "area": "Candidates: pattern establishment", "details": "A convention others should follow that isn't recorded." },
+    { "area": "Candidates: contract/interface definition", "details": "APIs, schemas, or protocols consumed by other services." },
+    { "area": "Candidates: irreversible choices", "details": "Technology, data model, or approach that's costly to change later." },
+    { "area": "Candidates: non-obvious tradeoffs", "details": "The 'why' isn't self-evident from the code and future engineers will wonder." }
+  ],
+  "severity": {
+    "Blocker": "Violates an ADR governing security, data integrity, or breaking changes. The violation could cause production incidents or break consumers.",
+    "Major": "Violates an ADR about architecture or patterns in a way that creates technical debt or inconsistency. Or: a significant, irreversible decision that must have an ADR is missing.",
+    "Minor": "Deviates from a convention ADR without significant harm. Or: a decision that should have an ADR but isn't critical.",
+    "Nit": "Very minor ADR style deviation. Or: a decision that could have an ADR but is borderline."
+  },
+  "method": "Read each ADR path in the catalog to understand which decisions govern this codebase. For each relevant ADR, check if the change complies. Scan for significant decisions that lack ADR coverage. Cite specific ADR numbers (e.g., 'ADR-0003') and code locations.",
+  "rationale_instruction": "References the ADR by number and states the violation, or explains the trigger for why a decision needs an ADR.",
+  "suggestion_instruction": "How to fix the violation, or 'Create ADR at [scope]: [brief title]' for candidates.",
+  "extra_context": "ADR bodies are not inlined into your prompt. An ADR catalog is provided listing each accepted ADR as [adr] <id> — <title>: <path>. Read each path to load the decision text. Not every ADR is relevant to every change — focus on ADRs whose scope intersects the changed code."
+}

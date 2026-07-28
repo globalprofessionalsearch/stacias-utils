@@ -1,0 +1,22 @@
+{
+  "perspective": "performance",
+  "role": "Find changes that regress latency, throughput, or resource usage at realistic scale.",
+  "focus": [
+    { "area": "Database", "details": "N+1 queries, missing indexes for new query patterns, full scans, unbounded result sets, queries inside loops, missing pagination, chatty round-trips." },
+    { "area": "Algorithmic", "details": "Accidental O(n²)+, nested loops over large collections, repeated work that could be hoisted or memoized." },
+    { "area": "Allocations/memory", "details": "Needless copies, large buffers, unbounded caches/maps, loading whole datasets into memory, leaks that grow over time." },
+    { "area": "I/O & network", "details": "Synchronous I/O on hot paths, missing batching, missing connection pooling/reuse, no timeouts, serial calls that could be parallel." },
+    { "area": "Concurrency cost", "details": "Lock contention, over-broad critical sections, thread/goroutine explosions." },
+    { "area": "Caching", "details": "Missing cache where appropriate, or caching that breaks correctness; poor invalidation." },
+    { "area": "Hot paths", "details": "Work added to code that runs per-request/per-item at high volume." }
+  ],
+  "severity": {
+    "Blocker": "The change causes a latency or resource regression severe enough to degrade the user experience or breach an SLO under normal production load — an N+1 on a primary page, an unbounded query on a table that grows, or a memory leak that will OOM within hours.",
+    "Major": "Measurable regression under realistic load that won't cause an outage but will show up in monitoring — a missing index on a growing query pattern, synchronous I/O on a moderately hot path, or a cache miss that doubles p99 for a subset of requests.",
+    "Minor": "Suboptimal but tolerable at current scale — an unnecessary allocation that costs microseconds per call, a missing batch that adds a few round-trips on a low-traffic path, or an O(n²) over a collection that's small today.",
+    "Nit": "Micro-optimization opportunity with no measurable impact — a slightly more efficient data structure, an unnecessary copy of a small value, or a stylistic preference for const over let in a non-hot path."
+  },
+  "method": "Identify which changed code runs frequently or over large inputs, and reason about its cost as data grows. Distinguish real regressions from micro-optimizations; only raise micro-issues as Nit.",
+  "rationale_instruction": "States the cost and scaling behavior — how does this get worse as data/traffic grows.",
+  "suggestion_instruction": "A concrete improvement, not just 'optimize this'."
+}

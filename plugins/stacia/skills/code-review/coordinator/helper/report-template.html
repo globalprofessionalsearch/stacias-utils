@@ -1,41 +1,285 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Code Review Report</title>
-  <script src="https://cdn.jsdelivr.net/npm/marked@14.1.4/marked.min.js" integrity="sha384-lqPzN0kmFw9t2syAMwVPM4VbAyqsz/lPyYWbb2Xt6nSPM0WPNrpSWCUBgdcAdgnC" crossorigin="anonymous"></script>
-  <script src="https://cdn.jsdelivr.net/npm/dompurify@3.4.12/dist/purify.min.js" integrity="sha384-piCcpDdJ7qVeK4Tv8Z6Hpcr3ZBIgP16TxQTPVfsLFdZ5uDgwc3Y8Ho7oUnqf12qu" crossorigin="anonymous"></script>
-  <style>
-    body {
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
-      max-width: 900px;
-      margin: 0 auto;
-      padding: 2rem;
-      line-height: 1.6;
-      color: #333;
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Code Review</title>
+<!--
+  Self-contained review report.
+
+  The review data is INLINED below as a JSON data island, not fetched. A
+  `file://` page has an opaque origin, so `fetch('report.json')` is blocked by
+  every current browser — the previous template did exactly that and therefore
+  never worked when the file was opened directly.
+
+  Everything renders through Vue's text interpolation, which escapes by
+  default. There is no `v-html` in this file and there must not be: findings
+  quote code from the repo under review, so their text is attacker-influenced.
+  Interpolation is what makes a sanitizer unnecessary.
+-->
+<script src="https://cdn.jsdelivr.net/npm/vue@3.5.13/dist/vue.global.prod.js"
+        integrity="sha384-W/1Fp/LgAYO/oTn9Gs+PbeWuMuq1eQCnUMPCeg8POmMYchhzxctjEqtbiCIxDOON"
+        crossorigin="anonymous"></script>
+<style>
+  :root {
+    --bg:#ffffff; --panel:#f7f8fa; --panel2:#eef0f4; --line:#dde0e6;
+    --fg:#1a1d23; --dim:#555d6e; --faint:#8891a0;
+    --blocker:#d1242f; --major:#d4700a; --minor:#b08800; --nit:#7a8699;
+    --met:#1a7f37; --partial:#d4700a; --unclear:#656d7a;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg:#0f1115; --panel:#161a21; --panel2:#1c212a; --line:#272d38;
+      --fg:#e6e9ef; --dim:#98a2b3; --faint:#6b7480;
+      --blocker:#f2555a; --major:#f2994a; --minor:#f2c94c; --nit:#7a8699;
+      --met:#4caf7d; --partial:#f2994a; --unclear:#8b93a7;
     }
-    h1 { border-bottom: 2px solid #333; padding-bottom: 0.5rem; }
-    h2 { border-bottom: 1px solid #ddd; padding-bottom: 0.3rem; margin-top: 2rem; }
-    table { border-collapse: collapse; width: 100%; margin: 1rem 0; }
-    th, td { border: 1px solid #ddd; padding: 0.5rem; text-align: left; }
-    th { background: #f5f5f5; }
-    code { background: #f5f5f5; padding: 0.2rem 0.4rem; border-radius: 3px; font-size: 0.9em; }
-    pre { background: #f5f5f5; padding: 1rem; overflow-x: auto; border-radius: 5px; }
-    pre code { background: none; padding: 0; }
-    blockquote { border-left: 4px solid #ddd; margin-left: 0; padding-left: 1rem; color: #666; }
-    .loading { color: #666; font-style: italic; }
-    .error { color: #c00; }
-  </style>
+  }
+  * { box-sizing:border-box; }
+  body {
+    margin:0; background:var(--bg); color:var(--fg);
+    font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+  }
+  #app { max-width:1040px; margin:0 auto; padding:2rem 1.5rem 5rem; }
+  code, pre, .mono { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; }
+
+  header h1 { margin:0 0 .35rem; font-size:.8rem; font-weight:600; color:var(--faint);
+              letter-spacing:.1em; text-transform:uppercase; }
+  .charge { font-size:1.3rem; line-height:1.4; margin:0 0 1.1rem; }
+  .verdict { display:inline-block; font-weight:600; padding:.3rem .7rem; border-radius:999px;
+             font-size:.78rem; text-transform:uppercase; letter-spacing:.06em; }
+  .verdict.met     { background:rgba(76,175,125,.15);  color:var(--met); }
+  .verdict.partial { background:rgba(242,153,74,.15);  color:var(--partial); }
+  .verdict.unclear { background:rgba(139,147,167,.15); color:var(--unclear); }
+  .rationale { color:var(--dim); margin:.75rem 0 0; }
+
+  .tallies { display:flex; gap:.5rem; flex-wrap:wrap; margin:1.5rem 0 0; }
+  .chip { border:1px solid var(--line); background:var(--panel); color:var(--dim);
+          padding:.35rem .75rem; border-radius:6px; cursor:pointer; font-size:.85rem;
+          display:flex; gap:.45rem; align-items:center; font-family:inherit; }
+  .chip:hover { border-color:var(--faint); }
+  .chip.on { background:var(--panel2); color:var(--fg); border-color:var(--faint); }
+  .chip .n { font-weight:700; }
+  .chip.s-Blocker .n { color:var(--blocker); }
+  .chip.s-Major   .n { color:var(--major); }
+  .chip.s-Minor   .n { color:var(--minor); }
+  .chip.s-Nit     .n { color:var(--nit); }
+
+  .search { width:100%; margin:.85rem 0 0; padding:.55rem .7rem; border-radius:6px;
+            border:1px solid var(--line); background:var(--panel); color:var(--fg);
+            font-size:.9rem; font-family:inherit; }
+  .search::placeholder { color:var(--faint); }
+
+  h2 { font-size:.75rem; text-transform:uppercase; letter-spacing:.1em; color:var(--faint);
+       margin:2.5rem 0 .85rem; font-weight:600; }
+
+  .finding { border:1px solid var(--line); border-left:3px solid var(--line);
+             background:var(--panel); border-radius:6px; margin:0 0 .55rem; }
+  .finding.s-Blocker { border-left-color:var(--blocker); }
+  .finding.s-Major   { border-left-color:var(--major); }
+  .finding.s-Minor   { border-left-color:var(--minor); }
+  .finding.s-Nit     { border-left-color:var(--nit); }
+  .f-head { display:flex; gap:.7rem; align-items:baseline; padding:.7rem .9rem; cursor:pointer; }
+  .f-head:hover { background:var(--panel2); }
+  .sev { font-size:.68rem; font-weight:700; text-transform:uppercase; letter-spacing:.07em;
+         flex:none; width:4.2rem; }
+  .s-Blocker .sev { color:var(--blocker); }
+  .s-Major   .sev { color:var(--major); }
+  .s-Minor   .sev { color:var(--minor); }
+  .s-Nit     .sev { color:var(--nit); }
+  .f-title { flex:1; }
+  .loc { font-size:.78rem; color:var(--faint); flex:none; }
+  .meta { font-size:.72rem; color:var(--faint); flex:none; }
+  .caret { flex:none; width:.9rem; color:var(--faint); font-size:.7rem; }
+  .f-body { padding:.2rem .9rem .9rem 6.7rem; }
+  .link { background:none; border:none; color:var(--faint); cursor:pointer; font:inherit;
+          font-size:.7rem; text-transform:uppercase; letter-spacing:.08em; padding:0 0 0 .8rem; }
+  .link:hover { color:var(--fg); }
+  .label { font-size:.68rem; text-transform:uppercase; letter-spacing:.08em;
+           color:var(--faint); margin:.85rem 0 .25rem; }
+  pre { background:var(--panel2); border:1px solid var(--line); border-radius:5px;
+        padding:.7rem .8rem; overflow-x:auto; font-size:.82rem; margin:0;
+        white-space:pre-wrap; word-break:break-word; }
+
+  .row { display:flex; gap:.7rem; padding:.4rem 0; border-bottom:1px solid var(--line);
+         font-size:.88rem; }
+  .row:last-child { border-bottom:none; }
+  .state { flex:none; width:8rem; font-size:.68rem; text-transform:uppercase;
+           letter-spacing:.06em; padding-top:.2rem; }
+  .st-cleared        { color:var(--met); }
+  .st-finding        { color:var(--major); }
+  .st-under-explored { color:var(--blocker); }
+
+  ul.plain { margin:0; padding-left:1.1rem; color:var(--dim); }
+  ul.plain li { margin:.3rem 0; }
+  .muted { color:var(--dim); }
+  .empty { color:var(--faint); font-style:italic; }
+  .foot { margin-top:3rem; padding-top:1rem; border-top:1px solid var(--line);
+          font-size:.78rem; color:var(--faint); }
+  .foot div { margin:.2rem 0; }
+  details summary { cursor:pointer; color:var(--dim); font-size:.88rem; margin-bottom:.4rem; }
+  .raw-json { width:100%; min-height:12rem; resize:vertical; background:var(--panel2);
+              color:var(--dim); border:1px solid var(--line); border-radius:5px;
+              padding:.7rem .8rem; font:12px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;
+              white-space:pre; tab-size:2; }
+</style>
 </head>
 <body>
-  <div id="content" class="loading">Loading report...</div>
-  <script>
-    const reportFile = 'report.md';
-    fetch(reportFile)
-      .then(r => { if (!r.ok) throw new Error('Failed to load report'); return r.text(); })
-      .then(md => { document.getElementById('content').innerHTML = DOMPurify.sanitize(marked.parse(md)); })
-      .catch(e => { document.getElementById('content').innerHTML = '<p class="error">Error: ' + e.message + '</p>'; });
-  </script>
+<div id="app">
+  <header>
+    <h1>Code review</h1>
+    <p class="charge">{{ report.charge }}</p>
+    <span class="verdict" :class="report.verdict">{{ report.verdict }}</span>
+    <p class="rationale">{{ report.verdict_rationale }}</p>
+
+    <div class="tallies">
+      <button v-for="s in severities" :key="s" class="chip"
+              :class="['s-' + s, { on: active.has(s) }]" @click="toggle(s)">
+        <span>{{ s }}</span><span class="n">{{ counts[s] }}</span>
+      </button>
+      <button class="chip" @click="reset">reset</button>
+    </div>
+    <input class="search" v-model="q" placeholder="Filter by text, file, or perspective…">
+  </header>
+
+  <h2>
+    Findings ({{ visible.length }}<span v-if="visible.length !== total"> of {{ total }}</span>)
+    <button v-if="visible.length" class="link" @click="toggleAll">
+      {{ allOpen ? 'collapse all' : 'expand all' }}
+    </button>
+  </h2>
+
+  <p v-if="!visible.length" class="empty">Nothing matches the current filter.</p>
+
+  <div v-for="f in visible" :key="keyOf(f)" class="finding" :class="'s-' + f.severity">
+    <div class="f-head" @click="expand(f)">
+      <span class="caret">{{ isOpen(f) ? '▾' : '▸' }}</span>
+      <span class="sev">{{ f.severity }}</span>
+      <span class="f-title">{{ f.finding }}</span>
+      <span class="loc mono">{{ f.location.file }}:{{ f.location.line }}</span>
+      <span class="meta">{{ f.confidence }}<span v-if="f.verification"> · {{ f.verification }}</span></span>
+    </div>
+    <div v-if="isOpen(f)" class="f-body">
+      <div class="label">Why it matters</div>
+      <div class="muted">{{ f.rationale }}</div>
+      <template v-if="f.evidence">
+        <div class="label">Evidence</div>
+        <pre>{{ f.evidence }}</pre>
+      </template>
+      <template v-if="f.suggestion">
+        <div class="label">Suggested fix</div>
+        <div class="muted">{{ f.suggestion }}</div>
+      </template>
+      <template v-if="f.corroborated_by && f.corroborated_by.length">
+        <div class="label">Corroborated by</div>
+        <div class="muted">{{ f.corroborated_by.join(', ') }}</div>
+      </template>
+    </div>
+  </div>
+
+  <template v-if="report.seam_accounting && report.seam_accounting.length">
+    <h2>Seam coverage</h2>
+    <div v-for="s in report.seam_accounting" :key="s.seam_id" class="row">
+      <span class="state" :class="'st-' + s.state">{{ s.state }}</span>
+      <span class="muted">Seam {{ s.seam_id }}<span v-if="s.note"> — {{ s.note }}</span></span>
+    </div>
+  </template>
+
+  <template v-if="report.caveats && report.caveats.length">
+    <h2>Coverage caveats</h2>
+    <ul class="plain"><li v-for="(c, i) in report.caveats" :key="i">{{ c }}</li></ul>
+  </template>
+
+  <template v-if="report.follow_up_recommended">
+    <h2>Follow-up recommended</h2>
+    <p class="muted">{{ report.follow_up_reason }}</p>
+  </template>
+
+  <template v-if="report.dismissed_findings && report.dismissed_findings.length">
+    <h2>Dismissed ({{ report.dismissed_findings.length }})</h2>
+    <details>
+      <summary>Findings the verifier ruled out</summary>
+      <div v-for="(d, i) in report.dismissed_findings" :key="i" class="row">
+        <span class="loc mono" style="flex:none;width:15rem">{{ d.location.file }}:{{ d.location.line }}</span>
+        <span class="muted">{{ d.finding }} — <em>{{ d.dismissal_reason }}</em></span>
+      </div>
+    </details>
+  </template>
+
+  <h2>Raw JSON</h2>
+  <textarea class="raw-json" readonly @click="$event.target.select()">{{ rawJson }}</textarea>
+
+  <div class="foot">
+    <div v-if="report.verification_stats">
+      Verification: {{ report.verification_stats.verified }} checked ·
+      {{ report.verification_stats.confirmed }} confirmed ·
+      {{ report.verification_stats.corrected }} corrected ·
+      {{ report.verification_stats.dismissed }} dismissed
+    </div>
+    <div v-for="r in report.repos" :key="r.slug">{{ r.repo }} — {{ r.source }}</div>
+    <div>{{ report.generatedAt }}</div>
+    <div class="mono">{{ report.runDir }}</div>
+  </div>
+</div>
+
+<!--
+  The data island. `write-report` replaces the placeholder below with the report
+  JSON, serialised with `<` escaped to < so a finding containing the
+  characters `</script>` cannot terminate this tag and inject markup.
+-->
+<script type="application/json" id="review-data">{"charge":"(no report data was inlined)","verdict":"unclear","verdict_rationale":"This file is the unrendered template. write-report replaces this placeholder with the real report.","consolidated_findings":[],"repos":[]}</script>
+
+<script>
+  const { createApp, computed, ref } = Vue;
+  const SEVERITIES = ["Blocker", "Major", "Minor", "Nit"];
+  const report = JSON.parse(document.getElementById("review-data").textContent);
+
+  createApp({
+    setup() {
+      const active = ref(new Set());
+      const open = ref(new Set());
+      const q = ref("");
+      const all = () => report.consolidated_findings || [];
+
+      const counts = computed(() => {
+        const c = Object.fromEntries(SEVERITIES.map((s) => [s, 0]));
+        for (const f of all()) if (f.severity in c) c[f.severity]++;
+        return c;
+      });
+
+      const visible = computed(() => {
+        const needle = q.value.trim().toLowerCase();
+        return all().filter((f) => {
+          if (active.value.size && !active.value.has(f.severity)) return false;
+          if (!needle) return true;
+          const hay = [f.finding, f.rationale, f.suggestion, f.evidence, f.location && f.location.file,
+                       ...(f.corroborated_by || [])].join(" ").toLowerCase();
+          return hay.includes(needle);
+        });
+      });
+
+      // Sets are replaced rather than mutated so Vue's reactivity sees the change.
+      const bump = (set, v) => { const n = new Set(set.value); n.has(v) ? n.delete(v) : n.add(v); set.value = n; };
+
+      // `open` holds STRING keys, never finding objects. ref() deeply reactifies
+      // a Set, so `new Set(open.value)` would copy out reactive *proxies* of the
+      // findings; a later `has(rawFinding)` would then miss and silently collapse
+      // the row. Strings have value identity, so the proxy/raw distinction cannot
+      // arise. Any number of findings can be open at once.
+      const keyOf = (f) => `${f.location && f.location.file}:${f.location && f.location.line}:${f.severity}`;
+      const isOpen = (f) => open.value.has(keyOf(f));
+      const allOpen = computed(() => visible.value.length > 0 && visible.value.every(isOpen));
+
+      return {
+        report, severities: SEVERITIES, rawJson: JSON.stringify(report, null, 2), counts, visible, active, open, q, allOpen, keyOf, isOpen,
+        total: computed(() => all().length),
+        toggle: (s) => bump(active, s),
+        expand: (f) => bump(open, keyOf(f)),
+        toggleAll: () => { open.value = allOpen.value ? new Set() : new Set(visible.value.map(keyOf)); },
+        reset: () => { active.value = new Set(); q.value = ""; },
+      };
+    },
+  }).mount("#app");
+</script>
 </body>
 </html>
