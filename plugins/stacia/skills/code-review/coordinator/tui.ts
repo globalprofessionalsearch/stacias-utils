@@ -138,9 +138,16 @@ const FOOTER = "↑↓ select · pgup/pgdn log · k kill · c/esc cancel-all · 
 function agentRow(a: Activity, selected: boolean, now: number): string {
 	const rd = a.maxRounds > 1 ? `r${a.round}/${a.maxRounds}` : "";
 	const el = a.startedAt ? fmtDur((a.endedAt || now) - a.startedAt) : "";
-	const idle = a.state === "running" && now - a.lastEventAt > 2500 ? " idle" : "";
 	const tok = `${a.usageSeen || a.tokens === 0 ? "" : "~"}${fmtNum(a.tokens)}t`;
 	const ctx = a.inputTokens ? `${fmtNum(a.inputTokens)} ctx` : "";
+	let status = a.currentTool.slice(0, 14);
+	if (a.state === "running" && a.currentActivity && a.activitySince) {
+		const secs = Math.round((now - a.activitySince) / 1000);
+		status = `${a.currentActivity.slice(0, 12)} ${secs}s`;
+	} else if (a.state === "running" && !a.currentActivity && now - (a.lastEventAt || a.startedAt || 0) > 2500) {
+		const secs = Math.round((now - (a.lastEventAt || a.startedAt || 0)) / 1000);
+		status = `thinking ${secs}s`;
+	}
 	return [
 		selected ? ">" : " ",
 		GLYPH[a.state],
@@ -151,7 +158,7 @@ function agentRow(a: Activity, selected: boolean, now: number): string {
 		ctx.padStart(9),
 		rd.padEnd(6),
 		el.padStart(6),
-		` ${a.currentTool.slice(0, 14)}${idle}`,
+		` ${status}`,
 	].join(" ");
 }
 

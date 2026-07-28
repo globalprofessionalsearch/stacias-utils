@@ -34,8 +34,11 @@
             "description": "File path (repo-relative)"
           },
           "line": {
-            "type": "integer",
-            "description": "Primary line number for this region. Must be a number, not a quoted string."
+            "type": [
+              "integer",
+              "string"
+            ],
+            "description": "Primary line number for this region"
           },
           "rationale": {
             "type": "string",
@@ -65,8 +68,11 @@
             "description": "File path (repo-relative)"
           },
           "line": {
-            "type": "integer",
-            "description": "Primary line number for this region. Must be a number, not a quoted string."
+            "type": [
+              "integer",
+              "string"
+            ],
+            "description": "Primary line number for this region"
           },
           "rationale": {
             "type": "string",

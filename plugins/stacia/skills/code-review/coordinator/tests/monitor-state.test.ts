@@ -374,14 +374,14 @@ describe("MonitorState text builders", () => {
 		expect(lines[2]).toBe("  1 agents · 0 done · 1 busy · 0 gone · seams 0/1");
 	});
 
-	it("widgetLines marks an estimated token count and an idle agent", () => {
+	it("widgetLines marks an estimated token count and a thinking agent", () => {
 		const state = new MonitorState();
 		const a = state.register("security", "security");
 		a.state = "running";
 		a.tokens = 30;
 		a.lastEventAt = 0;
 		expect(state.widgetLines(0, 10_000)[1]).toContain("~30t");
-		expect(state.widgetLines(0, 10_000)[1]).toContain("idle");
+		expect(state.widgetLines(0, 10_000)[1]).toContain("thinking");
 	});
 
 	it("progressLine summarises the run on one line", () => {
