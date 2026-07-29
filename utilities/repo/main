@@ -1,0 +1,60 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SEARCH_ROOT="$HOME/Documents/code"
+
+if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
+  cat <<EOF
+repo - resolve a repository path under ~/Documents/code
+
+Usage: repo <name>
+
+Searches ~/Documents/code for directories whose name matches <name>.
+Prints the fully qualified path to stdout.
+
+If multiple repositories share the same name, prompts you to choose.
+
+Examples:
+  repo dagster-pipeline          Print the path to dagster-pipeline
+  cd \$(summon repo my-service)   Jump to a repo by name
+EOF
+  exit 0
+fi
+
+if [[ $# -eq 0 ]]; then
+  echo "repo: expected a repository name" >&2
+  echo "Run 'repo --help' for usage." >&2
+  exit 1
+fi
+
+name="$1"
+
+matches=()
+while IFS= read -r line; do
+  matches+=("$line")
+done < <(find "$SEARCH_ROOT" -maxdepth 4 -type d -name "$name" 2>/dev/null | LC_ALL=C sort)
+
+if [[ ${#matches[@]} -eq 0 ]]; then
+  echo "repo: no repository named '$name' found under $SEARCH_ROOT" >&2
+  exit 1
+fi
+
+if [[ ${#matches[@]} -eq 1 ]]; then
+  printf '%s\n' "${matches[0]}"
+  exit 0
+fi
+
+echo "Multiple matches for '$name':" >&2
+for i in "${!matches[@]}"; do
+  printf '  %d) %s\n' "$((i + 1))" "${matches[$i]}" >&2
+done
+
+while true; do
+  printf 'Which one? [1-%d] ' "${#matches[@]}" >&2
+  read -r choice
+  if [[ "$choice" =~ ^[0-9]+$ ]] && (( choice >= 1 && choice <= ${#matches[@]} )); then
+    printf '%s\n' "${matches[$((choice - 1))]}"
+    exit 0
+  fi
+  echo "Invalid choice." >&2
+done

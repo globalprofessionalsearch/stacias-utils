@@ -1,41 +1,27 @@
 #!/usr/bin/env bash
-# ============================================================
-# repos - split the current iTerm tab to the Jeenie repos directory
-# ============================================================
 set -euo pipefail
 
 BASE_DIR="$HOME/Documents/code/github/globalprofessionalsearch"
 
-# Parse arguments
-print_path=0
 repo_name=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     -h|--help)
       cat <<EOF
-repos - split the current iTerm tab horizontally at the Jeenie repos directory
+repos - resolve a Jeenie repository path under globalprofessionalsearch
 
-Usage: repos [REPO] [-p|--path]
+Usage: repos [REPO]
 
-  REPO        Optional repository directory name under globalprofessionalsearch.
-              If omitted, operates on the base repos directory.
-
-  -p, --path  Print the target directory path and exit, without opening a pane.
-              Common use: cd \$(summon repos -p)
-              Or: cd \$(summon repos dagster-pipeline -p)
+  REPO  Optional repository directory name under globalprofessionalsearch.
+        If omitted, prints the base repos directory.
 
 Examples:
-  repos                      Split iTerm at $BASE_DIR
-  repos -p                   Print $BASE_DIR
-  repos dagster-pipeline     Split iTerm at dagster-pipeline repo
-  repos dagster-pipeline -p  Print path to dagster-pipeline repo
+  repos                      Print $BASE_DIR
+  repos dagster-pipeline     Print path to dagster-pipeline repo
+  cd \$(summon repos my-svc)  Jump to a repo by name
 EOF
       exit 0
-      ;;
-    -p|--path)
-      print_path=1
-      shift
       ;;
     -*)
       echo "repos: unknown flag: $1" >&2
@@ -54,14 +40,12 @@ EOF
   esac
 done
 
-# Determine target directory
 if [[ -n "$repo_name" ]]; then
   TARGET_DIR="$BASE_DIR/$repo_name"
 else
   TARGET_DIR="$BASE_DIR"
 fi
 
-# Validate directory exists
 if [[ ! -d "$TARGET_DIR" ]]; then
   if [[ -n "$repo_name" ]]; then
     echo "repos: repository not found: $repo_name" >&2
@@ -72,27 +56,4 @@ if [[ ! -d "$TARGET_DIR" ]]; then
   exit 1
 fi
 
-# Print path or open iTerm
-if [[ $print_path -eq 1 ]]; then
-  printf '%s\n' "$TARGET_DIR"
-  exit 0
-fi
-
-osascript - "$TARGET_DIR" <<'APPLESCRIPT'
-on run argv
-  set targetDir to item 1 of argv
-  tell application "iTerm2"
-    activate
-    if (count of windows) = 0 then
-      set newSession to (current session of (create window with default profile))
-    else
-      tell current session of current window
-        set newSession to (split horizontally with default profile)
-      end tell
-    end if
-    tell newSession
-      write text "cd " & quoted form of targetDir & " && clear"
-    end tell
-  end tell
-end run
-APPLESCRIPT
+printf '%s\n' "$TARGET_DIR"
