@@ -39,5 +39,5 @@ pub fn deny_response(reason: &str, instruction: Option<&str>) -> HookResponse {
 }
 
 pub fn uncertain_response(summary: &str) -> HookResponse {
-    hook_response("ask", "", summary)
+    hook_response("ask", summary, "")
 }
