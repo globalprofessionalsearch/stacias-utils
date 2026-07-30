@@ -39,7 +39,23 @@ fn bootstrap_config(dir: &PathBuf, config_path: &PathBuf) {
     {
         Ok(mut f) => {
             use std::io::Write;
-            let _ = writeln!(f, "# Permission Sieve configuration\n\nscripts: []");
+            let _ = write!(f, "\
+# Permission Sieve configuration
+# Copy example scripts from the plugin's examples/ directory into scripts/ here,
+# then uncomment and adjust the entries below.
+
+scripts: []
+
+# scripts:
+#   - path: scripts/allow-read-only.lua
+#     description: Auto-approves read-only tools (Read, Grep, Glob, LS)
+#
+#   - path: scripts/block-destructive.lua
+#     description: Blocks destructive commands (rm -rf, git clean, force push)
+#
+# Optional overrides:
+# summarizer_model: claude-haiku-4-5-20251001
+");
         }
         Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
         Err(e) => die(&format!("Failed to write {}: {e}", config_path.display())),
