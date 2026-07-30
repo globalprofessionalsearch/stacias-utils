@@ -1,4 +1,4 @@
-use std::{env, process};
+use std::env;
 
 use serde::{Deserialize, Serialize};
 
@@ -6,11 +6,6 @@ const API_URL: &str = "https://api.anthropic.com/v1/messages";
 const API_VERSION: &str = "2023-06-01";
 const MAX_TOKENS: u32 = 150;
 const TIMEOUT_SECS: u64 = 15;
-
-fn die(msg: &str) -> ! {
-    eprintln!("{msg}");
-    process::exit(2);
-}
 
 #[derive(Serialize)]
 struct ApiRequest<'a> {
@@ -35,9 +30,9 @@ struct ContentBlock {
     text: String,
 }
 
-pub fn summarize(tool_name: &str, tool_input: &serde_json::Value, model: &str) -> String {
-    let api_key =
-        env::var("ANTHROPIC_API_KEY").unwrap_or_else(|_| die("ANTHROPIC_API_KEY not set"));
+pub fn summarize(tool_name: &str, tool_input: &serde_json::Value, model: &str) -> Result<String, String> {
+    let api_key = env::var("ANTHROPIC_API_KEY")
+        .map_err(|_| "ANTHROPIC_API_KEY not set".to_string())?;
 
     let input_summary: String = {
         let full = serde_json::to_string(tool_input).unwrap_or_default();
@@ -71,26 +66,25 @@ pub fn summarize(tool_name: &str, tool_input: &serde_json::Value, model: &str) -
             .build(),
     );
 
-    let json_body = serde_json::to_vec(&body).unwrap_or_else(|e| die(&format!("Failed to serialize request: {e}")));
+    let json_body = serde_json::to_vec(&body)
+        .map_err(|e| format!("Failed to serialize request: {e}"))?;
 
-    let response = agent
+    let mut resp = agent
         .post(API_URL)
         .header("x-api-key", &api_key)
         .header("anthropic-version", API_VERSION)
         .content_type("application/json")
-        .send(&json_body);
+        .send(&json_body)
+        .map_err(|e| format!("Summarizer API call failed: {e}"))?;
 
-    match response {
-        Ok(mut resp) => {
-            let api_resp: ApiResponse = resp
-                .body_mut()
-                .read_json()
-                .unwrap_or_else(|e| die(&format!("Failed to parse summarizer response: {e}")));
-            if api_resp.content.is_empty() {
-                die("Summarizer returned empty response");
-            }
-            api_resp.content[0].text.clone()
-        }
-        Err(e) => die(&format!("Summarizer API call failed: {e}")),
+    let api_resp: ApiResponse = resp
+        .body_mut()
+        .read_json()
+        .map_err(|e| format!("Failed to parse summarizer response: {e}"))?;
+
+    if api_resp.content.is_empty() {
+        return Err("Summarizer returned empty response".to_string());
     }
+
+    Ok(api_resp.content[0].text.clone())
 }

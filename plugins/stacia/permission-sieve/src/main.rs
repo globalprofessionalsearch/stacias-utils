@@ -127,7 +127,13 @@ fn main() {
     let scripts = config.scripts();
 
     if scripts.is_empty() {
-        let summary = summarizer::summarize(tool_name, &tool_input, config.summarizer_model());
+        let (summary, error) = match summarizer::summarize(tool_name, &tool_input, config.summarizer_model()) {
+            Ok(s) => (Some(s), None),
+            Err(e) => {
+                eprintln!("Warning: summarizer unavailable: {e}");
+                (None, Some(e))
+            }
+        };
         let record = DecisionRecord {
             ts: now_utc(),
             session_id: session_id.clone(),
@@ -136,13 +142,14 @@ fn main() {
             tool_input_summary: input_summary,
             scripts_run: vec![],
             resolution: "uncertain".to_string(),
-            error_detail: None,
-            summarizer_output: Some(summary.clone()),
+            error_detail: error,
+            summarizer_output: summary.clone(),
             user_decision: None,
             disposition: "asked".to_string(),
         };
         append_log(&log_path, &record);
-        println!("{}", serde_json::to_string(&uncertain_response(&summary)).unwrap());
+        let message = summary.unwrap_or_default();
+        println!("{}", serde_json::to_string(&uncertain_response(&message)).unwrap());
         return;
     }
 
@@ -188,14 +195,20 @@ fn main() {
             ("error", Some(error_msg.clone()), None, "error", None)
         }
         Resolution::Uncertain => {
-            let summary =
-                summarizer::summarize(tool_name, &tool_input, config.summarizer_model());
+            let (summary, err) = match summarizer::summarize(tool_name, &tool_input, config.summarizer_model()) {
+                Ok(s) => (Some(s), None),
+                Err(e) => {
+                    eprintln!("Warning: summarizer unavailable: {e}");
+                    (None, Some(e))
+                }
+            };
+            let message = summary.clone().unwrap_or_default();
             (
                 "uncertain",
-                None,
-                Some(summary.clone()),
+                err,
+                summary,
                 "asked",
-                Some(uncertain_response(&summary)),
+                Some(uncertain_response(&message)),
             )
         }
     };
