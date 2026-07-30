@@ -4,8 +4,6 @@ use serde::Serialize;
 pub struct HookResponse {
     #[serde(rename = "hookSpecificOutput")]
     pub hook_specific_output: HookSpecificOutput,
-    #[serde(rename = "systemMessage")]
-    pub system_message: String,
 }
 
 #[derive(Serialize)]
@@ -16,6 +14,8 @@ pub struct HookSpecificOutput {
     pub permission_decision: String,
     #[serde(rename = "permissionDecisionReason")]
     pub permission_decision_reason: String,
+    #[serde(rename = "systemMessage", skip_serializing_if = "String::is_empty")]
+    pub system_message: String,
 }
 
 fn hook_response(decision: &str, reason: &str, message: &str) -> HookResponse {
@@ -24,8 +24,8 @@ fn hook_response(decision: &str, reason: &str, message: &str) -> HookResponse {
             hook_event_name: "PreToolUse".into(),
             permission_decision: decision.into(),
             permission_decision_reason: reason.into(),
+            system_message: message.into(),
         },
-        system_message: message.into(),
     }
 }
 
