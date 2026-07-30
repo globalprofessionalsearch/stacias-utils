@@ -467,21 +467,63 @@ install_plugins() {
 
 # ---------------------------------------------------------------------------
 # One-shot setup: git hooks + Claude Code plugins + shell-rc hints.
-# Idempotent.
+# Idempotent — safe to re-run after pulling new code.
 #  - Claude Code plugins: registered via the local marketplace in plugins/ and
 #    installed at user scope. NOT a symlink — see install_plugins.
+#  - Permission sieve: builds the Rust dispatcher and bootstraps the user's
+#    config directory at ~/.cache/stacia-permission-sieve/.
 # ---------------------------------------------------------------------------
+
+build_permission_sieve() {
+  local sieve_dir="$PLUGIN_DIR/stacia/permission-sieve"
+  local config_dir="$HOME/.cache/stacia-permission-sieve"
+
+  if ! command -v cargo >/dev/null 2>&1; then
+    err "! permission-sieve: cargo not on PATH — skipping build"
+    err "    Install Rust (https://rustup.rs) and re-run \`summon setup\`"
+    return 0
+  fi
+
+  echo "  building permission-sieve dispatcher..."
+  if cargo build --release --manifest-path "$sieve_dir/Cargo.toml" --quiet 2>&1; then
+    echo "✓ permission-sieve: dispatcher built ($(du -h "$sieve_dir/target/release/dispatcher" | cut -f1 | xargs))"
+  else
+    err "! permission-sieve: cargo build failed"
+    return 1
+  fi
+
+  mkdir -p "$config_dir"
+  if [[ ! -f "$config_dir/sieve.yaml" ]]; then
+    cat > "$config_dir/sieve.yaml" <<'YAML'
+# Permission Sieve configuration
+# Copy example scripts from the plugin's examples/ directory into scripts/ here,
+# then uncomment and adjust the entries below.
+
+scripts: []
+
+# scripts:
+#   - path: scripts/allow-read-only.lua
+#     description: Auto-approves read-only tools (Read, Grep, Glob, LS)
+#
+#   - path: scripts/block-destructive.lua
+#     description: Blocks destructive commands (rm -rf, git clean, force push)
+#
+# Optional overrides:
+# summarizer_model: claude-haiku-4-5-20251001
+YAML
+    mkdir -p "$config_dir/scripts"
+    echo "✓ permission-sieve: config bootstrapped at $config_dir"
+  else
+    echo "✓ permission-sieve: config exists at $config_dir (unchanged)"
+  fi
+}
+
 cmd_setup() {
   git -C "$REPO" config core.hooksPath .githooks
   echo "✓ git hooks enabled (core.hooksPath=.githooks)"
 
   install_plugins
-
-  # NOTE: a previous revision pruned repo-owned symlinks out of ~/.claude/skills
-  # here, on the premise that Claude Code was permanently unwired. That premise
-  # is being reversed — the code-review coordinator is moving to Claude Code —
-  # so the pruner is removed. Do not reinstate it: it would uninstall the port
-  # on the next `summon setup`.
+  build_permission_sieve
 
   cat <<EOF
 
