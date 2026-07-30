@@ -41,6 +41,19 @@ jobs:
           done
           [ "$found" = 1 ] || echo "no utility test suites found"
 
+  permission-sieve:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: plugins/stacia/permission-sieve
+      - name: Build
+        run: cargo build --release --manifest-path plugins/stacia/permission-sieve/Cargo.toml
+      - name: Test (includes startup SLA)
+        run: cargo test --manifest-path plugins/stacia/permission-sieve/Cargo.toml
+
   commit:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
