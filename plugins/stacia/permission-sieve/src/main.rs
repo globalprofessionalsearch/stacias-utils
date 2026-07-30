@@ -3,13 +3,15 @@ use std::path::PathBuf;
 use std::{env, fs, process};
 
 mod config;
+mod log;
 mod response;
 mod sieve;
 mod summarizer;
 
 use config::SieveConfig;
+use log::{DecisionRecord, ScriptRun, append_log, now_utc, tool_input_summary};
 use response::{allow_response, deny_response, uncertain_response};
-use sieve::{Resolution, create_lua, resolve, run_script, set_request};
+use sieve::{Outcome, Resolution, create_lua, resolve, run_script, set_request};
 
 fn die(msg: &str) -> ! {
     eprintln!("{msg}");
@@ -44,6 +46,29 @@ fn bootstrap_config(dir: &PathBuf, config_path: &PathBuf) {
     }
 }
 
+fn outcomes_to_script_runs(outcomes: &[Outcome], scripts: &[&config::ScriptEntry]) -> Vec<ScriptRun> {
+    outcomes
+        .iter()
+        .zip(scripts.iter())
+        .map(|(outcome, entry)| {
+            let (outcome_str, reason, instruction) = match outcome {
+                Outcome::Approved => ("approved", None, None),
+                Outcome::Pass => ("pass", None, None),
+                Outcome::Denied { reason, instruction } => {
+                    ("denied", reason.clone(), instruction.clone())
+                }
+                Outcome::Error(msg) => ("error", Some(msg.clone()), None),
+            };
+            ScriptRun {
+                name: entry.path.clone(),
+                outcome: outcome_str.to_string(),
+                reason,
+                instruction,
+            }
+        })
+        .collect()
+}
+
 fn main() {
     let mut input = String::new();
     if let Err(e) = std::io::stdin().read_to_string(&mut input) {
@@ -63,9 +88,18 @@ fn main() {
         .get("tool_input")
         .cloned()
         .unwrap_or_else(|| serde_json::json!({}));
+    let session_id = event
+        .get("session_id")
+        .and_then(|v| v.as_str())
+        .map(String::from);
+    let agent_type = event
+        .get("agent_type")
+        .and_then(|v| v.as_str())
+        .map(String::from);
 
     let dir = config_dir();
     let config_path = dir.join("sieve.yaml");
+    let log_path = dir.join("decisions.jsonl");
     bootstrap_config(&dir, &config_path);
 
     let config = match SieveConfig::load(&config_path) {
@@ -73,10 +107,25 @@ fn main() {
         Err(e) => die(&e),
     };
 
+    let input_summary = tool_input_summary(&tool_input);
     let scripts = config.scripts();
 
     if scripts.is_empty() {
         let summary = summarizer::summarize(tool_name, &tool_input, config.summarizer_model());
+        let record = DecisionRecord {
+            ts: now_utc(),
+            session_id: session_id.clone(),
+            agent_type: agent_type.clone(),
+            tool_name: tool_name.to_string(),
+            tool_input_summary: input_summary,
+            scripts_run: vec![],
+            resolution: "uncertain".to_string(),
+            error_detail: None,
+            summarizer_output: Some(summary.clone()),
+            user_decision: None,
+            disposition: "asked".to_string(),
+        };
+        append_log(&log_path, &record);
         println!("{}", serde_json::to_string(&uncertain_response(&summary)).unwrap());
         return;
     }
@@ -86,7 +135,7 @@ fn main() {
         let lua = create_lua();
         set_request(&lua, &event);
         let outcome = run_script(&lua, entry, &dir);
-        let short_circuit = matches!(outcome, sieve::Outcome::Error(_) | sieve::Outcome::Denied { .. });
+        let short_circuit = matches!(outcome, Outcome::Error(_) | Outcome::Denied { .. });
         outcomes.push(outcome);
         if short_circuit {
             break;
@@ -94,23 +143,70 @@ fn main() {
     }
 
     let resolution = resolve(&outcomes);
+    let script_runs = outcomes_to_script_runs(&outcomes, &scripts);
 
-    let response = match resolution {
-        Resolution::Allowed => allow_response(),
-        Resolution::Denied { reason, instruction } => {
-            deny_response(
+    let (resolution_str, error_detail, summarizer_output, disposition, response) = match resolution
+    {
+        Resolution::Allowed => (
+            "approved",
+            None,
+            None,
+            "allowed",
+            Some(allow_response()),
+        ),
+        Resolution::Denied {
+            reason,
+            instruction,
+        } => (
+            "denied",
+            None,
+            None,
+            "blocked",
+            Some(deny_response(
                 reason.as_deref().unwrap_or("denied by sieve"),
                 instruction.as_deref(),
-            )
+            )),
+        ),
+        Resolution::Error(ref msg) => {
+            let error_msg = msg.clone();
+            ("error", Some(error_msg.clone()), None, "error", None)
         }
-        Resolution::Error(msg) => die(&msg),
         Resolution::Uncertain => {
-            let summary = summarizer::summarize(tool_name, &tool_input, config.summarizer_model());
-            uncertain_response(&summary)
+            let summary =
+                summarizer::summarize(tool_name, &tool_input, config.summarizer_model());
+            (
+                "uncertain",
+                None,
+                Some(summary.clone()),
+                "asked",
+                Some(uncertain_response(&summary)),
+            )
         }
     };
 
-    println!("{}", serde_json::to_string(&response).unwrap());
+    let record = DecisionRecord {
+        ts: now_utc(),
+        session_id,
+        agent_type,
+        tool_name: tool_name.to_string(),
+        tool_input_summary: input_summary,
+        scripts_run: script_runs,
+        resolution: resolution_str.to_string(),
+        error_detail,
+        summarizer_output,
+        user_decision: None,
+        disposition: disposition.to_string(),
+    };
+    append_log(&log_path, &record);
+
+    match response {
+        Some(resp) => println!("{}", serde_json::to_string(&resp).unwrap()),
+        None => {
+            // Resolution::Error — error_detail was set above
+            let msg = record.error_detail.as_deref().unwrap_or("unknown error");
+            die(msg);
+        }
+    }
 }
 
 #[cfg(test)]
@@ -132,7 +228,6 @@ mod tests {
         });
         let input_str = serde_json::to_string(&input).unwrap();
 
-        // Warm up
         let _ = SieveConfig::load(&config_path);
         let _: serde_json::Value = serde_json::from_str(&input_str).unwrap();
         let _ = create_lua();
