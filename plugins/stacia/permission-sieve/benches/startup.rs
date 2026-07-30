@@ -1,6 +1,7 @@
 use std::io::Write;
 
 use criterion::{criterion_group, criterion_main, Criterion};
+use permission_sieve::sieve::{create_lua, set_request};
 
 fn bench_empty_sieve_no_api(c: &mut Criterion) {
     let dir = tempfile::tempdir().unwrap();
@@ -29,6 +30,15 @@ fn bench_empty_sieve_no_api(c: &mut Criterion) {
         b.iter(|| {
             let _event: serde_json::Value = serde_json::from_str(&input_str).unwrap();
             let _config: serde_yaml::Value = serde_yaml::from_str(&config_str).unwrap();
+        });
+    });
+
+    c.bench_function("empty_sieve_with_lua_init", |b| {
+        b.iter(|| {
+            let event: serde_json::Value = serde_json::from_str(&input_str).unwrap();
+            let _config: serde_yaml::Value = serde_yaml::from_str(&config_str).unwrap();
+            let lua = create_lua();
+            set_request(&lua, &event);
         });
     });
 }

@@ -18,13 +18,26 @@ pub struct HookSpecificOutput {
     pub permission_decision_reason: String,
 }
 
-pub fn uncertain_response(summary: &str) -> HookResponse {
+fn hook_response(decision: &str, reason: &str, message: &str) -> HookResponse {
     HookResponse {
         hook_specific_output: HookSpecificOutput {
             hook_event_name: "PreToolUse".into(),
-            permission_decision: "ask".into(),
-            permission_decision_reason: String::new(),
+            permission_decision: decision.into(),
+            permission_decision_reason: reason.into(),
         },
-        system_message: summary.to_string(),
+        system_message: message.into(),
     }
+}
+
+pub fn allow_response() -> HookResponse {
+    hook_response("allow", "", "")
+}
+
+pub fn deny_response(reason: &str, instruction: Option<&str>) -> HookResponse {
+    let decision_reason = instruction.unwrap_or(reason);
+    hook_response("deny", decision_reason, "")
+}
+
+pub fn uncertain_response(summary: &str) -> HookResponse {
+    hook_response("ask", "", summary)
 }
