@@ -148,7 +148,7 @@ fn main() {
             disposition: "asked".to_string(),
         };
         append_log(&log_path, &record);
-        let message = summary.unwrap_or_default();
+        let message = summary.unwrap_or_else(|| format!("Permission sieve: summarizer unavailable ({})", record.error_detail.as_deref().unwrap_or("unknown error")));
         println!("{}", serde_json::to_string(&uncertain_response(&message)).unwrap());
         return;
     }
@@ -202,7 +202,7 @@ fn main() {
                     (None, Some(e))
                 }
             };
-            let message = summary.clone().unwrap_or_default();
+            let message = summary.clone().unwrap_or_else(|| format!("Permission sieve: summarizer unavailable ({})", err.as_deref().unwrap_or("unknown error")));
             (
                 "uncertain",
                 err,
