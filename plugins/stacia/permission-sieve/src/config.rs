@@ -7,6 +7,7 @@ const DEFAULT_MODEL: &str = "claude-haiku-4-5-20251001";
 #[derive(Debug, Deserialize)]
 pub struct ScriptEntry {
     pub path: String,
+    #[allow(dead_code)]
     pub description: String,
     #[serde(default = "default_true")]
     pub enabled: bool,
