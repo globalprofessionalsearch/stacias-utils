@@ -4,6 +4,7 @@ use std::{env, fs, process};
 
 mod config;
 mod log;
+mod paths;
 mod response;
 mod sieve;
 mod summarizer;
@@ -153,10 +154,12 @@ fn main() {
         return;
     }
 
+    let paths = paths::extract_paths(tool_name, &tool_input);
+
     let mut outcomes = Vec::with_capacity(scripts.len());
     for entry in &scripts {
         let lua = create_lua();
-        set_request(&lua, &event);
+        set_request(&lua, &event, &paths);
         let outcome = run_script(&lua, entry, &dir);
         let short_circuit = matches!(outcome, Outcome::Error(_) | Outcome::Denied { .. });
         outcomes.push(outcome);
@@ -268,7 +271,7 @@ mod tests {
             let _tool_input = event.get("tool_input").unwrap();
             let _config = SieveConfig::load(&config_path).unwrap();
             let lua = create_lua();
-            set_request(&lua, &event);
+            set_request(&lua, &event, &[]);
         }
         let elapsed = start.elapsed();
         let per_iter = elapsed / 100;

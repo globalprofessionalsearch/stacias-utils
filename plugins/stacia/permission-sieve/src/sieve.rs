@@ -42,7 +42,7 @@ pub fn create_lua() -> Lua {
     lua
 }
 
-pub fn set_request(lua: &Lua, event: &serde_json::Value) {
+pub fn set_request(lua: &Lua, event: &serde_json::Value, paths: &[String]) {
     let globals = lua.globals();
     let table = lua
         .to_value(event)
@@ -54,6 +54,23 @@ pub fn set_request(lua: &Lua, event: &serde_json::Value) {
             eprintln!("Failed to convert event to Lua table: {e}");
             std::process::exit(2);
         });
+
+    // Add paths as a 1-indexed Lua array on the request table
+    let paths_table = lua.create_table().unwrap_or_else(|e| {
+        eprintln!("Failed to create paths table: {e}");
+        std::process::exit(2);
+    });
+    for (i, path) in paths.iter().enumerate() {
+        paths_table.set(i + 1, path.as_str()).unwrap_or_else(|e| {
+            eprintln!("Failed to set path entry: {e}");
+            std::process::exit(2);
+        });
+    }
+    table.set("paths", paths_table).unwrap_or_else(|e| {
+        eprintln!("Failed to set paths on request table: {e}");
+        std::process::exit(2);
+    });
+
     globals.set("request", table).unwrap_or_else(|e| {
         eprintln!("Failed to set request global: {e}");
         std::process::exit(2);
@@ -339,7 +356,7 @@ mod tests {
     fn request_table_accessible() {
         let lua = test_lua();
         let event = test_event();
-        set_request(&lua, &event);
+        set_request(&lua, &event, &[]);
         assert!(matches!(
             run_lua(&lua, r#"if request.tool_name == "Bash" then return "approved" else return "error", "wrong tool" end"#),
             Outcome::Approved
