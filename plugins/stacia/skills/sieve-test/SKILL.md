@@ -1,6 +1,6 @@
 ---
 name: sieve-test
-description: This skill should be used when the user asks to "test the sieve", "run sieve tests", "test permission sieve", "sieve test matrix", "verify sieve rules", or wants to verify, evaluate, or update the permission-sieve test suite and scripts.
+description: This skill should be used when the user asks to "test the sieve", "run sieve tests", "test permission sieve", "sieve test matrix", "verify sieve rules", "update checksums", or wants to verify, evaluate, or update the permission-sieve test suite and rules.
 ---
 
 # Permission Sieve Test Runner
@@ -10,72 +10,79 @@ suite.
 
 ## Capabilities
 
-This skill supports three modes:
-
-1. **Run** — execute the automated test suite against the deployed sieve
-2. **Evaluate** — analyze test results, identify gaps, and recommend new
-   test cases or script changes
-3. **Interactive** — walk through tests one at a time in a live Claude Code
-   session (for integration testing beyond what the automated suite covers)
+1. **Run** — execute the automated test suite
+2. **Evaluate** — analyze results, identify gaps, recommend changes
+3. **Interactive** — walk through tests in a live Claude Code session
 
 ## Source of Truth
 
 | What | Where |
 |------|-------|
 | Automated test suite | `permission-sieve/tests/test_sieve_rules.py` |
+| Rule checksums | `permission-sieve/tests/rules.sha256` |
+| Rule files | `permission-sieve/rules/*.lua` |
 | Interactive test cases | `references/test-cases.md` |
-| Deployed Lua scripts | `~/.cache/stacia-permission-sieve/scripts/` |
-| Repo Lua scripts | `permission-sieve/examples/pi-migration/` |
-| Decision log | `~/.cache/stacia-permission-sieve/decisions.jsonl` |
+| Decision log | `permission-sieve/decisions.jsonl` |
 | Dispatcher binary | `permission-sieve/target/release/dispatcher` |
 
 All paths are relative to `plugins/stacia/` in the stacias-utils repo.
 
+## Rule Change Protocol
+
+Rules and tests are protected by a checksum mechanism. CI enforces that
+any change to a rule file is accompanied by updated tests:
+
+1. **Change a rule** in `permission-sieve/rules/`.
+2. **Tests fail** — the checksum test detects the rule changed and reports
+   which files differ.
+3. **Update the test suite** — add, modify, or remove test cases in
+   `test_sieve_rules.py` to cover the new behavior.
+4. **Regenerate checksums:**
+   ```bash
+   python3 tests/test_sieve_rules.py --update-checksums
+   ```
+5. **Commit** the rule, updated tests, and updated checksums together.
+
+The checksum is a forcing function, not a coverage guarantee. Its purpose
+is to get a human's attention when rules change — to ensure the test suite
+is consciously reviewed, not to prove every branch is tested. Do not
+regenerate checksums without reviewing and updating tests. Do not add
+no-op test changes to satisfy the checksum — that defeats the purpose.
+
 ## Mode 1: Run the Automated Suite
 
 The test suite pipes tool-call JSON directly to the dispatcher binary —
-fully idempotent, no Claude Code session needed, no side effects. It
-tests the DEPLOYED scripts at `~/.cache/stacia-permission-sieve/`.
+fully idempotent, no Claude Code session needed, no side effects.
 
 ### Prerequisites
 
-1. The dispatcher binary is built and current:
+1. The dispatcher binary is built:
    ```bash
    cd plugins/stacia/permission-sieve && cargo build --release
    ```
-2. Scripts are deployed to `~/.cache/stacia-permission-sieve/scripts/`.
-3. Python 3 is available.
+2. Python 3 is available.
 
 ### Run
 
 ```bash
 cd plugins/stacia/permission-sieve
-python3 -m pytest tests/test_sieve_rules.py -v
-```
-
-Or without pytest:
-
-```bash
 python3 tests/test_sieve_rules.py -v
 ```
 
 ### Interpreting Results
 
-- A failing test means the deployed Lua scripts produce a different
-  decision than the test expects.
-- Before changing the test expectation, determine whether the Lua script
-  or the test is wrong — read the relevant script and trace the logic.
-- After changing a Lua script, redeploy it:
-  ```bash
-  cp examples/pi-migration/<script>.lua ~/.cache/stacia-permission-sieve/scripts/
-  ```
+- A **checksum failure** means a rule file changed but the test suite
+  was not updated. Review the changed rules, update tests, then
+  regenerate checksums.
+- A **test assertion failure** means the rules produce a different
+  decision than the test expects. Determine whether the rule or the
+  test is wrong by reading the relevant Lua script.
 
 ## Mode 2: Evaluate and Recommend
 
 When asked to evaluate the sieve rules or the test suite:
 
-1. **Read** the test suite at `permission-sieve/tests/test_sieve_rules.py`
-   and the deployed scripts at `~/.cache/stacia-permission-sieve/scripts/`.
+1. **Read** the test suite and the rule files in `permission-sieve/rules/`.
 2. **Run** the suite and capture results.
 3. **Identify gaps** — tool types, command patterns, or path patterns not
    covered by any test. Common gaps:
@@ -84,13 +91,10 @@ When asked to evaluate the sieve rules or the test suite:
    - Sensitive paths not covered by guards
 4. **Recommend** concrete changes:
    - New test cases to add to `test_sieve_rules.py`
-   - New entries for Lua script allowlists or guard patterns
-   - Script logic changes with rationale
-5. **Update** the test suite and/or scripts after user approval.
-   Always update the repo examples first, then deploy:
-   ```bash
-   cp examples/pi-migration/*.lua ~/.cache/stacia-permission-sieve/scripts/
-   ```
+   - New entries for Lua rule allowlists or guard patterns
+   - Rule logic changes with rationale
+5. **Update** the test suite and/or rules after user approval, then
+   regenerate checksums.
 
 ### Using the Decision Log for Gap Analysis
 
@@ -98,7 +102,7 @@ The decision log reveals real-world tool calls the sieve has seen.
 Cross-reference it against the test suite to find untested patterns:
 
 ```bash
-cat ~/.cache/stacia-permission-sieve/decisions.jsonl | python3 -c "
+cat permission-sieve/decisions.jsonl | python3 -c "
 import json, sys
 from collections import Counter
 tools = Counter()
@@ -109,9 +113,6 @@ for (tool, res), cnt in tools.most_common():
     print(f'  {tool:30s} {res:12s} {cnt}')
 "
 ```
-
-Compare this against the test classes in `test_sieve_rules.py` — any
-tool/resolution pair that appears in the log but has no test is a gap.
 
 ## Mode 3: Interactive Testing
 

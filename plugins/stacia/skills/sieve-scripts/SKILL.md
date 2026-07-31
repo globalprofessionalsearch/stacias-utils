@@ -22,9 +22,8 @@ modifying a script, read these files to confirm the current contract:
 | Path extraction logic | `permission-sieve/src/paths.rs` — `extract_paths()` |
 | Config schema | `permission-sieve/src/config.rs` — `SieveConfig`, `ScriptEntry` |
 | Hook response shapes | `permission-sieve/src/response.rs` |
-| Working examples | `permission-sieve/examples/` |
-| Runtime config | `~/.cache/stacia-permission-sieve/sieve.yaml` |
-| Deployed scripts | `~/.cache/stacia-permission-sieve/scripts/` |
+| Rule files | `permission-sieve/rules/*.lua` |
+| Test suite + checksums | `permission-sieve/tests/` |
 
 All paths are relative to `plugins/stacia/` in the stacias-utils repo.
 
@@ -33,15 +32,17 @@ All paths are relative to `plugins/stacia/` in the stacias-utils repo.
 1. **Read the source** — confirm the current `request.*` fields and valid return
    values by reading `sieve.rs` and `paths.rs`.
 2. **Choose an archetype** — deny, guard, or allow (see below).
-3. **Write the script** — a `.lua` file that receives `request` as a global and
-   returns an outcome string.
-4. **Deploy** — copy the script to `~/.cache/stacia-permission-sieve/scripts/`.
-5. **Register** — add an entry to `sieve.yaml` with `path`, `description`, and
-   optionally `enabled` and `timeout`.
-6. **Test** — trigger the relevant tool call and check `decisions.jsonl` for the
-   logged outcome.
-
-Scripts are loaded from disk on every invocation — no rebuild required.
+3. **Write the rule** — a `.lua` file in `permission-sieve/rules/`. Any `.lua`
+   file in that directory is auto-discovered and executed — no registration
+   needed. Rule execution order is undefined (the resolution algebra is
+   commutative).
+4. **Update tests** — add test cases to `tests/test_sieve_rules.py` covering
+   the new rule's behavior.
+5. **Regenerate checksums** — `python3 tests/test_sieve_rules.py --update-checksums`.
+   CI enforces that rule changes are accompanied by test updates via a checksum
+   mechanism. Do not regenerate checksums without reviewing and updating tests.
+6. **Verify** — run `python3 tests/test_sieve_rules.py -v` to confirm all tests
+   pass. Rules are loaded from disk on every invocation — no rebuild required.
 
 ## Resolution Algebra
 

@@ -15,13 +15,17 @@ Run:
     python3 tests/test_sieve_rules.py
 """
 
+import hashlib
 import json
 import os
 import subprocess
+import sys
 import unittest
 
 SIEVE_DIR = os.path.join(os.path.dirname(__file__), "..")
 DISPATCHER = os.path.join(SIEVE_DIR, "target", "release", "dispatcher")
+RULES_DIR = os.path.join(SIEVE_DIR, "rules")
+CHECKSUM_FILE = os.path.join(os.path.dirname(__file__), "rules.sha256")
 
 
 def sieve(tool_name: str, tool_input: dict) -> dict:
@@ -484,5 +488,88 @@ class TestUnknownTools(unittest.TestCase):
         self.assertEqual(decision(r), "ask")
 
 
+# ── Rule checksum verification ───────────────────────────────
+
+
+def compute_checksums() -> dict[str, str]:
+    """SHA-256 each .lua file in rules/, keyed by filename."""
+    checksums = {}
+    for name in sorted(os.listdir(RULES_DIR)):
+        if not name.endswith(".lua"):
+            continue
+        path = os.path.join(RULES_DIR, name)
+        with open(path, "rb") as f:
+            checksums[name] = hashlib.sha256(f.read()).hexdigest()
+    return checksums
+
+
+def load_checksums() -> dict[str, str]:
+    """Load saved checksums from rules.sha256."""
+    checksums = {}
+    if not os.path.exists(CHECKSUM_FILE):
+        return checksums
+    with open(CHECKSUM_FILE) as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            sha, name = line.split("  ", 1)
+            checksums[name] = sha
+    return checksums
+
+
+def save_checksums(checksums: dict[str, str]) -> None:
+    """Write checksums to rules.sha256 in sha256sum format."""
+    with open(CHECKSUM_FILE, "w") as f:
+        for name in sorted(checksums):
+            f.write(f"{checksums[name]}  {name}\n")
+
+
+class TestRuleChecksums(unittest.TestCase):
+    def test_rules_match_saved_checksums(self):
+        current = compute_checksums()
+        saved = load_checksums()
+
+        if not saved:
+            self.fail(
+                "No checksum file found at tests/rules.sha256. "
+                "Run: python3 tests/test_sieve_rules.py --update-checksums"
+            )
+
+        added = set(current) - set(saved)
+        removed = set(saved) - set(current)
+        changed = {
+            name for name in set(current) & set(saved)
+            if current[name] != saved[name]
+        }
+
+        if not added and not removed and not changed:
+            return
+
+        lines = [
+            "",
+            "Rule files have changed since the test suite was last updated.",
+            "Review and update the test cases, then regenerate checksums:",
+            "",
+            "    python3 tests/test_sieve_rules.py --update-checksums",
+            "",
+        ]
+        if added:
+            lines.append(f"  Added:   {', '.join(sorted(added))}")
+        if removed:
+            lines.append(f"  Removed: {', '.join(sorted(removed))}")
+        if changed:
+            lines.append(f"  Changed: {', '.join(sorted(changed))}")
+
+        self.fail("\n".join(lines))
+
+
 if __name__ == "__main__":
+    if "--update-checksums" in sys.argv:
+        checksums = compute_checksums()
+        save_checksums(checksums)
+        print(f"Updated {CHECKSUM_FILE} with {len(checksums)} rule(s):")
+        for name in sorted(checksums):
+            print(f"  {name}")
+        sys.exit(0)
     unittest.main()
