@@ -9,7 +9,7 @@ mod response;
 mod sieve;
 mod summarizer;
 
-use config::SieveConfig;
+use config::{RuleEntry, discover_rules, summarizer_model};
 use log::{DecisionRecord, ScriptRun, append_log, now_utc, tool_input_summary};
 use response::{allow_response, deny_response, uncertain_response};
 use sieve::{Outcome, Resolution, create_lua, resolve, run_script, set_request};
@@ -29,11 +29,14 @@ fn config_dir() -> PathBuf {
         .join("stacia-permission-sieve")
 }
 
-fn outcomes_to_script_runs(outcomes: &[Outcome], scripts: &[&config::ScriptEntry]) -> Vec<ScriptRun> {
+fn outcomes_to_runs(outcomes: &[Outcome], rules: &[RuleEntry]) -> Vec<ScriptRun> {
     outcomes
         .iter()
-        .zip(scripts.iter())
+        .zip(rules.iter())
         .map(|(outcome, entry)| {
+            let name = entry.path.file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_else(|| entry.path.display().to_string());
             let (outcome_str, reason, instruction) = match outcome {
                 Outcome::Approved => ("approved", None, None),
                 Outcome::Uncertain => ("uncertain", None, None),
@@ -44,7 +47,7 @@ fn outcomes_to_script_runs(outcomes: &[Outcome], scripts: &[&config::ScriptEntry
                 Outcome::Error(msg) => ("error", Some(msg.clone()), None),
             };
             ScriptRun {
-                name: entry.path.clone(),
+                name,
                 outcome: outcome_str.to_string(),
                 reason,
                 instruction,
@@ -82,19 +85,13 @@ fn main() {
         .map(String::from);
 
     let dir = config_dir();
-    let config_path = dir.join("sieve.yaml");
     let log_path = dir.join("decisions.jsonl");
-
-    let config = match SieveConfig::load(&config_path) {
-        Ok(c) => c,
-        Err(e) => die(&e),
-    };
+    let rules = discover_rules(&dir);
 
     let input_summary = tool_input_summary(&tool_input);
-    let rules = config.rules();
 
     if rules.is_empty() {
-        let (summary, error) = match summarizer::summarize(tool_name, &tool_input, config.summarizer_model()) {
+        let (summary, error) = match summarizer::summarize(tool_name, &tool_input, summarizer_model()) {
             Ok(s) => (Some(s), None),
             Err(e) => {
                 eprintln!("Warning: summarizer unavailable: {e}");
@@ -126,7 +123,7 @@ fn main() {
     for entry in &rules {
         let lua = create_lua();
         set_request(&lua, &event, &paths);
-        let outcome = run_script(&lua, entry, &dir);
+        let outcome = run_script(&lua, entry);
         let short_circuit = matches!(outcome, Outcome::Error(_) | Outcome::Denied { .. });
         outcomes.push(outcome);
         if short_circuit {
@@ -135,7 +132,7 @@ fn main() {
     }
 
     let resolution = resolve(&outcomes);
-    let script_runs = outcomes_to_script_runs(&outcomes, &rules);
+    let script_runs = outcomes_to_runs(&outcomes, &rules);
 
     let (resolution_str, error_detail, summarizer_output, disposition, response) = match resolution
     {
@@ -164,7 +161,7 @@ fn main() {
             ("error", Some(error_msg.clone()), None, "error", None)
         }
         Resolution::Uncertain => {
-            let (summary, err) = match summarizer::summarize(tool_name, &tool_input, config.summarizer_model()) {
+            let (summary, err) = match summarizer::summarize(tool_name, &tool_input, summarizer_model()) {
                 Ok(s) => (Some(s), None),
                 Err(e) => {
                     eprintln!("Warning: summarizer unavailable: {e}");
@@ -200,7 +197,6 @@ fn main() {
     match response {
         Some(resp) => println!("{}", serde_json::to_string(&resp).unwrap()),
         None => {
-            // Resolution::Error — error_detail was set above
             let msg = record.error_detail.as_deref().unwrap_or("unknown error");
             die(msg);
         }
@@ -215,8 +211,7 @@ mod tests {
     #[test]
     fn startup_sla_under_1000us() {
         let dir = tempfile::tempdir().unwrap();
-        let config_path = dir.path().join("sieve.yaml");
-        std::fs::write(&config_path, "scripts: []\n").unwrap();
+        std::fs::create_dir_all(dir.path().join("rules")).unwrap();
 
         let input = serde_json::json!({
             "tool_name": "Bash",
@@ -226,7 +221,7 @@ mod tests {
         });
         let input_str = serde_json::to_string(&input).unwrap();
 
-        let _ = SieveConfig::load(&config_path);
+        let _ = discover_rules(dir.path());
         let _: serde_json::Value = serde_json::from_str(&input_str).unwrap();
         let _ = create_lua();
 
@@ -235,7 +230,7 @@ mod tests {
             let event: serde_json::Value = serde_json::from_str(&input_str).unwrap();
             let _tool_name = event.get("tool_name").and_then(|v| v.as_str()).unwrap();
             let _tool_input = event.get("tool_input").unwrap();
-            let _config = SieveConfig::load(&config_path).unwrap();
+            let _ = discover_rules(dir.path());
             let lua = create_lua();
             set_request(&lua, &event, &[]);
         }

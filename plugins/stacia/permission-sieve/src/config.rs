@@ -1,49 +1,28 @@
-use std::path::Path;
-
-use serde::Deserialize;
+use std::path::{Path, PathBuf};
 
 const DEFAULT_MODEL: &str = "claude-haiku-4-5-20251001";
+const DEFAULT_TIMEOUT: u64 = 10;
 
-#[derive(Debug, Deserialize)]
-pub struct ScriptEntry {
-    pub path: String,
-    #[allow(dead_code)]
-    pub description: String,
-    #[serde(default = "default_true")]
-    pub enabled: bool,
-    #[serde(default = "default_timeout")]
+pub struct RuleEntry {
+    pub path: PathBuf,
     pub timeout: u64,
 }
 
-fn default_true() -> bool {
-    true
+pub fn discover_rules(config_dir: &Path) -> Vec<RuleEntry> {
+    let rules_dir = config_dir.join("rules");
+    let mut entries: Vec<RuleEntry> = match std::fs::read_dir(&rules_dir) {
+        Ok(iter) => iter
+            .filter_map(|e| e.ok())
+            .map(|e| e.path())
+            .filter(|p| p.extension().is_some_and(|ext| ext == "lua"))
+            .map(|p| RuleEntry { path: p, timeout: DEFAULT_TIMEOUT })
+            .collect(),
+        Err(_) => vec![],
+    };
+    entries.sort_by(|a, b| a.path.cmp(&b.path));
+    entries
 }
 
-fn default_timeout() -> u64 {
-    10
-}
-
-#[derive(Debug, Deserialize, Default)]
-pub struct SieveConfig {
-    #[serde(default)]
-    rules: Vec<ScriptEntry>,
-    summarizer_model: Option<String>,
-}
-
-impl SieveConfig {
-    pub fn load(path: &Path) -> Result<Self, String> {
-        let text = std::fs::read_to_string(path)
-            .map_err(|e| format!("Failed to read {}: {e}", path.display()))?;
-        let config: SieveConfig = serde_yaml::from_str(&text)
-            .map_err(|e| format!("Invalid YAML in {}: {e}", path.display()))?;
-        Ok(config)
-    }
-
-    pub fn rules(&self) -> Vec<&ScriptEntry> {
-        self.rules.iter().filter(|s| s.enabled).collect()
-    }
-
-    pub fn summarizer_model(&self) -> &str {
-        self.summarizer_model.as_deref().unwrap_or(DEFAULT_MODEL)
-    }
+pub fn summarizer_model() -> &'static str {
+    DEFAULT_MODEL
 }

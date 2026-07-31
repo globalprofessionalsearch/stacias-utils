@@ -1,11 +1,10 @@
-use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use mlua::{HookTriggers, Lua, LuaSerdeExt as _, MultiValue, Result as LuaResult, StdLib, Value};
 
-use crate::config::ScriptEntry;
+use crate::config::RuleEntry;
 
 #[derive(Debug)]
 pub enum Outcome {
@@ -148,17 +147,20 @@ fn parse_return(values: MultiValue) -> Outcome {
     }
 }
 
-pub fn run_script(lua: &Lua, entry: &ScriptEntry, config_dir: &Path) -> Outcome {
-    let script_path = config_dir.join(&entry.path);
-    let source = match std::fs::read_to_string(&script_path) {
+pub fn run_script(lua: &Lua, entry: &RuleEntry) -> Outcome {
+    let source = match std::fs::read_to_string(&entry.path) {
         Ok(s) => s,
         Err(e) => {
             return Outcome::Error(format!(
-                "Failed to read script {}: {e}",
-                script_path.display()
+                "Failed to read rule {}: {e}",
+                entry.path.display()
             ))
         }
     };
+
+    let name = entry.path.file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| entry.path.display().to_string());
 
     let timeout = Duration::from_secs(entry.timeout);
     let start = Instant::now();
@@ -177,16 +179,16 @@ pub fn run_script(lua: &Lua, entry: &ScriptEntry, config_dir: &Path) -> Outcome 
         },
     );
 
-    let result: LuaResult<MultiValue> = lua.load(&source).set_name(&entry.path).eval();
+    let result: LuaResult<MultiValue> = lua.load(&source).set_name(&name).eval();
 
     lua.remove_hook();
 
     match result {
         Ok(values) => parse_return(values),
         Err(_) if timed_out.load(Ordering::Relaxed) => {
-            Outcome::Error(format!("Script {} timed out after {}s", entry.path, entry.timeout))
+            Outcome::Error(format!("Rule {} timed out after {}s", name, entry.timeout))
         }
-        Err(e) => Outcome::Error(format!("Lua error in {}: {e}", entry.path)),
+        Err(e) => Outcome::Error(format!("Lua error in {}: {e}", name)),
     }
 }
 

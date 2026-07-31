@@ -1,22 +1,10 @@
-use std::io::Write;
-
 use criterion::{criterion_group, criterion_main, Criterion};
+use permission_sieve::config::discover_rules;
 use permission_sieve::sieve::{create_lua, set_request};
 
 fn bench_empty_sieve_no_api(c: &mut Criterion) {
     let dir = tempfile::tempdir().unwrap();
-    let config_path = dir.path().join("sieve.yaml");
-    let mut f = std::fs::File::create(&config_path).unwrap();
-    writeln!(f, "scripts: []").unwrap();
-    drop(f);
-
-    let config_str = std::fs::read_to_string(&config_path).unwrap();
-
-    c.bench_function("empty_sieve_config_parse", |b| {
-        b.iter(|| {
-            let _config: serde_yaml::Value = serde_yaml::from_str(&config_str).unwrap();
-        });
-    });
+    std::fs::create_dir_all(dir.path().join("rules")).unwrap();
 
     let input = serde_json::json!({
         "tool_name": "Bash",
@@ -26,17 +14,23 @@ fn bench_empty_sieve_no_api(c: &mut Criterion) {
     });
     let input_str = serde_json::to_string(&input).unwrap();
 
+    c.bench_function("empty_sieve_discover_rules", |b| {
+        b.iter(|| {
+            let _ = discover_rules(dir.path());
+        });
+    });
+
     c.bench_function("empty_sieve_full_parse", |b| {
         b.iter(|| {
             let _event: serde_json::Value = serde_json::from_str(&input_str).unwrap();
-            let _config: serde_yaml::Value = serde_yaml::from_str(&config_str).unwrap();
+            let _ = discover_rules(dir.path());
         });
     });
 
     c.bench_function("empty_sieve_with_lua_init", |b| {
         b.iter(|| {
             let event: serde_json::Value = serde_json::from_str(&input_str).unwrap();
-            let _config: serde_yaml::Value = serde_yaml::from_str(&config_str).unwrap();
+            let _ = discover_rules(dir.path());
             let lua = create_lua();
             set_request(&lua, &event, &[]);
         });
