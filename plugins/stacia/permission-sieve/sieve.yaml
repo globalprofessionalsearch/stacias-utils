@@ -1,7 +1,4 @@
-# Permission sieve configuration — pi-permission-system migration
-#
-# Copy scripts to ~/.cache/stacia-permission-sieve/scripts/
-# then replace the existing sieve.yaml with this file.
+# Permission sieve configuration
 #
 # Script order does not affect the outcome — the resolution algebra is
 # commutative. Deny scripts short-circuit for performance (remaining
@@ -9,21 +6,21 @@
 # be the same in any order. Anything not explicitly allowed falls
 # through to the summarizer -> ask.
 
-scripts:
-  - path: scripts/deny-dangerous.lua
+rules:
+  - path: rules/deny-dangerous.lua
     description: Hard-deny force push, terraform, gh pr merge
 
-  - path: scripts/guard-sensitive-paths.lua
+  - path: rules/guard-sensitive-paths.lua
     description: Prompt for .env, .ssh, credentials, key files
 
-  - path: scripts/guard-external-dirs.lua
-    description: Prompt for access outside ~/Documents/code and ~/.cache
+  - path: rules/guard-external-dirs.lua
+    description: Prompt for mutations outside ~/Documents/code and ~/.cache
 
-  - path: scripts/allow-readonly.lua
+  - path: rules/allow-readonly.lua
     description: Auto-approve Read, Grep, Glob, WebSearch and other safe tools
 
-  - path: scripts/allow-safe-mutations.lua
+  - path: rules/allow-safe-mutations.lua
     description: Auto-approve Write/Edit within ~/Documents/code and ~/.cache
 
-  - path: scripts/allow-safe-bash.lua
+  - path: rules/allow-safe-bash.lua
     description: Auto-approve safe bash commands (file ops, git, kubectl, helm, tofu, etc.)

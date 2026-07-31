@@ -6,9 +6,8 @@ Pipes tool-call JSON directly to the dispatcher binary and asserts on the
 hook response. No Claude Code session needed — tests are idempotent and
 execute in milliseconds.
 
-The tests verify the DEPLOYED scripts at ~/.cache/stacia-permission-sieve/.
-If you've edited examples but not copied them, results will reflect the
-deployed versions, not the repo copies.
+The tests verify the rules at permission-sieve/rules/ — the same files
+the hook loads at runtime. One set of scripts, one source of truth.
 
 Run:
     python3 -m pytest tests/test_sieve_rules.py -v
@@ -21,16 +20,15 @@ import os
 import subprocess
 import unittest
 
-DISPATCHER = os.path.join(
-    os.path.dirname(__file__), "..", "target", "release", "dispatcher"
-)
+SIEVE_DIR = os.path.join(os.path.dirname(__file__), "..")
+DISPATCHER = os.path.join(SIEVE_DIR, "target", "release", "dispatcher")
 
 
 def sieve(tool_name: str, tool_input: dict) -> dict:
     """Send a tool call to the dispatcher and return the parsed response."""
     event = json.dumps({"tool_name": tool_name, "tool_input": tool_input})
     result = subprocess.run(
-        [DISPATCHER],
+        [DISPATCHER, SIEVE_DIR],
         input=event,
         capture_output=True,
         text=True,

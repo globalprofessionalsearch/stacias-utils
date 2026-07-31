@@ -26,7 +26,7 @@ fn default_timeout() -> u64 {
 #[derive(Debug, Deserialize, Default)]
 pub struct SieveConfig {
     #[serde(default)]
-    scripts: Vec<ScriptEntry>,
+    rules: Vec<ScriptEntry>,
     summarizer_model: Option<String>,
 }
 
@@ -39,8 +39,8 @@ impl SieveConfig {
         Ok(config)
     }
 
-    pub fn scripts(&self) -> Vec<&ScriptEntry> {
-        self.scripts.iter().filter(|s| s.enabled).collect()
+    pub fn rules(&self) -> Vec<&ScriptEntry> {
+        self.rules.iter().filter(|s| s.enabled).collect()
     }
 
     pub fn summarizer_model(&self) -> &str {

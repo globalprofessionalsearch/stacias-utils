@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/permission-sieve/target/release/dispatcher",
+            "command": "${CLAUDE_PLUGIN_ROOT}/permission-sieve/target/release/dispatcher ${CLAUDE_PLUGIN_ROOT}/permission-sieve",
             "timeout": 30
           }
         ]

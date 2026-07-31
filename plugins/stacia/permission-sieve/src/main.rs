@@ -1,6 +1,6 @@
 use std::io::Read as _;
 use std::path::PathBuf;
-use std::{env, fs, process};
+use std::{env, process};
 
 mod config;
 mod log;
@@ -20,47 +20,13 @@ fn die(msg: &str) -> ! {
 }
 
 fn config_dir() -> PathBuf {
+    if let Some(dir) = env::args().nth(1) {
+        return PathBuf::from(dir);
+    }
     let home = env::var("HOME").unwrap_or_else(|_| die("HOME not set"));
     PathBuf::from(home)
         .join(".cache")
         .join("stacia-permission-sieve")
-}
-
-fn bootstrap_config(dir: &PathBuf, config_path: &PathBuf) {
-    if let Err(e) = fs::create_dir_all(dir) {
-        die(&format!(
-            "Failed to create config directory {}: {e}",
-            dir.display()
-        ));
-    }
-    match fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(config_path)
-    {
-        Ok(mut f) => {
-            use std::io::Write;
-            let _ = write!(f, "\
-# Permission Sieve configuration
-# Copy example scripts from the plugin's examples/ directory into scripts/ here,
-# then uncomment and adjust the entries below.
-
-scripts: []
-
-# scripts:
-#   - path: scripts/allow-read-only.lua
-#     description: Auto-approves read-only tools (Read, Grep, Glob, LS)
-#
-#   - path: scripts/block-destructive.lua
-#     description: Blocks destructive commands (rm -rf, git clean, force push)
-#
-# Optional overrides:
-# summarizer_model: claude-haiku-4-5-20251001
-");
-        }
-        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
-        Err(e) => die(&format!("Failed to write {}: {e}", config_path.display())),
-    }
 }
 
 fn outcomes_to_script_runs(outcomes: &[Outcome], scripts: &[&config::ScriptEntry]) -> Vec<ScriptRun> {
@@ -118,7 +84,6 @@ fn main() {
     let dir = config_dir();
     let config_path = dir.join("sieve.yaml");
     let log_path = dir.join("decisions.jsonl");
-    bootstrap_config(&dir, &config_path);
 
     let config = match SieveConfig::load(&config_path) {
         Ok(c) => c,
@@ -126,9 +91,9 @@ fn main() {
     };
 
     let input_summary = tool_input_summary(&tool_input);
-    let scripts = config.scripts();
+    let rules = config.rules();
 
-    if scripts.is_empty() {
+    if rules.is_empty() {
         let (summary, error) = match summarizer::summarize(tool_name, &tool_input, config.summarizer_model()) {
             Ok(s) => (Some(s), None),
             Err(e) => {
@@ -157,8 +122,8 @@ fn main() {
 
     let paths = paths::extract_paths(tool_name, &tool_input);
 
-    let mut outcomes = Vec::with_capacity(scripts.len());
-    for entry in &scripts {
+    let mut outcomes = Vec::with_capacity(rules.len());
+    for entry in &rules {
         let lua = create_lua();
         set_request(&lua, &event, &paths);
         let outcome = run_script(&lua, entry, &dir);
@@ -170,7 +135,7 @@ fn main() {
     }
 
     let resolution = resolve(&outcomes);
-    let script_runs = outcomes_to_script_runs(&outcomes, &scripts);
+    let script_runs = outcomes_to_script_runs(&outcomes, &rules);
 
     let (resolution_str, error_detail, summarizer_output, disposition, response) = match resolution
     {
