@@ -38,7 +38,7 @@ fn bench_empty_sieve_no_api(c: &mut Criterion) {
             let event: serde_json::Value = serde_json::from_str(&input_str).unwrap();
             let _config: serde_yaml::Value = serde_yaml::from_str(&config_str).unwrap();
             let lua = create_lua();
-            set_request(&lua, &event);
+            set_request(&lua, &event, &[]);
         });
     });
 }

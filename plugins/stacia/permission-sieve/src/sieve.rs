@@ -14,7 +14,8 @@ pub enum Outcome {
         reason: Option<String>,
         instruction: Option<String>,
     },
-    Pass,
+    Uncertain,
+    Skip,
     Error(String),
 }
 
@@ -105,11 +106,17 @@ fn parse_return(values: MultiValue) -> Outcome {
             }
             Outcome::Approved
         }
-        "pass" => {
+        "uncertain" => {
             if vals.len() > 1 {
-                return Outcome::Error("'pass' takes no additional values".into());
+                return Outcome::Error("'uncertain' takes no additional values".into());
             }
-            Outcome::Pass
+            Outcome::Uncertain
+        }
+        "skip" => {
+            if vals.len() > 1 {
+                return Outcome::Error("'skip' takes no additional values".into());
+            }
+            Outcome::Skip
         }
         "error" => {
             if vals.len() < 2 {
@@ -184,13 +191,16 @@ pub fn run_script(lua: &Lua, entry: &ScriptEntry, config_dir: &Path) -> Outcome 
 }
 
 pub fn resolve(outcomes: &[Outcome]) -> Resolution {
-    if outcomes.is_empty() {
+    let active: Vec<&Outcome> = outcomes.iter()
+        .filter(|o| !matches!(o, Outcome::Skip))
+        .collect();
+    if active.is_empty() {
         return Resolution::Uncertain;
     }
 
     let mut all_approved = true;
 
-    for outcome in outcomes {
+    for outcome in active {
         match outcome {
             Outcome::Error(msg) => return Resolution::Error(msg.clone()),
             Outcome::Denied {
@@ -202,10 +212,11 @@ pub fn resolve(outcomes: &[Outcome]) -> Resolution {
                     instruction: instruction.clone(),
                 }
             }
-            Outcome::Pass => {
+            Outcome::Uncertain => {
                 all_approved = false;
             }
             Outcome::Approved => {}
+            Outcome::Skip => {}
         }
     }
 
@@ -257,9 +268,24 @@ mod tests {
     }
 
     #[test]
-    fn pass_return() {
+    fn uncertain_return() {
         let lua = test_lua();
-        assert!(matches!(run_lua(&lua, r#"return "pass""#), Outcome::Pass));
+        assert!(matches!(run_lua(&lua, r#"return "uncertain""#), Outcome::Uncertain));
+    }
+
+    #[test]
+    fn skip_return() {
+        let lua = test_lua();
+        assert!(matches!(run_lua(&lua, r#"return "skip""#), Outcome::Skip));
+    }
+
+    #[test]
+    fn pass_is_now_error() {
+        let lua = test_lua();
+        match run_lua(&lua, r#"return "pass""#) {
+            Outcome::Error(msg) => assert!(msg.contains("Unrecognized")),
+            other => panic!("Expected Error, got {other:?}"),
+        }
     }
 
     #[test]
@@ -376,13 +402,31 @@ mod tests {
 
     #[test]
     fn resolve_mixed_is_uncertain() {
-        let outcomes = vec![Outcome::Approved, Outcome::Pass];
+        let outcomes = vec![Outcome::Approved, Outcome::Uncertain];
         assert!(matches!(resolve(&outcomes), Resolution::Uncertain));
     }
 
     #[test]
-    fn resolve_all_pass_is_uncertain() {
-        let outcomes = vec![Outcome::Pass, Outcome::Pass];
+    fn resolve_all_uncertain_is_uncertain() {
+        let outcomes = vec![Outcome::Uncertain, Outcome::Uncertain];
+        assert!(matches!(resolve(&outcomes), Resolution::Uncertain));
+    }
+
+    #[test]
+    fn resolve_skip_ignored() {
+        let outcomes = vec![Outcome::Skip, Outcome::Approved];
+        assert!(matches!(resolve(&outcomes), Resolution::Allowed));
+    }
+
+    #[test]
+    fn resolve_all_skip_is_uncertain() {
+        let outcomes = vec![Outcome::Skip, Outcome::Skip];
+        assert!(matches!(resolve(&outcomes), Resolution::Uncertain));
+    }
+
+    #[test]
+    fn resolve_skip_with_uncertain() {
+        let outcomes = vec![Outcome::Skip, Outcome::Uncertain, Outcome::Approved];
         assert!(matches!(resolve(&outcomes), Resolution::Uncertain));
     }
 

@@ -70,7 +70,8 @@ fn outcomes_to_script_runs(outcomes: &[Outcome], scripts: &[&config::ScriptEntry
         .map(|(outcome, entry)| {
             let (outcome_str, reason, instruction) = match outcome {
                 Outcome::Approved => ("approved", None, None),
-                Outcome::Pass => ("pass", None, None),
+                Outcome::Uncertain => ("uncertain", None, None),
+                Outcome::Skip => ("skip", None, None),
                 Outcome::Denied { reason, instruction } => {
                     ("denied", reason.clone(), instruction.clone())
                 }

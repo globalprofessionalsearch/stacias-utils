@@ -3,7 +3,7 @@
 local cmd = request.tool_input and request.tool_input.command or ""
 
 if request.tool_name ~= "Bash" then
-  return "pass"
+  return "skip"
 end
 
 if string.find(cmd, "rm %-rf") then
@@ -22,4 +22,4 @@ if string.find(cmd, "git push %-%-force") or string.find(cmd, "git push .* %-f")
   return "denied", "force push blocked", "Use --force-with-lease for safer force pushes"
 end
 
-return "pass"
+return "skip"

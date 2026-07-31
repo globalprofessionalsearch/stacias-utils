@@ -6,4 +6,4 @@ if tool == "Read" or tool == "Grep" or tool == "Glob" or tool == "LS" then
   return "approved"
 end
 
-return "pass"
+return "skip"
