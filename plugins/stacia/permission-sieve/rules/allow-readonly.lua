@@ -26,6 +26,8 @@ local handled_elsewhere = {
   Write = true,
   Edit = true,
   NotebookEdit = true,
+  Agent = true,
+  Workflow = true,
 }
 
 if handled_elsewhere[request.tool_name] then

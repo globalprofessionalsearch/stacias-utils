@@ -483,9 +483,64 @@ class TestUnknownTools(unittest.TestCase):
         r = sieve("mcp__plugin_atlassian__getJiraIssue", {"issueId": "PROJ-123"})
         self.assertEqual(decision(r), "ask")
 
-    def test_agent_tool(self):
+    def test_agent_tool_no_model(self):
         r = sieve("Agent", {"description": "do something", "prompt": "hello"})
+        self.assertEqual(decision(r), "deny")
+
+
+# ── Subagent model guard ─────────────────────────────────────
+
+
+class TestSubagentModel(unittest.TestCase):
+    def test_sonnet_shorthand_denied(self):
+        """Bare 'sonnet' resolves to latest (Sonnet 5), not 4.6."""
+        r = sieve("Agent", {"description": "task", "prompt": "do it", "model": "sonnet"})
+        self.assertEqual(decision(r), "deny")
+
+    def test_sonnet_4_6_prompts(self):
+        r = sieve("Agent", {"description": "task", "prompt": "do it", "model": "sonnet-4-6"})
         self.assertEqual(decision(r), "ask")
+
+    def test_sonnet_4_6_full_id_prompts(self):
+        r = sieve("Agent", {"description": "task", "prompt": "do it", "model": "claude-sonnet-4-6"})
+        self.assertEqual(decision(r), "ask")
+
+    def test_sonnet_5_denied(self):
+        r = sieve("Agent", {"description": "task", "prompt": "do it", "model": "claude-sonnet-5"})
+        self.assertEqual(decision(r), "deny")
+
+    def test_sonnet_5_shorthand_denied(self):
+        r = sieve("Agent", {"description": "task", "prompt": "do it", "model": "sonnet-5"})
+        self.assertEqual(decision(r), "deny")
+
+    def test_haiku_shorthand_prompts(self):
+        r = sieve("Agent", {"description": "task", "prompt": "do it", "model": "haiku"})
+        self.assertEqual(decision(r), "ask")
+
+    def test_haiku_full_id_prompts(self):
+        r = sieve("Agent", {"description": "task", "prompt": "do it", "model": "claude-haiku-4-5"})
+        self.assertEqual(decision(r), "ask")
+
+    def test_opus_denied(self):
+        r = sieve("Agent", {"description": "task", "prompt": "do it", "model": "opus"})
+        self.assertEqual(decision(r), "deny")
+
+    def test_fable_denied(self):
+        r = sieve("Agent", {"description": "task", "prompt": "do it", "model": "fable"})
+        self.assertEqual(decision(r), "deny")
+
+    def test_no_model_denied(self):
+        r = sieve("Agent", {"description": "task", "prompt": "do it"})
+        self.assertEqual(decision(r), "deny")
+        self.assertIn("sonnet", reason(r).lower())
+
+    def test_workflow_always_prompts(self):
+        r = sieve("Workflow", {"script": "export const meta = {name: 'test'};"})
+        self.assertEqual(decision(r), "ask")
+
+    def test_non_agent_tool_skips(self):
+        r = sieve("Bash", {"command": "ls"})
+        self.assertEqual(decision(r), "allow")
 
 
 # ── Rule checksum verification ───────────────────────────────
