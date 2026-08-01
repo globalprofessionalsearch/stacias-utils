@@ -71,6 +71,12 @@ pub fn set_request(lua: &Lua, event: &serde_json::Value, paths: &[String]) {
         std::process::exit(2);
     });
 
+    let home = std::env::var("HOME").unwrap_or_default();
+    table.set("home", home.as_str()).unwrap_or_else(|e| {
+        eprintln!("Failed to set home on request table: {e}");
+        std::process::exit(2);
+    });
+
     globals.set("request", table).unwrap_or_else(|e| {
         eprintln!("Failed to set request global: {e}");
         std::process::exit(2);

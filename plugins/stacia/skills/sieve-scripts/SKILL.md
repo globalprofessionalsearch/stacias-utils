@@ -173,6 +173,26 @@ loading are blocked.
 Environment variables and home directory detection are handled by the binary
 and exposed through `request.*` fields — scripts should not need `os` access.
 
+## Request Fields
+
+The dispatcher injects these fields into the `request` global before
+each rule runs. Read `set_request()` in `sieve.rs` for the authoritative
+list — these are the stable fields:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `request.tool_name` | string | The Claude Code tool being called (e.g. "Bash", "Read", "Write") |
+| `request.tool_input` | table | The tool's input parameters (e.g. `request.tool_input.command` for Bash) |
+| `request.paths` | array | Fully-resolved absolute file paths extracted from the tool input by the binary |
+| `request.home` | string | The user's home directory from `$HOME` — use this instead of hardcoding paths |
+
+Never hardcode the home directory in a rule. Use `request.home`:
+
+```lua
+local HOME = request.home
+local allowed = { HOME .. "/Documents/code/", HOME .. "/.cache/" }
+```
+
 ## Lua Patterns Quick Reference
 
 Common matching idioms for sieve scripts:
@@ -189,6 +209,10 @@ s:match("^git%s+push")
 
 -- Iterate resolved paths
 for _, path in ipairs(request.paths) do ... end
+
+-- Home-relative path check
+local HOME = request.home
+if path:sub(1, #HOME + 5) == HOME .. "/.ssh/" then ... end
 ```
 
 ## Additional Resources

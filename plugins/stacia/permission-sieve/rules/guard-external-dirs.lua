@@ -1,8 +1,7 @@
 -- Returns "uncertain" (-> ask) when a mutating tool accesses paths
 -- outside allowed directories. Read-only tools are not guarded.
--- Edit HOME below for your system.
 
-local HOME = "/Users/joe"
+local HOME = request.home
 
 local mutating_tools = {
   Write = true,

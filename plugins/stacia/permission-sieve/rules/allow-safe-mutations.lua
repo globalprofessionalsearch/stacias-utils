@@ -1,7 +1,7 @@
 -- Auto-approves Write and Edit when all paths are within allowed directories.
 -- Run AFTER guard-sensitive-paths so sensitive files still trigger "ask".
 
-local HOME = "/Users/joe"
+local HOME = request.home
 
 local mutating_tools = {
   Write = true,

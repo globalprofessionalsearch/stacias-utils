@@ -28,6 +28,7 @@ RULES_DIR = os.path.join(SIEVE_DIR, "rules")
 CHECKSUM_FILE = os.path.join(os.path.dirname(__file__), "rules.sha256")
 
 
+
 def sieve(tool_name: str, tool_input: dict) -> dict:
     """Send a tool call to the dispatcher and return the parsed response."""
     event = json.dumps({"tool_name": tool_name, "tool_input": tool_input})
