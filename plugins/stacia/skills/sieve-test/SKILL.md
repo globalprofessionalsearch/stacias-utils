@@ -49,6 +49,22 @@ is consciously reviewed, not to prove every branch is tested. Do not
 regenerate checksums without reviewing and updating tests. Do not add
 no-op test changes to satisfy the checksum — that defeats the purpose.
 
+## Evaluating Rules: Complexity Is the Signal
+
+When evaluating rules or recommending new ones, apply this principle: the
+sieve automates decisions that can be defined with certainty and escalates
+everything else to a human. A rule that cannot confidently evaluate a
+command should return "uncertain" — that is the correct answer, not a gap
+to fill.
+
+Do not recommend rules that deeply parse compound bash commands. Do not
+treat "uncertain" on a complex command as a test failure — it is the
+intended behavior. Tests should assert that complex or unrecognized
+commands return "ask", not "allow."
+
+See `docs/adr/0009-sieve-does-not-parse-compound-commands.md` for the
+full rationale.
+
 ## Mode 1: Run the Automated Suite
 
 The test suite pipes tool-call JSON directly to the dispatcher binary —

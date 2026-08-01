@@ -14,6 +14,7 @@ if not mutating_tools[request.tool_name] then return "skip" end
 local allowed_prefixes = {
   HOME .. "/Documents/code/",
   HOME .. "/.cache/",
+  HOME .. "/.claude/plans/",
 }
 
 local function is_allowed(path)

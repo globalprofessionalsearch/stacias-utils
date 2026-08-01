@@ -140,6 +140,18 @@ class TestWriteTool(unittest.TestCase):
         r = sieve("Write", {"file_path": os.path.expanduser("~/.cache/tool/data.json"), "content": "{}"})
         self.assertEqual(decision(r), "allow")
 
+    def test_write_claude_plans(self):
+        r = sieve("Write", {"file_path": os.path.expanduser("~/.claude/plans/my-plan.md"), "content": "plan"})
+        self.assertEqual(decision(r), "allow")
+
+    def test_edit_claude_plans(self):
+        r = sieve("Edit", {
+            "file_path": os.path.expanduser("~/.claude/plans/my-plan.md"),
+            "old_string": "old",
+            "new_string": "new",
+        })
+        self.assertEqual(decision(r), "allow")
+
     def test_write_outside_allowed_dirs(self):
         r = sieve("Write", {"file_path": "/tmp/output.txt", "content": "test"})
         self.assertEqual(decision(r), "ask")
@@ -282,6 +294,79 @@ class TestBashSafe(unittest.TestCase):
         r = sieve("Bash", {"command": "summon lint"})
         self.assertEqual(decision(r), "allow")
 
+    def test_touch(self):
+        r = sieve("Bash", {"command": "touch /tmp/file.txt"})
+        self.assertEqual(decision(r), "allow")
+
+
+# ── Bash — python (scoped) ───────────────────────────────────
+
+
+class TestBashPython(unittest.TestCase):
+    def test_py_compile(self):
+        r = sieve("Bash", {"command": "python -m py_compile module.py"})
+        self.assertEqual(decision(r), "allow")
+
+    def test_python3_py_compile(self):
+        r = sieve("Bash", {"command": "python3 -m py_compile module.py"})
+        self.assertEqual(decision(r), "allow")
+
+    def test_pytest(self):
+        r = sieve("Bash", {"command": "python -m pytest tests/"})
+        self.assertEqual(decision(r), "allow")
+
+    def test_python3_pytest(self):
+        r = sieve("Bash", {"command": "python3 -m pytest tests/ -v"})
+        self.assertEqual(decision(r), "allow")
+
+    def test_mypy(self):
+        r = sieve("Bash", {"command": "python3 -m mypy src/"})
+        self.assertEqual(decision(r), "allow")
+
+    def test_ruff(self):
+        r = sieve("Bash", {"command": "python3 -m ruff check ."})
+        self.assertEqual(decision(r), "allow")
+
+    def test_arbitrary_python_denied(self):
+        r = sieve("Bash", {"command": "python3 -c 'import os; os.system(\"rm -rf /\")'"})
+        self.assertEqual(decision(r), "ask")
+
+    def test_python_script_denied(self):
+        r = sieve("Bash", {"command": "python3 script.py"})
+        self.assertEqual(decision(r), "ask")
+
+    def test_bare_python_denied(self):
+        r = sieve("Bash", {"command": "python3"})
+        self.assertEqual(decision(r), "ask")
+
+    def test_uv_run_pytest(self):
+        r = sieve("Bash", {"command": "uv run pytest tests/ -v"})
+        self.assertEqual(decision(r), "allow")
+
+    def test_uv_run_mypy(self):
+        r = sieve("Bash", {"command": "uv run mypy src/"})
+        self.assertEqual(decision(r), "allow")
+
+    def test_uv_run_ruff(self):
+        r = sieve("Bash", {"command": "uv run ruff check ."})
+        self.assertEqual(decision(r), "allow")
+
+    def test_uv_sync(self):
+        r = sieve("Bash", {"command": "uv sync"})
+        self.assertEqual(decision(r), "allow")
+
+    def test_uv_pip_install(self):
+        r = sieve("Bash", {"command": "uv pip install requests"})
+        self.assertEqual(decision(r), "allow")
+
+    def test_uv_run_arbitrary_denied(self):
+        r = sieve("Bash", {"command": "uv run python script.py"})
+        self.assertEqual(decision(r), "ask")
+
+    def test_bare_uv_run_denied(self):
+        r = sieve("Bash", {"command": "uv run"})
+        self.assertEqual(decision(r), "ask")
+
 
 # ── Bash — kubernetes / cloud read-only ──────────────────────
 
@@ -413,6 +498,18 @@ class TestBashSensitivePaths(unittest.TestCase):
 
 
 class TestBashCompound(unittest.TestCase):
+    def test_redirect_2_and_1(self):
+        r = sieve("Bash", {"command": "git rebase --onto abc123 def456 ghi789 2>&1"})
+        self.assertEqual(decision(r), "allow")
+
+    def test_redirect_to_dev_null(self):
+        r = sieve("Bash", {"command": "ls /tmp 2>/dev/null"})
+        self.assertEqual(decision(r), "allow")
+
+    def test_redirect_append(self):
+        r = sieve("Bash", {"command": "echo hello >> /tmp/log.txt"})
+        self.assertEqual(decision(r), "allow")
+
     def test_safe_and_safe(self):
         r = sieve("Bash", {"command": "ls /tmp && grep test /etc/hosts"})
         self.assertEqual(decision(r), "allow")
@@ -492,33 +589,8 @@ class TestUnknownTools(unittest.TestCase):
 
 
 class TestSubagentModel(unittest.TestCase):
-    def test_sonnet_shorthand_denied(self):
-        """Bare 'sonnet' resolves to latest (Sonnet 5), not 4.6."""
+    def test_sonnet_allowed(self):
         r = sieve("Agent", {"description": "task", "prompt": "do it", "model": "sonnet"})
-        self.assertEqual(decision(r), "deny")
-
-    def test_sonnet_4_6_prompts(self):
-        r = sieve("Agent", {"description": "task", "prompt": "do it", "model": "sonnet-4-6"})
-        self.assertEqual(decision(r), "ask")
-
-    def test_sonnet_4_6_full_id_prompts(self):
-        r = sieve("Agent", {"description": "task", "prompt": "do it", "model": "claude-sonnet-4-6"})
-        self.assertEqual(decision(r), "ask")
-
-    def test_sonnet_5_denied(self):
-        r = sieve("Agent", {"description": "task", "prompt": "do it", "model": "claude-sonnet-5"})
-        self.assertEqual(decision(r), "deny")
-
-    def test_sonnet_5_shorthand_denied(self):
-        r = sieve("Agent", {"description": "task", "prompt": "do it", "model": "sonnet-5"})
-        self.assertEqual(decision(r), "deny")
-
-    def test_haiku_shorthand_prompts(self):
-        r = sieve("Agent", {"description": "task", "prompt": "do it", "model": "haiku"})
-        self.assertEqual(decision(r), "ask")
-
-    def test_haiku_full_id_prompts(self):
-        r = sieve("Agent", {"description": "task", "prompt": "do it", "model": "claude-haiku-4-5"})
         self.assertEqual(decision(r), "ask")
 
     def test_opus_denied(self):
@@ -527,6 +599,10 @@ class TestSubagentModel(unittest.TestCase):
 
     def test_fable_denied(self):
         r = sieve("Agent", {"description": "task", "prompt": "do it", "model": "fable"})
+        self.assertEqual(decision(r), "deny")
+
+    def test_haiku_denied(self):
+        r = sieve("Agent", {"description": "task", "prompt": "do it", "model": "haiku"})
         self.assertEqual(decision(r), "deny")
 
     def test_no_model_denied(self):

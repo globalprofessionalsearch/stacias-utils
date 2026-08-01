@@ -59,6 +59,19 @@ Scripts registered in `sieve.yaml` that never return "approved" or "denied"
 Scripts returning errors, or summarizer failures. Errors indicate script
 bugs or contract violations (e.g., returning the deprecated "pass" value).
 
+## Recommending Rule Changes
+
+When the audit reveals frequently-prompted commands, do not assume they
+all need allow rules. The sieve's design principle: complexity is the
+signal. A compound or unfamiliar command that prompts the user is working
+as intended — the inability to cleanly express a rule is itself evidence
+the command needs human review.
+
+Only recommend new allow entries for commands that are structurally
+simple, clearly safe, and frequently repeated. Do not recommend rules
+that attempt to parse compound bash commands. See
+`docs/adr/0009-sieve-does-not-parse-compound-commands.md`.
+
 ## Additional Resources
 
 ### Reference File

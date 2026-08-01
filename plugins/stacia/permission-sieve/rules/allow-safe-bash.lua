@@ -14,9 +14,20 @@ local function trim(s)
   return s:match("^%s*(.-)%s*$")
 end
 
+-- Strip shell redirections before splitting so 2>&1 doesn't
+-- get treated as a command separator.
+local function strip_redirects(s)
+  s = s:gsub("%d*>%&%d+", "")      -- 2>&1, >&2
+  s = s:gsub("%d*>>%s*%S+", "")    -- >>file, 2>>file
+  s = s:gsub("%d*>%s*%S+", "")     -- >file, 2>/dev/null
+  s = s:gsub("<%s*%S+", "")        -- <file
+  return s
+end
+
 -- Split on shell operators to check each segment independently.
 -- If ALL segments are safe, approve. If any is unknown, pass.
 local function split_segments(s)
+  s = strip_redirects(s)
   local segments = {}
   for part in s:gmatch("[^&|;]+") do
     local t = trim(part)
@@ -41,8 +52,20 @@ end
 -- Single-word commands that are safe with any arguments
 local simple_cmds = {
   "cd", "pwd", "echo", "cat", "ls", "find", "grep", "head", "tail",
-  "wc", "sleep", "mkdir", "mv", "cp", "rm", "sed", "awk",
+  "wc", "sleep", "mkdir", "mv", "cp", "rm", "sed", "awk", "touch",
   "git", "gh", "summon", "make", "oapi-codegen",
+}
+
+-- Python/python3/uv: only compilation, testing, linting, and dependency management
+local scoped_prefixes = {
+  "python -m py_compile", "python3 -m py_compile",
+  "python -m pytest", "python3 -m pytest",
+  "python -m unittest", "python3 -m unittest",
+  "python -m mypy", "python3 -m mypy",
+  "python -m ruff", "python3 -m ruff",
+  "uv run pytest", "uv run mypy", "uv run ruff",
+  "uv sync", "uv pip install", "uv pip list", "uv pip show",
+  "uv lock", "uv venv",
 }
 
 -- Multi-word command prefixes that are safe
@@ -95,6 +118,12 @@ local function is_safe(segment)
 
   for _, pattern in ipairs(wildcard_patterns) do
     if segment:match(pattern) then return true end
+  end
+
+  for _, prefix in ipairs(scoped_prefixes) do
+    if segment == prefix or starts_with(segment, prefix .. " ") then
+      return true
+    end
   end
 
   return false

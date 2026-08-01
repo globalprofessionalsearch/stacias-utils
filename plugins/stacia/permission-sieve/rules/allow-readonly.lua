@@ -1,5 +1,4 @@
 -- Auto-approves read-only and safe non-Bash tools.
--- Returns "uncertain" for tools not covered by any allow script.
 
 local safe = {
   Read = true,
@@ -12,8 +11,12 @@ local safe = {
   Skill = true,
   ToolSearch = true,
   SendMessage = true,
+  TaskCreate = true,
+  TaskUpdate = true,
   TaskGet = true,
   TaskList = true,
+  TaskOutput = true,
+  TaskStop = true,
   ReportFindings = true,
 }
 
@@ -21,17 +24,4 @@ if safe[request.tool_name] then
   return "approved"
 end
 
-local handled_elsewhere = {
-  Bash = true,
-  Write = true,
-  Edit = true,
-  NotebookEdit = true,
-  Agent = true,
-  Workflow = true,
-}
-
-if handled_elsewhere[request.tool_name] then
-  return "skip"
-end
-
-return "uncertain"
+return "skip"
