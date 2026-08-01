@@ -2,6 +2,7 @@ name: CI
 
 on:
   push:
+    branches: [main]
   pull_request:
     types: [opened, edited, synchronize, reopened]
 
@@ -40,6 +41,26 @@ jobs:
             echo "::endgroup::"
           done
           [ "$found" = 1 ] || echo "no utility test suites found"
+
+  permission-sieve:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: plugins/stacia/permission-sieve
+      - name: Install Lua 5.4
+        run: sudo apt-get update && sudo apt-get install -y liblua5.4-dev
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+      - name: Build
+        run: cargo build --release --manifest-path plugins/stacia/permission-sieve/Cargo.toml
+      - name: Test (includes startup SLA)
+        run: cargo test --manifest-path plugins/stacia/permission-sieve/Cargo.toml
+      - name: Sieve rule tests
+        run: python3 plugins/stacia/permission-sieve/tests/test_sieve_rules.py -v
 
   commit:
     if: github.event_name == 'pull_request'
