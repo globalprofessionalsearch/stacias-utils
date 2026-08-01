@@ -2,10 +2,9 @@ use std::env;
 
 use serde::{Deserialize, Serialize};
 
-const API_URL: &str = "https://api.anthropic.com/v1/messages";
+use crate::config::SummarizerConfig;
+
 const API_VERSION: &str = "2023-06-01";
-const MAX_TOKENS: u32 = 150;
-const TIMEOUT_SECS: u64 = 15;
 
 #[derive(Serialize)]
 struct ApiRequest<'a> {
@@ -30,30 +29,48 @@ struct ContentBlock {
     text: String,
 }
 
-pub fn summarize(tool_name: &str, tool_input: &serde_json::Value, model: &str) -> Result<String, String> {
+fn fmt_with_commas(n: usize) -> String {
+    let s = n.to_string();
+    let chars: Vec<char> = s.chars().collect();
+    let len = chars.len();
+    chars.iter().enumerate().fold(String::new(), |mut acc, (i, c)| {
+        if i > 0 && (len - i) % 3 == 0 {
+            acc.push(',');
+        }
+        acc.push(*c);
+        acc
+    })
+}
+
+pub fn summarize(tool_name: &str, tool_input: &serde_json::Value, cfg: &SummarizerConfig) -> Result<String, String> {
     let api_key = env::var("ANTHROPIC_API_KEY")
         .map_err(|_| "ANTHROPIC_API_KEY not set".to_string())?;
 
-    let input_summary: String = {
+    let (input_summary, input_header) = {
         let full = serde_json::to_string(tool_input).unwrap_or_default();
-        if full.len() > 200 {
-            let truncated = &full[..full.floor_char_boundary(200)];
-            format!("{truncated}...")
+        let full_len = full.len();
+        if full_len > cfg.input_truncation_length {
+            let truncated = &full[..full.floor_char_boundary(cfg.input_truncation_length)];
+            let summary = format!("{truncated}...");
+            let header = format!(
+                "Input ({} of {} characters):",
+                fmt_with_commas(cfg.input_truncation_length),
+                fmt_with_commas(full_len),
+            );
+            (summary, header)
         } else {
-            full
+            (full, "Input:".to_string())
         }
     };
 
     let prompt = format!(
-        "Describe what this tool call is attempting in two sentences. \
-         Be specific and use plain language.\n\n\
-         Tool: {tool_name}\n\
-         Input: {input_summary}"
+        "{}\n\nTool: {}\n{}\n{}",
+        cfg.prompt, tool_name, input_header, input_summary
     );
 
     let body = ApiRequest {
-        model,
-        max_tokens: MAX_TOKENS,
+        model: &cfg.model,
+        max_tokens: cfg.max_tokens,
         messages: vec![Message {
             role: "user".into(),
             content: prompt,
@@ -62,7 +79,7 @@ pub fn summarize(tool_name: &str, tool_input: &serde_json::Value, model: &str) -
 
     let agent = ureq::Agent::new_with_config(
         ureq::config::Config::builder()
-            .timeout_global(Some(std::time::Duration::from_secs(TIMEOUT_SECS)))
+            .timeout_global(Some(std::time::Duration::from_secs(cfg.timeout_seconds)))
             .build(),
     );
 
@@ -70,7 +87,7 @@ pub fn summarize(tool_name: &str, tool_input: &serde_json::Value, model: &str) -
         .map_err(|e| format!("Failed to serialize request: {e}"))?;
 
     let mut resp = agent
-        .post(API_URL)
+        .post(&cfg.api_url)
         .header("x-api-key", &api_key)
         .header("anthropic-version", API_VERSION)
         .content_type("application/json")

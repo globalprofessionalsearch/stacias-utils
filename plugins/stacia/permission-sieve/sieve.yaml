@@ -1,0 +1,24 @@
+# Permission sieve configuration.
+
+# Summarizer settings — the LLM that generates plain-language descriptions
+# of tool calls when the user is prompted for approval.
+summarizer:
+  # Instructions for the summarizer model. The tool name and input are
+  # appended automatically — this is just the instruction portion.
+  prompt: "Describe what this tool call is attempting in two sentences. Be specific and use plain language."
+
+  # The model to use for summarization.
+  model: "claude-haiku-4-5-20251001"
+
+  # Maximum tokens in the summarizer response.
+  max_tokens: 150
+
+  # Timeout in seconds for the summarizer API call.
+  timeout_seconds: 15
+
+  # Maximum characters of tool input to include in the prompt.
+  # Longer values give the summarizer more context.
+  input_truncation_length: 200
+
+  # Anthropic API endpoint.
+  api_url: "https://api.anthropic.com/v1/messages"

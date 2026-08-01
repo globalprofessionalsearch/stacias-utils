@@ -9,7 +9,7 @@ mod response;
 mod sieve;
 mod summarizer;
 
-use config::{RuleEntry, discover_rules, summarizer_model};
+use config::{RuleEntry, discover_rules, load_config};
 use log::{DecisionRecord, ScriptRun, append_log, now_utc, tool_input_summary};
 use response::{allow_response, deny_response, uncertain_response};
 use sieve::{Outcome, Resolution, create_lua, resolve, run_script, set_request};
@@ -87,11 +87,13 @@ fn main() {
     let dir = config_dir();
     let log_path = dir.join("decisions.jsonl");
     let rules = discover_rules(&dir);
+    let config = load_config(&dir);
+    let summarizer_cfg = config.summarizer;
 
     let input_summary = tool_input_summary(&tool_input);
 
     if rules.is_empty() {
-        let (summary, error) = match summarizer::summarize(tool_name, &tool_input, summarizer_model()) {
+        let (summary, error) = match summarizer::summarize(tool_name, &tool_input, &summarizer_cfg) {
             Ok(s) => (Some(s), None),
             Err(e) => {
                 eprintln!("Warning: summarizer unavailable: {e}");
@@ -161,7 +163,7 @@ fn main() {
             ("error", Some(error_msg.clone()), None, "error", None)
         }
         Resolution::Uncertain => {
-            let (summary, err) = match summarizer::summarize(tool_name, &tool_input, summarizer_model()) {
+            let (summary, err) = match summarizer::summarize(tool_name, &tool_input, &summarizer_cfg) {
                 Ok(s) => (Some(s), None),
                 Err(e) => {
                     eprintln!("Warning: summarizer unavailable: {e}");
