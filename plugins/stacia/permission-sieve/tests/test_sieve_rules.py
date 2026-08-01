@@ -656,6 +656,89 @@ def save_checksums(checksums: dict[str, str]) -> None:
             f.write(f"{checksums[name]}  {name}\n")
 
 
+# ── Rule cognitive complexity ─────────────────────────────────
+
+# Single-number cognitive complexity score per rule. Scoring:
+#   +1 for each branching construct (if, for, while, elseif)
+#   +1 nesting bonus for each level of depth when branching
+#   +1 for each return statement
+#   +1 for each pattern match (:find, :match)
+#
+# A rule that's hard to audit is a rule that should be split or
+# simplified. See ADR-0009.
+
+MAX_COMPLEXITY = 65
+
+
+def cognitive_complexity(path: str) -> tuple[int, dict]:
+    """Compute a single cognitive complexity score for a Lua rule file."""
+    import re
+
+    with open(path) as f:
+        lines = f.read().splitlines()
+
+    score = 0
+    depth = 0
+    breakdown = {"branches": 0, "nesting_bonus": 0, "returns": 0, "patterns": 0}
+
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith("--") or not stripped:
+            continue
+
+        # Count pattern matches
+        pats = len(re.findall(r":find\b|:match\b", stripped))
+        score += pats
+        breakdown["patterns"] += pats
+
+        # Count returns
+        rets = len(re.findall(r"\breturn\b", stripped))
+        score += rets
+        breakdown["returns"] += rets
+
+        # Count branches (if, elseif, for, while — not function defs)
+        branches = len(re.findall(r"\bif\b|\belseif\b|\bfor\b|\bwhile\b", stripped))
+
+        # Single-line if...end doesn't nest
+        single_line = branches and "end" in stripped and stripped.count("end") >= branches
+
+        if branches and not single_line:
+            score += branches
+            score += branches * depth
+            breakdown["branches"] += branches
+            breakdown["nesting_bonus"] += branches * depth
+            depth += branches
+
+        # Track depth changes from end statements
+        if not single_line:
+            closes = len(re.findall(r"\bend\b", stripped))
+            depth = max(0, depth - closes)
+
+    return score, breakdown
+
+
+class TestRuleComplexity(unittest.TestCase):
+    def test_all_rules_within_complexity_limit(self):
+        violations = []
+        for name in sorted(os.listdir(RULES_DIR)):
+            if not name.endswith(".lua"):
+                continue
+            path = os.path.join(RULES_DIR, name)
+            score, breakdown = cognitive_complexity(path)
+            if score > MAX_COMPLEXITY:
+                detail = ", ".join(f"{k}={v}" for k, v in breakdown.items() if v)
+                violations.append(f"  {name}: score={score} ({detail})")
+
+        if violations:
+            self.fail(
+                f"\n\nRules exceeding cognitive complexity limit ({MAX_COMPLEXITY}):\n"
+                + "\n".join(violations)
+                + "\n\nA rule that's hard to audit should be split or "
+                "simplified.\nSee docs/adr/0009-sieve-does-not-parse"
+                "-compound-commands.md"
+            )
+
+
 class TestRuleChecksums(unittest.TestCase):
     def test_rules_match_saved_checksums(self):
         current = compute_checksums()
