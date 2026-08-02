@@ -101,6 +101,7 @@ fn main() {
             }
         };
         let record = DecisionRecord {
+            build: env!("SIEVE_BUILD_HASH"),
             ts: now_utc(),
             session_id: session_id.clone(),
             agent_type: agent_type.clone(),
@@ -182,6 +183,7 @@ fn main() {
     };
 
     let record = DecisionRecord {
+        build: env!("SIEVE_BUILD_HASH"),
         ts: now_utc(),
         session_id,
         agent_type,

@@ -14,6 +14,7 @@ pub struct ScriptRun {
 
 #[derive(Debug, Serialize)]
 pub struct DecisionRecord {
+    pub build: &'static str,
     pub ts: String,
     pub session_id: Option<String>,
     pub agent_type: Option<String>,
