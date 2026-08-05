@@ -2,7 +2,7 @@
 -- Mutations, fetch, and unknown future tools fall through as uncertain
 -- so guard-unknown-tools never sees this namespace.
 
-local prefix = "mcp__plugin_atlassian__"
+local prefix = "mcp__plugin_atlassian_atlassian__"
 
 if request.tool_name:sub(1, #prefix) ~= prefix then
   return "skip"

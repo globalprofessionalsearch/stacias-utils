@@ -4,7 +4,7 @@
 
 -- Atlassian MCP tools are owned by allow-atlassian-reads.lua; skip here so
 -- that script's approved signals are not poisoned by uncertain from this one.
-local atlassian_prefix = "mcp__plugin_atlassian__"
+local atlassian_prefix = "mcp__plugin_atlassian_atlassian__"
 if request.tool_name:sub(1, #atlassian_prefix) == atlassian_prefix then
   return "skip"
 end
@@ -27,6 +27,9 @@ local known = {
   TaskOutput = true,
   TaskStop = true,
   ReportFindings = true,
+  EnterPlanMode = true,
+  ExitPlanMode = true,
+  Monitor = true,
   Bash = true,
   Write = true,
   Edit = true,

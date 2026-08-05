@@ -311,6 +311,18 @@ class TestBashSafe(unittest.TestCase):
         r = sieve("Bash", {"command": "touch /tmp/file.txt"})
         self.assertEqual(decision(r), "allow")
 
+    def test_cargo_build(self):
+        r = sieve("Bash", {"command": "cargo build --release"})
+        self.assertEqual(decision(r), "allow")
+
+    def test_cargo_test(self):
+        r = sieve("Bash", {"command": "cargo test"})
+        self.assertEqual(decision(r), "allow")
+
+    def test_cargo_clippy(self):
+        r = sieve("Bash", {"command": "cargo clippy -- -D warnings"})
+        self.assertEqual(decision(r), "allow")
+
 
 # ── Bash — python (scoped) ───────────────────────────────────
 
@@ -593,6 +605,18 @@ class TestSafeTools(unittest.TestCase):
         r = sieve("ToolSearch", {"query": "select:Read"})
         self.assertEqual(decision(r), "allow")
 
+    def test_enter_plan_mode(self):
+        r = sieve("EnterPlanMode", {})
+        self.assertEqual(decision(r), "allow")
+
+    def test_exit_plan_mode(self):
+        r = sieve("ExitPlanMode", {"plan": "some plan"})
+        self.assertEqual(decision(r), "allow")
+
+    def test_monitor(self):
+        r = sieve("Monitor", {"command": "tail -f log"})
+        self.assertEqual(decision(r), "allow")
+
 
 # ── Unknown tools (should prompt) ────────────────────────────
 
@@ -617,20 +641,20 @@ class TestUnknownTools(unittest.TestCase):
 
 class TestAtlassianReads(unittest.TestCase):
     def test_read_only_tool_allowed(self):
-        r = sieve("mcp__plugin_atlassian__getJiraIssue", {"issueIdOrKey": "PROJ-123"})
+        r = sieve("mcp__plugin_atlassian_atlassian__getJiraIssue", {"issueIdOrKey": "PROJ-123"})
         self.assertEqual(decision(r), "allow")
 
     def test_side_effecting_tool_prompts(self):
-        r = sieve("mcp__plugin_atlassian__createJiraIssue", {"summary": "Bug"})
+        r = sieve("mcp__plugin_atlassian_atlassian__createJiraIssue", {"summary": "Bug"})
         self.assertEqual(decision(r), "ask")
 
     def test_fetch_prompts(self):
         # fetch is ambiguous — not in the read-only set, should ask
-        r = sieve("mcp__plugin_atlassian__fetch", {"url": "https://example.atlassian.net"})
+        r = sieve("mcp__plugin_atlassian_atlassian__fetch", {"url": "https://example.atlassian.net"})
         self.assertEqual(decision(r), "ask")
 
     def test_unknown_future_atlassian_tool_prompts(self):
-        r = sieve("mcp__plugin_atlassian__someNewTool", {"input": "data"})
+        r = sieve("mcp__plugin_atlassian_atlassian__someNewTool", {"input": "data"})
         self.assertEqual(decision(r), "ask")
 
     def test_non_atlassian_mcp_tool_prompts(self):

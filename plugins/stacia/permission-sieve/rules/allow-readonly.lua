@@ -18,6 +18,9 @@ local safe = {
   TaskOutput = true,
   TaskStop = true,
   ReportFindings = true,
+  EnterPlanMode = true,
+  ExitPlanMode = true,
+  Monitor = true,
 }
 
 if safe[request.tool_name] then

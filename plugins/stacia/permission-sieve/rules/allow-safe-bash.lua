@@ -15,7 +15,7 @@ end
 local simple_cmds = {
   "cd", "pwd", "echo", "cat", "ls", "find", "grep", "head", "tail",
   "wc", "sleep", "mkdir", "mv", "cp", "rm", "sed", "awk", "touch",
-  "git", "gh", "summon", "make", "oapi-codegen",
+  "git", "gh", "summon", "make", "cargo", "oapi-codegen",
 }
 
 local scoped_prefixes = {
