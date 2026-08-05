@@ -32,6 +32,7 @@ local known = {
   EnterWorktree = true,
   ExitWorktree = true,
   Monitor = true,
+  StructuredOutput = true,
   Bash = true,
   Write = true,
   Edit = true,
