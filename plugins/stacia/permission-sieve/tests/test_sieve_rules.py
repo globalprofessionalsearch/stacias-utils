@@ -565,6 +565,12 @@ class TestBashDenied(unittest.TestCase):
         r = sieve("Bash", {"command": "gh pr merge 123"})
         self.assertEqual(decision(r), "deny")
 
+    def test_commit_with_heredoc_not_denied(self):
+        """Heredoc content mentioning 'push' and 'main' should not trigger deny."""
+        cmd = "git commit -m \"$(cat <<'EOF'\nfeat: deny push to main\n\ngit push to main blocked\nEOF\n)\""
+        r = sieve("Bash", {"command": cmd})
+        self.assertNotEqual(decision(r), "deny")
+
 
 # ── Bash — sensitive paths in commands ───────────────────────
 
@@ -767,6 +773,18 @@ class TestSubagentModel(unittest.TestCase):
         r = sieve("Agent", {"description": "task", "prompt": "do it"})
         self.assertEqual(decision(r), "deny")
         self.assertIn("sonnet", reason(r).lower())
+
+    def test_fork_denied(self):
+        r = sieve("Agent", {"description": "task", "prompt": "do it", "subagent_type": "fork"})
+        self.assertEqual(decision(r), "deny")
+
+    def test_fork_with_sonnet_still_denied(self):
+        r = sieve("Agent", {"description": "task", "prompt": "do it", "subagent_type": "fork", "model": "sonnet"})
+        self.assertEqual(decision(r), "deny")
+
+    def test_non_fork_subagent_type_not_denied(self):
+        r = sieve("Agent", {"description": "task", "prompt": "do it", "subagent_type": "general-purpose", "model": "sonnet"})
+        self.assertNotEqual(decision(r), "deny")
 
     def test_workflow_always_prompts(self):
         r = sieve("Workflow", {"script": "export const meta = {name: 'test'};"})

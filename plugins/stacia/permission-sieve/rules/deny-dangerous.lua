@@ -10,7 +10,7 @@ local function has_word(s, word)
 end
 
 -- Force push (but not --force-with-lease)
-if cmd:match("git%s+push") then
+if cmd:match("^git%s+push") then
   local has_force = has_word(cmd, "--force") or has_word(cmd, "-f")
   local has_lease = cmd:find("--force-with-lease", 1, true)
   if has_force and not has_lease then
@@ -22,7 +22,7 @@ if cmd:match("git%s+push") then
 end
 
 -- gh pr merge
-if cmd:match("gh%s+pr%s+merge") then
+if cmd:match("^gh%s+pr%s+merge") then
   return "denied", "Use the GitHub UI to merge PRs"
 end
 
