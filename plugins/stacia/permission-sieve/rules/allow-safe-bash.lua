@@ -16,6 +16,11 @@ local simple_cmds = {
   "cd", "pwd", "echo", "cat", "ls", "find", "grep", "head", "tail",
   "wc", "sleep", "mkdir", "mv", "cp", "rm", "sed", "awk", "touch",
   "git", "gh", "summon", "make", "cargo", "go", "which", "oapi-codegen",
+  "sort", "uniq", "cut", "tr", "tee", "diff", "jq", "strings",
+  "basename", "dirname", "realpath", "readlink", "stat", "file",
+  "date", "id", "whoami", "hostname", "uname", "shasum", "md5sum",
+  "pbpaste", "pbcopy", "tput", "column", "seq", "yes", "true",
+  "false", "test", "expr", "man",
 }
 
 local scoped_prefixes = {

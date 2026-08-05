@@ -23,6 +23,7 @@ local safe = {
   EnterWorktree = true,
   ExitWorktree = true,
   Monitor = true,
+  StructuredOutput = true,
 }
 
 if safe[request.tool_name] then
