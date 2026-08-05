@@ -15,6 +15,7 @@ local allowed_prefixes = {
   HOME .. "/Documents/code/",
   HOME .. "/.cache/",
   HOME .. "/.claude/plans/",
+  HOME .. "/.claude/projects/",
 }
 
 local function is_allowed(path)

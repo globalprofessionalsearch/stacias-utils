@@ -1,8 +1,9 @@
 ---
-status: accepted
+status: partially superseded
 date: 2026-07-31
 decision-makers: Stacia Colasurdo
 jeenius-tags: [architecture, permission-sieve, security]
+superseded-by: "0010 — dispatcher splits compound commands"
 ---
 
 # The sieve does not parse compound commands
@@ -95,3 +96,12 @@ obvious cases and escalating the rest.
   "approved."
 - Bad: some safe compound commands will prompt unnecessarily. This is
   accepted — a false prompt is cheap, a false approval is not.
+
+### Partial Supersession
+
+ADR 0010 moves compound command splitting into the dispatcher, where
+each segment is evaluated through the full sieve pipeline independently.
+The core principles of this ADR — fail safe to "uncertain," do not
+attempt behavioral analysis of arbitrary shell — are preserved. What
+changes is that structural decomposition now happens in the dispatcher
+rather than being duplicated across individual rules.

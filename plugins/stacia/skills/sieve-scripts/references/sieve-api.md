@@ -61,18 +61,15 @@ value and produces `Outcome::Error`. Use `"skip"` (not my scope) or
 
 ### Pattern: Path Guarding
 
-Use `request.paths` for resolved absolute paths. Fall back to substring
-scanning on the bash command string as a safety net for paths the extractor
-might miss (redirections, variable interpolation beyond `$HOME`):
+Use `request.paths` for resolved absolute paths. The dispatcher extracts
+paths from command arguments and redirect targets (`>`, `>>`, `2>`, etc.),
+so `request.paths` covers both. Substring scanning on the raw command
+string is optional defense-in-depth for edge cases the path extractor
+might miss (e.g. unusual variable interpolation):
 
 ```lua
 for _, path in ipairs(request.paths) do
   if path:find("/.ssh/", 1, true) then return "uncertain" end
-end
-
-if request.tool_name == "Bash" then
-  local cmd = request.tool_input.command or ""
-  if cmd:find("/.ssh/", 1, true) then return "uncertain" end
 end
 
 return "approved"
@@ -88,24 +85,6 @@ end
 
 Note: in Lua patterns, `.` matches any character — escape with `%` for a
 literal dot.
-
-### Pattern: Splitting Compound Bash Commands
-
-To check each segment of a piped or chained command independently:
-
-```lua
-local function split_segments(s)
-  local segments = {}
-  for part in s:gmatch("[^&|;]+") do
-    local t = part:match("^%s*(.-)%s*$")
-    if t and #t > 0 then segments[#segments + 1] = t end
-  end
-  return segments
-end
-```
-
-This splits on `&`, `|`, and `;`. It does not respect quoting — a known
-limitation acceptable for v1 since the guard scripts provide defense in depth.
 
 ### Pattern: Deny with Instruction
 

@@ -2,6 +2,13 @@
 -- This is the single place that enumerates known tool types.
 -- Add new tools here when a rule is written to handle them.
 
+-- Atlassian MCP tools are owned by allow-atlassian-reads.lua; skip here so
+-- that script's approved signals are not poisoned by uncertain from this one.
+local atlassian_prefix = "mcp__plugin_atlassian__"
+if request.tool_name:sub(1, #atlassian_prefix) == atlassian_prefix then
+  return "skip"
+end
+
 local known = {
   Read = true,
   Grep = true,

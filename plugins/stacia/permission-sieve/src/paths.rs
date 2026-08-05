@@ -1,5 +1,7 @@
 use std::collections::HashSet;
 
+use crate::shell::split_on_shell_operators;
+
 /// Extracts file paths from tool inputs and returns them as fully-resolved absolute path strings.
 pub fn extract_paths(tool_name: &str, tool_input: &serde_json::Value) -> Vec<String> {
     let home = std::env::var("HOME").unwrap_or_default();
@@ -79,6 +81,9 @@ fn extract_bash_paths(tool_input: &serde_json::Value, home: &str) -> Vec<String>
 
     let mut paths = Vec::new();
     for segment in segments {
+        // Extract redirect targets first
+        paths.extend(extract_redirect_targets(&segment));
+
         match shell_words::split(&segment) {
             Ok(tokens) => {
                 for token in tokens {
@@ -101,77 +106,87 @@ fn extract_bash_paths(tool_input: &serde_json::Value, home: &str) -> Vec<String>
     paths
 }
 
-/// Splits a shell command on `|`, `||`, `&&`, and `;` operators, respecting single and double
-/// quotes so operators inside quoted strings are not treated as delimiters.
-fn split_on_shell_operators(command: &str) -> Vec<String> {
-    let mut segments = Vec::new();
-    let mut current = String::new();
-    let mut chars = command.chars().peekable();
+/// Extracts file paths from redirect operators in a shell command segment.
+/// Handles: `>`, `>>`, `2>`, `2>>`, `&>`, `&>>`, `<` — both spaced (`> /path`)
+/// and attached (`2>/path`) forms.
+fn extract_redirect_targets(segment: &str) -> Vec<String> {
+    let mut targets = Vec::new();
+    let mut chars = segment.chars().peekable();
     let mut in_single_quote = false;
     let mut in_double_quote = false;
 
     while let Some(ch) = chars.next() {
         match ch {
-            '\'' if !in_double_quote => {
-                in_single_quote = !in_single_quote;
-                current.push(ch);
-            }
-            '"' if !in_single_quote => {
-                in_double_quote = !in_double_quote;
-                current.push(ch);
-            }
-            '\\' if !in_single_quote => {
-                // Escape: keep both the backslash and the next char
-                current.push(ch);
-                if let Some(next) = chars.next() {
-                    current.push(next);
+            '\'' if !in_double_quote => { in_single_quote = !in_single_quote; }
+            '"' if !in_single_quote => { in_double_quote = !in_double_quote; }
+            '\\' if !in_single_quote => { chars.next(); }
+            _ if in_single_quote || in_double_quote => {}
+            // &> or &>>
+            '&' if chars.peek() == Some(&'>') => {
+                chars.next(); // consume '>'
+                if chars.peek() == Some(&'>') {
+                    chars.next(); // consume second '>'
+                }
+                if let Some(path) = consume_redirect_target(&mut chars) {
+                    targets.push(path);
                 }
             }
-            '|' if !in_single_quote && !in_double_quote => {
-                // Consume second `|` for `||`
-                if chars.peek() == Some(&'|') {
-                    chars.next();
+            // Numeric redirect: 2> or 2>>
+            '0'..='9' if chars.peek() == Some(&'>') => {
+                chars.next(); // consume '>'
+                if chars.peek() == Some(&'>') {
+                    chars.next(); // consume second '>'
                 }
-                let seg = current.trim().to_string();
-                if !seg.is_empty() {
-                    segments.push(seg);
-                }
-                current.clear();
-            }
-            '&' if !in_single_quote && !in_double_quote => {
+                // Skip >&N (fd duplication like 2>&1)
                 if chars.peek() == Some(&'&') {
-                    chars.next();
-                    let seg = current.trim().to_string();
-                    if !seg.is_empty() {
-                        segments.push(seg);
-                    }
-                    current.clear();
-                } else {
-                    // Single `&` (background operator) — treat as separator
-                    let seg = current.trim().to_string();
-                    if !seg.is_empty() {
-                        segments.push(seg);
-                    }
-                    current.clear();
+                    // fd dup — skip, not a file target
+                    continue;
+                }
+                if let Some(path) = consume_redirect_target(&mut chars) {
+                    targets.push(path);
                 }
             }
-            ';' if !in_single_quote && !in_double_quote => {
-                let seg = current.trim().to_string();
-                if !seg.is_empty() {
-                    segments.push(seg);
+            // > or >> or < (not preceded by digit — those are caught above)
+            '>' | '<' => {
+                if ch == '>' && chars.peek() == Some(&'>') {
+                    chars.next(); // consume second '>'
                 }
-                current.clear();
+                // Skip >&N (fd duplication)
+                if ch == '>' && chars.peek() == Some(&'&') {
+                    continue;
+                }
+                if let Some(path) = consume_redirect_target(&mut chars) {
+                    targets.push(path);
+                }
             }
-            _ => current.push(ch),
+            _ => {}
         }
     }
 
-    let seg = current.trim().to_string();
-    if !seg.is_empty() {
-        segments.push(seg);
+    targets
+}
+
+/// After consuming a redirect operator, skip whitespace and collect the target path.
+fn consume_redirect_target(chars: &mut std::iter::Peekable<std::str::Chars>) -> Option<String> {
+    // Skip whitespace
+    while chars.peek() == Some(&' ') || chars.peek() == Some(&'\t') {
+        chars.next();
     }
 
-    segments
+    let mut target = String::new();
+    while let Some(&ch) = chars.peek() {
+        if ch == ' ' || ch == '\t' || ch == ';' || ch == '|' || ch == '&' || ch == '>' || ch == '<' {
+            break;
+        }
+        target.push(ch);
+        chars.next();
+    }
+
+    if target.is_empty() || !target.starts_with('/') {
+        return None;
+    }
+
+    Some(target)
 }
 
 #[cfg(test)]
@@ -246,5 +261,86 @@ mod tests {
         let paths = extract_paths("Bash", &input);
         let count = paths.iter().filter(|p| p.as_str() == "/tmp/testfile").count();
         assert_eq!(count, 1, "expected exactly one /tmp/testfile, got: {:?}", paths);
+    }
+
+    // ── Redirect target extraction ───────────────────────────
+
+    #[test]
+    fn redirect_output_spaced() {
+        let targets = extract_redirect_targets("echo hello > /tmp/out.txt");
+        assert!(targets.contains(&"/tmp/out.txt".to_string()), "got {:?}", targets);
+    }
+
+    #[test]
+    fn redirect_output_no_space() {
+        let targets = extract_redirect_targets("echo hello >/tmp/out.txt");
+        assert!(targets.contains(&"/tmp/out.txt".to_string()), "got {:?}", targets);
+    }
+
+    #[test]
+    fn redirect_append() {
+        let targets = extract_redirect_targets("echo hello >> /tmp/log.txt");
+        assert!(targets.contains(&"/tmp/log.txt".to_string()), "got {:?}", targets);
+    }
+
+    #[test]
+    fn redirect_stderr() {
+        let targets = extract_redirect_targets("cmd 2>/tmp/err.log");
+        assert!(targets.contains(&"/tmp/err.log".to_string()), "got {:?}", targets);
+    }
+
+    #[test]
+    fn redirect_stderr_append() {
+        let targets = extract_redirect_targets("cmd 2>>/tmp/err.log");
+        assert!(targets.contains(&"/tmp/err.log".to_string()), "got {:?}", targets);
+    }
+
+    #[test]
+    fn redirect_combined() {
+        let targets = extract_redirect_targets("cmd &>/tmp/all.log");
+        assert!(targets.contains(&"/tmp/all.log".to_string()), "got {:?}", targets);
+    }
+
+    #[test]
+    fn redirect_input() {
+        let targets = extract_redirect_targets("cmd < /tmp/input.txt");
+        assert!(targets.contains(&"/tmp/input.txt".to_string()), "got {:?}", targets);
+    }
+
+    #[test]
+    fn redirect_fd_dup_ignored() {
+        let targets = extract_redirect_targets("cmd 2>&1");
+        assert!(targets.is_empty(), "fd dup should not produce paths, got {:?}", targets);
+    }
+
+    #[test]
+    fn redirect_non_absolute_ignored() {
+        let targets = extract_redirect_targets("echo hi > relative.txt");
+        assert!(targets.is_empty(), "relative paths should be ignored, got {:?}", targets);
+    }
+
+    #[test]
+    fn redirect_in_quotes_ignored() {
+        let targets = extract_redirect_targets(r#"echo "data > /tmp/foo" hello"#);
+        assert!(targets.is_empty(), "redirects in quotes should be ignored, got {:?}", targets);
+    }
+
+    #[test]
+    fn redirect_multiple() {
+        let targets = extract_redirect_targets("cmd > /tmp/out 2>/tmp/err");
+        assert!(targets.contains(&"/tmp/out".to_string()), "missing /tmp/out in {:?}", targets);
+        assert!(targets.contains(&"/tmp/err".to_string()), "missing /tmp/err in {:?}", targets);
+    }
+
+    #[test]
+    fn redirect_paths_in_extract_paths() {
+        let home = home();
+        let input = serde_json::json!({"command": format!("echo secret > {home}/.ssh/test")});
+        let paths = extract_paths("Bash", &input);
+        assert!(
+            paths.iter().any(|p| p.contains("/.ssh/test")),
+            "expected path containing /.ssh/test in {:?}",
+            paths
+        );
     }
 }

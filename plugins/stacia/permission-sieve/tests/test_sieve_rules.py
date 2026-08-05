@@ -153,6 +153,18 @@ class TestWriteTool(unittest.TestCase):
         })
         self.assertEqual(decision(r), "allow")
 
+    def test_write_claude_projects(self):
+        r = sieve("Write", {"file_path": os.path.expanduser("~/.claude/projects/foo/memory.md"), "content": "mem"})
+        self.assertEqual(decision(r), "allow")
+
+    def test_edit_claude_projects(self):
+        r = sieve("Edit", {
+            "file_path": os.path.expanduser("~/.claude/projects/foo/MEMORY.md"),
+            "old_string": "old",
+            "new_string": "new",
+        })
+        self.assertEqual(decision(r), "allow")
+
     def test_write_outside_allowed_dirs(self):
         r = sieve("Write", {"file_path": "/tmp/output.txt", "content": "test"})
         self.assertEqual(decision(r), "ask")
@@ -531,6 +543,19 @@ class TestBashCompound(unittest.TestCase):
         r = sieve("Bash", {"command": "echo hello; unknown-cmd"})
         self.assertEqual(decision(r), "ask")
 
+    def test_compound_with_denied_segment(self):
+        """A compound command with a denied segment should be denied."""
+        r = sieve("Bash", {"command": "ls /tmp && terraform plan"})
+        self.assertEqual(decision(r), "deny")
+
+    def test_compound_with_denied_force_push(self):
+        r = sieve("Bash", {"command": "git add . && git push --force origin main"})
+        self.assertEqual(decision(r), "deny")
+
+    def test_compound_three_segments_one_denied(self):
+        r = sieve("Bash", {"command": "echo a; ls; gh pr merge 123"})
+        self.assertEqual(decision(r), "deny")
+
 
 # ── Non-tool-specific: safe tools ────────────────────────────
 
@@ -578,12 +603,40 @@ class TestUnknownTools(unittest.TestCase):
         self.assertEqual(decision(r), "ask")
 
     def test_mcp_tool(self):
-        r = sieve("mcp__plugin_atlassian__getJiraIssue", {"issueId": "PROJ-123"})
+        # Non-atlassian MCP tools are unknown → guard-unknown-tools prompts
+        r = sieve("mcp__plugin_slack__postMessage", {"channel": "#general", "text": "hi"})
         self.assertEqual(decision(r), "ask")
 
     def test_agent_tool_no_model(self):
         r = sieve("Agent", {"description": "do something", "prompt": "hello"})
         self.assertEqual(decision(r), "deny")
+
+
+# ── Atlassian MCP tools ───────────────────────────────────────
+
+
+class TestAtlassianReads(unittest.TestCase):
+    def test_read_only_tool_allowed(self):
+        r = sieve("mcp__plugin_atlassian__getJiraIssue", {"issueIdOrKey": "PROJ-123"})
+        self.assertEqual(decision(r), "allow")
+
+    def test_side_effecting_tool_prompts(self):
+        r = sieve("mcp__plugin_atlassian__createJiraIssue", {"summary": "Bug"})
+        self.assertEqual(decision(r), "ask")
+
+    def test_fetch_prompts(self):
+        # fetch is ambiguous — not in the read-only set, should ask
+        r = sieve("mcp__plugin_atlassian__fetch", {"url": "https://example.atlassian.net"})
+        self.assertEqual(decision(r), "ask")
+
+    def test_unknown_future_atlassian_tool_prompts(self):
+        r = sieve("mcp__plugin_atlassian__someNewTool", {"input": "data"})
+        self.assertEqual(decision(r), "ask")
+
+    def test_non_atlassian_mcp_tool_prompts(self):
+        # guard-unknown-tools catches this as uncertain
+        r = sieve("mcp__plugin_slack__postMessage", {"channel": "#general", "text": "hi"})
+        self.assertEqual(decision(r), "ask")
 
 
 # ── Subagent model guard ─────────────────────────────────────
@@ -668,7 +721,7 @@ def save_checksums(checksums: dict[str, str]) -> None:
 # A rule that's hard to audit is a rule that should be split or
 # simplified. See ADR-0009.
 
-MAX_COMPLEXITY = 65
+MAX_COMPLEXITY = 25
 
 
 def cognitive_complexity(path: str) -> tuple[int, dict]:

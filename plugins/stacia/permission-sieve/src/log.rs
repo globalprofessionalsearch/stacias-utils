@@ -13,8 +13,16 @@ pub struct ScriptRun {
 }
 
 #[derive(Debug, Serialize)]
+pub struct SegmentRecord {
+    pub command: String,
+    pub scripts_run: Vec<ScriptRun>,
+    pub resolution: String,
+}
+
+#[derive(Debug, Serialize)]
 pub struct DecisionRecord {
     pub build: &'static str,
+    pub build_ts: &'static str,
     pub ts: String,
     pub session_id: Option<String>,
     pub agent_type: Option<String>,
@@ -26,6 +34,8 @@ pub struct DecisionRecord {
     pub summarizer_output: Option<String>,
     pub user_decision: Option<String>,
     pub disposition: String,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub segments: Vec<SegmentRecord>,
 }
 
 pub fn now_utc() -> String {
