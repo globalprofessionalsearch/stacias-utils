@@ -364,7 +364,13 @@ doesn't recognize the command)
 Run: ls /tmp && grep test /etc/hosts
 ```
 
-**Expected:** resolution `approved`, no prompt (both segments are safe)
+**Expected:** aggregate resolution `approved`, no prompt (both segments
+are safe)
+
+The dispatcher splits this into two segments and evaluates each through
+the full pipeline independently:
+
+**Segment 1:** `ls /tmp`
 
 | Script | Outcome |
 |--------|---------|
@@ -375,6 +381,23 @@ Run: ls /tmp && grep test /etc/hosts
 | allow-safe-mutations | S |
 | allow-safe-bash | A |
 
+Segment resolution: `approved`
+
+**Segment 2:** `grep test /etc/hosts`
+
+| Script | Outcome |
+|--------|---------|
+| deny-dangerous | S |
+| guard-sensitive-paths | A |
+| guard-external-dirs | S |
+| allow-readonly | S |
+| allow-safe-mutations | S |
+| allow-safe-bash | A |
+
+Segment resolution: `approved`
+
+**Aggregate:** all segments approved → `approved`
+
 ---
 
 ## Test 19: Bash — compound with unsafe segment
@@ -384,8 +407,12 @@ Run: ls /tmp && grep test /etc/hosts
 Run: ls /tmp && rm -rf /tmp/fake
 ```
 
-**Expected:** resolution `uncertain`, user prompted (rm -rf segment
-triggers the carve-out)
+**Expected:** aggregate resolution `uncertain`, user prompted (rm -rf
+segment triggers the carve-out)
+
+The dispatcher splits this into two segments:
+
+**Segment 1:** `ls /tmp`
 
 | Script | Outcome |
 |--------|---------|
@@ -394,4 +421,18 @@ triggers the carve-out)
 | guard-external-dirs | S |
 | allow-readonly | S |
 | allow-safe-mutations | S |
-| allow-safe-bash | U |
+| allow-safe-bash | A |
+
+Segment resolution: `approved`
+
+**Segment 2:** `rm -rf /tmp/fake`
+
+| Script | Outcome |
+|--------|---------|
+| deny-dangerous | S |
+| guard-bash-carveouts | U |
+| (short-circuits to uncertain) | |
+
+Segment resolution: `uncertain`
+
+**Aggregate:** not all segments approved → `uncertain`

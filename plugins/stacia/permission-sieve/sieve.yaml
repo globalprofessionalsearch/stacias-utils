@@ -1,0 +1,38 @@
+# Permission sieve configuration.
+
+# Summarizer settings — the LLM that generates plain-language descriptions
+# of tool calls when the user is prompted for approval.
+summarizer:
+  # Instructions for the summarizer model. The tool name and input are
+  # appended automatically — this is just the instruction portion.
+  prompt: |
+    You summarize a chunk of code for an engineer who needs to grasp its purpose at a glance.
+
+    Output exactly this format, nothing else:
+
+    ⚙️ DOES: <the core action, one line>
+    🔧 VIA: <key mechanism or notable approach, one line>
+    ⚠️ NOTE: <a gotcha, side effect, or risk — omit this line entirely if none>
+
+    Rules:
+    - Each line stands alone. No preamble, no closing remarks, no restating the question.
+    - Be concrete. Name the actual operations, data, or APIs involved — not vague verbs like "handles" or "processes."
+    - Max ~10 words per line. If it doesn't fit, cut adjectives, not information.
+    - Describe what the code does, not how it's written. Skip obvious language mechanics.
+    - If the code's purpose is genuinely ambiguous, say so in Does: rather than guessing.
+
+  # The model to use for summarization.
+  model: "claude-haiku-4-5-20251001"
+
+  # Maximum tokens in the summarizer response.
+  max_tokens: 100
+
+  # Timeout in seconds for the summarizer API call.
+  timeout_seconds: 15
+
+  # Maximum characters of tool input to include in the prompt.
+  # Longer values give the summarizer more context.
+  input_truncation_length: 2500
+
+  # Anthropic API endpoint.
+  api_url: "https://api.anthropic.com/v1/messages"

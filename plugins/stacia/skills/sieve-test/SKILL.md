@@ -57,12 +57,19 @@ everything else to a human. A rule that cannot confidently evaluate a
 command should return "uncertain" — that is the correct answer, not a gap
 to fill.
 
-Do not recommend rules that deeply parse compound bash commands. Do not
-treat "uncertain" on a complex command as a test failure — it is the
-intended behavior. Tests should assert that complex or unrecognized
+The dispatcher splits compound Bash commands into segments and evaluates
+each through the full sieve pipeline independently. Rules always see
+single-segment commands — do not implement segment splitting in rules.
+Do not treat "uncertain" on an unrecognized command as a test failure —
+it is the intended behavior. Tests should assert that unrecognized
 commands return "ask", not "allow."
 
-See `docs/adr/0009-sieve-does-not-parse-compound-commands.md` for the
+For compound command tests, assert on the aggregate resolution (the
+cross-segment result) rather than per-script outcomes, since each
+segment runs through the pipeline separately. The decision log's
+`segments` field shows per-segment detail.
+
+See `docs/adr/0010-dispatcher-splits-compound-commands.md` for the
 full rationale.
 
 ## Mode 1: Run the Automated Suite

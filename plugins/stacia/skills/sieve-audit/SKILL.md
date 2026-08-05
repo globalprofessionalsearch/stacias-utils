@@ -63,14 +63,19 @@ bugs or contract violations (e.g., returning the deprecated "pass" value).
 
 When the audit reveals frequently-prompted commands, do not assume they
 all need allow rules. The sieve's design principle: complexity is the
-signal. A compound or unfamiliar command that prompts the user is working
-as intended — the inability to cleanly express a rule is itself evidence
+signal. An unfamiliar command that prompts the user is working as
+intended — the inability to cleanly express a rule is itself evidence
 the command needs human review.
 
+The dispatcher splits compound Bash commands into segments and evaluates
+each through the full sieve pipeline independently. Rules always see
+single-segment commands — do not implement segment splitting in rules.
+When a compound command prompts, inspect the decision log's `segments`
+field to identify which specific segment triggered uncertainty.
+
 Only recommend new allow entries for commands that are structurally
-simple, clearly safe, and frequently repeated. Do not recommend rules
-that attempt to parse compound bash commands. See
-`docs/adr/0009-sieve-does-not-parse-compound-commands.md`.
+simple, clearly safe, and frequently repeated. See
+`docs/adr/0010-dispatcher-splits-compound-commands.md`.
 
 ## Additional Resources
 

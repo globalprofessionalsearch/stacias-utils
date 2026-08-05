@@ -1,5 +1,8 @@
 -- Auto-approves known-safe bash commands. Commands not matched here
 -- return "uncertain" (-> ask the user).
+--
+-- The dispatcher splits compound commands into segments before this
+-- rule runs — each invocation sees a single command segment.
 
 if request.tool_name ~= "Bash" then return "skip" end
 
@@ -9,64 +12,10 @@ local function starts_with(s, prefix)
   return s:sub(1, #prefix) == prefix
 end
 
-local function trim(s)
-  return s:match("^%s*(.-)%s*$")
-end
-
-local function strip_redirects(s)
-  s = s:gsub("%d*>%&%d+", "")
-  s = s:gsub("%d*>>%s*%S+", "")
-  s = s:gsub("%d*>%s*%S+", "")
-  s = s:gsub("<%s*%S+", "")
-  return s
-end
-
-local function split_segments(s)
-  s = strip_redirects(s)
-  local segments = {}
-  local current = {}
-  local in_single = false
-  local in_double = false
-  local i = 1
-  while i <= #s do
-    local c = s:sub(i, i)
-    if c == "'" and not in_double then
-      in_single = not in_single
-      current[#current + 1] = c
-    elseif c == '"' and not in_single then
-      in_double = not in_double
-      current[#current + 1] = c
-    elseif c == "\\" and not in_single then
-      current[#current + 1] = c
-      if i < #s then
-        i = i + 1
-        current[#current + 1] = s:sub(i, i)
-      end
-    elseif not in_single and not in_double and (c == "&" or c == "|" or c == ";") then
-      local t = trim(table.concat(current))
-      if t and #t > 0 then
-        segments[#segments + 1] = t
-      end
-      current = {}
-    else
-      current[#current + 1] = c
-    end
-    i = i + 1
-  end
-  local t = trim(table.concat(current))
-  if t and #t > 0 then
-    segments[#segments + 1] = t
-  end
-  if #segments == 0 then
-    segments[1] = trim(s)
-  end
-  return segments
-end
-
 local simple_cmds = {
   "cd", "pwd", "echo", "cat", "ls", "find", "grep", "head", "tail",
   "wc", "sleep", "mkdir", "mv", "cp", "rm", "sed", "awk", "touch",
-  "git", "gh", "summon", "make", "oapi-codegen",
+  "git", "gh", "summon", "make", "cargo", "oapi-codegen",
 }
 
 local scoped_prefixes = {
@@ -123,10 +72,6 @@ local function is_safe(segment)
   return false
 end
 
-local segments = split_segments(cmd)
+if is_safe(cmd) then return "approved" end
 
-for _, seg in ipairs(segments) do
-  if not is_safe(seg) then return "uncertain" end
-end
-
-return "approved"
+return "uncertain"

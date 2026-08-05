@@ -6,12 +6,14 @@ mod config;
 mod log;
 mod paths;
 mod response;
+mod shell;
 mod sieve;
 mod summarizer;
 
-use config::{RuleEntry, discover_rules, summarizer_model};
-use log::{DecisionRecord, ScriptRun, append_log, now_utc, tool_input_summary};
+use config::{RuleEntry, discover_rules, load_config};
+use log::{DecisionRecord, ScriptRun, SegmentRecord, append_log, now_utc, tool_input_summary};
 use response::{allow_response, deny_response, uncertain_response};
+use shell::split_on_shell_operators;
 use sieve::{Outcome, Resolution, create_lua, resolve, run_script, set_request};
 
 fn die(msg: &str) -> ! {
@@ -56,6 +58,106 @@ fn outcomes_to_runs(outcomes: &[Outcome], rules: &[RuleEntry]) -> Vec<ScriptRun>
         .collect()
 }
 
+fn resolution_str(resolution: &Resolution) -> &'static str {
+    match resolution {
+        Resolution::Allowed => "approved",
+        Resolution::Denied { .. } => "denied",
+        Resolution::Error(_) => "error",
+        Resolution::Uncertain => "uncertain",
+    }
+}
+
+struct SegmentResult {
+    command: String,
+    resolution: Resolution,
+    outcomes: Vec<Outcome>,
+}
+
+fn evaluate_single(
+    event: &serde_json::Value,
+    rules: &[RuleEntry],
+) -> (Vec<Outcome>, Resolution) {
+    let tool_name = event
+        .get("tool_name")
+        .and_then(|v| v.as_str())
+        .unwrap_or("unknown");
+    let tool_input = event
+        .get("tool_input")
+        .cloned()
+        .unwrap_or_else(|| serde_json::json!({}));
+
+    let extracted_paths = paths::extract_paths(tool_name, &tool_input);
+
+    let mut outcomes = Vec::with_capacity(rules.len());
+    for entry in rules {
+        let lua = create_lua();
+        set_request(&lua, event, &extracted_paths);
+        let outcome = run_script(&lua, entry);
+        let short_circuit = matches!(outcome, Outcome::Error(_) | Outcome::Denied { .. });
+        outcomes.push(outcome);
+        if short_circuit {
+            break;
+        }
+    }
+
+    let resolution = resolve(&outcomes);
+    (outcomes, resolution)
+}
+
+fn evaluate_compound(
+    event: &serde_json::Value,
+    segments: &[String],
+    rules: &[RuleEntry],
+) -> Vec<SegmentResult> {
+    segments
+        .iter()
+        .map(|seg| {
+            let mut seg_event = event.clone();
+            if let Some(obj) = seg_event.as_object_mut() {
+                let mut input = obj
+                    .get("tool_input")
+                    .cloned()
+                    .unwrap_or_else(|| serde_json::json!({}));
+                if let Some(input_obj) = input.as_object_mut() {
+                    input_obj.insert("command".to_string(), serde_json::json!(seg));
+                }
+                obj.insert("tool_input".to_string(), input);
+            }
+            let (outcomes, resolution) = evaluate_single(&seg_event, rules);
+            SegmentResult {
+                command: seg.clone(),
+                resolution,
+                outcomes,
+            }
+        })
+        .collect()
+}
+
+fn aggregate_resolutions(segment_results: &[SegmentResult]) -> Resolution {
+    for result in segment_results {
+        match &result.resolution {
+            Resolution::Error(msg) => return Resolution::Error(msg.clone()),
+            Resolution::Denied { reason, instruction } => {
+                return Resolution::Denied {
+                    reason: reason.clone(),
+                    instruction: instruction.clone(),
+                };
+            }
+            _ => {}
+        }
+    }
+
+    let all_approved = segment_results
+        .iter()
+        .all(|r| matches!(r.resolution, Resolution::Allowed));
+
+    if all_approved {
+        Resolution::Allowed
+    } else {
+        Resolution::Uncertain
+    }
+}
+
 fn main() {
     let mut input = String::new();
     if let Err(e) = std::io::stdin().read_to_string(&mut input) {
@@ -87,11 +189,13 @@ fn main() {
     let dir = config_dir();
     let log_path = dir.join("decisions.jsonl");
     let rules = discover_rules(&dir);
+    let config = load_config(&dir);
+    let summarizer_cfg = config.summarizer;
 
     let input_summary = tool_input_summary(&tool_input);
 
     if rules.is_empty() {
-        let (summary, error) = match summarizer::summarize(tool_name, &tool_input, summarizer_model()) {
+        let (summary, error) = match summarizer::summarize(tool_name, &tool_input, &summarizer_cfg) {
             Ok(s) => (Some(s), None),
             Err(e) => {
                 eprintln!("Warning: summarizer unavailable: {e}");
@@ -99,6 +203,8 @@ fn main() {
             }
         };
         let record = DecisionRecord {
+            build: env!("SIEVE_BUILD_HASH"),
+            build_ts: env!("SIEVE_BUILD_TS"),
             ts: now_utc(),
             session_id: session_id.clone(),
             agent_type: agent_type.clone(),
@@ -110,6 +216,7 @@ fn main() {
             summarizer_output: summary.clone(),
             user_decision: None,
             disposition: "asked".to_string(),
+            segments: vec![],
         };
         append_log(&log_path, &record);
         let message = summary.unwrap_or_else(|| format!("Permission sieve: summarizer unavailable ({})", record.error_detail.as_deref().unwrap_or("unknown error")));
@@ -117,22 +224,44 @@ fn main() {
         return;
     }
 
-    let paths = paths::extract_paths(tool_name, &tool_input);
+    // Compound command splitting for Bash tools
+    let is_bash = tool_name == "Bash";
+    let bash_segments: Vec<String> = if is_bash {
+        let cmd = tool_input
+            .get("command")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        split_on_shell_operators(cmd)
+    } else {
+        vec![]
+    };
+    let is_compound = is_bash && bash_segments.len() > 1;
 
-    let mut outcomes = Vec::with_capacity(rules.len());
-    for entry in &rules {
-        let lua = create_lua();
-        set_request(&lua, &event, &paths);
-        let outcome = run_script(&lua, entry);
-        let short_circuit = matches!(outcome, Outcome::Error(_) | Outcome::Denied { .. });
-        outcomes.push(outcome);
-        if short_circuit {
-            break;
-        }
-    }
+    let (resolution, script_runs, segment_records) = if is_compound {
+        let segment_results = evaluate_compound(&event, &bash_segments, &rules);
+        let aggregate = aggregate_resolutions(&segment_results);
 
-    let resolution = resolve(&outcomes);
-    let script_runs = outcomes_to_runs(&outcomes, &rules);
+        let seg_records: Vec<SegmentRecord> = segment_results
+            .iter()
+            .map(|sr| SegmentRecord {
+                command: sr.command.clone(),
+                scripts_run: outcomes_to_runs(&sr.outcomes, &rules),
+                resolution: resolution_str(&sr.resolution).to_string(),
+            })
+            .collect();
+
+        // Aggregate script_runs: flatten all segment runs for the top-level record
+        let all_runs: Vec<ScriptRun> = segment_results
+            .iter()
+            .flat_map(|sr| outcomes_to_runs(&sr.outcomes, &rules))
+            .collect();
+
+        (aggregate, all_runs, seg_records)
+    } else {
+        let (outcomes, resolution) = evaluate_single(&event, &rules);
+        let script_runs = outcomes_to_runs(&outcomes, &rules);
+        (resolution, script_runs, vec![])
+    };
 
     let (resolution_str, error_detail, summarizer_output, disposition, response) = match resolution
     {
@@ -161,8 +290,11 @@ fn main() {
             ("error", Some(error_msg.clone()), None, "error", None)
         }
         Resolution::Uncertain => {
-            let (summary, err) = match summarizer::summarize(tool_name, &tool_input, summarizer_model()) {
-                Ok(s) => (Some(s), None),
+            let (summary, err) = match summarizer::summarize(tool_name, &tool_input, &summarizer_cfg) {
+                Ok(s) => {
+                    eprintln!("[sieve] {tool_name}: {s}");
+                    (Some(s), None)
+                }
                 Err(e) => {
                     eprintln!("Warning: summarizer unavailable: {e}");
                     (None, Some(e))
@@ -180,6 +312,8 @@ fn main() {
     };
 
     let record = DecisionRecord {
+        build: env!("SIEVE_BUILD_HASH"),
+        build_ts: env!("SIEVE_BUILD_TS"),
         ts: now_utc(),
         session_id,
         agent_type,
@@ -191,6 +325,7 @@ fn main() {
         summarizer_output,
         user_decision: None,
         disposition: disposition.to_string(),
+        segments: segment_records,
     };
     append_log(&log_path, &record);
 
@@ -241,5 +376,76 @@ mod tests {
             per_iter.as_micros() < 1000,
             "Startup SLA violated: {per_iter:?} per iteration (max 1000µs)"
         );
+    }
+
+    #[test]
+    fn aggregate_all_approved() {
+        let results = vec![
+            SegmentResult {
+                command: "ls".into(),
+                resolution: Resolution::Allowed,
+                outcomes: vec![Outcome::Approved],
+            },
+            SegmentResult {
+                command: "pwd".into(),
+                resolution: Resolution::Allowed,
+                outcomes: vec![Outcome::Approved],
+            },
+        ];
+        assert!(matches!(aggregate_resolutions(&results), Resolution::Allowed));
+    }
+
+    #[test]
+    fn aggregate_one_denied() {
+        let results = vec![
+            SegmentResult {
+                command: "ls".into(),
+                resolution: Resolution::Allowed,
+                outcomes: vec![Outcome::Approved],
+            },
+            SegmentResult {
+                command: "terraform plan".into(),
+                resolution: Resolution::Denied {
+                    reason: Some("use tofu".into()),
+                    instruction: None,
+                },
+                outcomes: vec![],
+            },
+        ];
+        assert!(matches!(aggregate_resolutions(&results), Resolution::Denied { .. }));
+    }
+
+    #[test]
+    fn aggregate_one_uncertain() {
+        let results = vec![
+            SegmentResult {
+                command: "ls".into(),
+                resolution: Resolution::Allowed,
+                outcomes: vec![Outcome::Approved],
+            },
+            SegmentResult {
+                command: "unknown-cmd".into(),
+                resolution: Resolution::Uncertain,
+                outcomes: vec![Outcome::Uncertain],
+            },
+        ];
+        assert!(matches!(aggregate_resolutions(&results), Resolution::Uncertain));
+    }
+
+    #[test]
+    fn aggregate_error_wins() {
+        let results = vec![
+            SegmentResult {
+                command: "ls".into(),
+                resolution: Resolution::Allowed,
+                outcomes: vec![Outcome::Approved],
+            },
+            SegmentResult {
+                command: "bad".into(),
+                resolution: Resolution::Error("broken".into()),
+                outcomes: vec![],
+            },
+        ];
+        assert!(matches!(aggregate_resolutions(&results), Resolution::Error(_)));
     }
 }

