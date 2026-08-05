@@ -20,6 +20,8 @@ local safe = {
   ReportFindings = true,
   EnterPlanMode = true,
   ExitPlanMode = true,
+  EnterWorktree = true,
+  ExitWorktree = true,
   Monitor = true,
 }
 

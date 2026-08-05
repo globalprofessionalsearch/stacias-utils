@@ -323,6 +323,39 @@ class TestBashSafe(unittest.TestCase):
         r = sieve("Bash", {"command": "cargo clippy -- -D warnings"})
         self.assertEqual(decision(r), "allow")
 
+    def test_go_test(self):
+        r = sieve("Bash", {"command": "go test ./..."})
+        self.assertEqual(decision(r), "allow")
+
+    def test_go_build(self):
+        r = sieve("Bash", {"command": "go build ./..."})
+        self.assertEqual(decision(r), "allow")
+
+    def test_which(self):
+        r = sieve("Bash", {"command": "which python3"})
+        self.assertEqual(decision(r), "allow")
+
+    def test_docker_compose_ps(self):
+        r = sieve("Bash", {"command": "docker compose ps"})
+        self.assertEqual(decision(r), "allow")
+
+    def test_docker_compose_logs(self):
+        r = sieve("Bash", {"command": "docker compose logs app"})
+        self.assertEqual(decision(r), "allow")
+
+    def test_docker_compose_up(self):
+        r = sieve("Bash", {"command": "docker compose up -d"})
+        self.assertEqual(decision(r), "allow")
+
+    def test_docker_ps(self):
+        r = sieve("Bash", {"command": "docker ps"})
+        self.assertEqual(decision(r), "allow")
+
+    def test_docker_exec_prompts(self):
+        """docker exec can run arbitrary commands — should prompt."""
+        r = sieve("Bash", {"command": "docker exec my-container bash -c 'rm -rf /'"})
+        self.assertEqual(decision(r), "ask")
+
 
 # ── Bash — python (scoped) ───────────────────────────────────
 
@@ -392,6 +425,22 @@ class TestBashPython(unittest.TestCase):
         r = sieve("Bash", {"command": "uv run"})
         self.assertEqual(decision(r), "ask")
 
+    def test_uv_run_pytest_piped_tail(self):
+        r = sieve("Bash", {"command": "uv run pytest 2>&1 | tail -20"})
+        self.assertEqual(decision(r), "allow")
+
+    def test_uv_run_pytest_piped_head(self):
+        r = sieve("Bash", {"command": "uv run pytest --collect-only 2>&1 | head -50"})
+        self.assertEqual(decision(r), "allow")
+
+    def test_uv_run_ruff_piped_grep(self):
+        r = sieve("Bash", {"command": "uv run ruff check . 2>&1 | grep error"})
+        self.assertEqual(decision(r), "allow")
+
+    def test_cd_then_uv_run_pytest(self):
+        r = sieve("Bash", {"command": "cd /tmp/project && uv run pytest"})
+        self.assertEqual(decision(r), "allow")
+
 
 # ── Bash — kubernetes / cloud read-only ──────────────────────
 
@@ -452,6 +501,10 @@ class TestBashCarveouts(unittest.TestCase):
 
     def test_summon_ctx_prod(self):
         r = sieve("Bash", {"command": "summon ctx prod"})
+        self.assertEqual(decision(r), "ask")
+
+    def test_gh_pr_create(self):
+        r = sieve("Bash", {"command": "gh pr create --title 'feat' --body 'desc'"})
         self.assertEqual(decision(r), "ask")
 
     def test_unknown_command(self):
@@ -615,6 +668,14 @@ class TestSafeTools(unittest.TestCase):
 
     def test_monitor(self):
         r = sieve("Monitor", {"command": "tail -f log"})
+        self.assertEqual(decision(r), "allow")
+
+    def test_enter_worktree(self):
+        r = sieve("EnterWorktree", {"name": "my-feature"})
+        self.assertEqual(decision(r), "allow")
+
+    def test_exit_worktree(self):
+        r = sieve("ExitWorktree", {"action": "keep"})
         self.assertEqual(decision(r), "allow")
 
 
