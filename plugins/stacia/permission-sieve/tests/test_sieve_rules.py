@@ -765,9 +765,9 @@ class TestSubagentModel(unittest.TestCase):
         r = sieve("Agent", {"description": "task", "prompt": "do it", "model": "fable"})
         self.assertEqual(decision(r), "deny")
 
-    def test_haiku_denied(self):
+    def test_haiku_allowed(self):
         r = sieve("Agent", {"description": "task", "prompt": "do it", "model": "haiku"})
-        self.assertEqual(decision(r), "deny")
+        self.assertEqual(decision(r), "ask")
 
     def test_no_model_denied(self):
         r = sieve("Agent", {"description": "task", "prompt": "do it"})
