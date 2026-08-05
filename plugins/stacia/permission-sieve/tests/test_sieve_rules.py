@@ -496,7 +496,8 @@ class TestBashCarveouts(unittest.TestCase):
         self.assertEqual(decision(r), "ask")
 
     def test_git_push(self):
-        r = sieve("Bash", {"command": "git push origin main"})
+        """git push to a non-protected branch should prompt (carveout), not deny."""
+        r = sieve("Bash", {"command": "git push origin feat/my-branch"})
         self.assertEqual(decision(r), "ask")
 
     def test_summon_ctx_prod(self):
@@ -525,9 +526,27 @@ class TestBashDenied(unittest.TestCase):
         self.assertEqual(decision(r), "deny")
 
     def test_force_with_lease_allowed(self):
-        """--force-with-lease should NOT be denied."""
-        r = sieve("Bash", {"command": "git push --force-with-lease origin main"})
+        """--force-with-lease should NOT be denied (but push to main still is)."""
+        r = sieve("Bash", {"command": "git push --force-with-lease origin feature-branch"})
         self.assertNotEqual(decision(r), "deny")
+
+    def test_push_to_main_denied(self):
+        r = sieve("Bash", {"command": "git push origin main"})
+        self.assertEqual(decision(r), "deny")
+        self.assertIn("feature branch", reason(r).lower())
+
+    def test_push_to_master_denied(self):
+        r = sieve("Bash", {"command": "git push origin master"})
+        self.assertEqual(decision(r), "deny")
+
+    def test_push_to_feature_branch_allowed(self):
+        """Pushing to a feature branch should NOT be denied."""
+        r = sieve("Bash", {"command": "git push origin feat/my-feature"})
+        self.assertNotEqual(decision(r), "deny")
+
+    def test_push_u_to_main_denied(self):
+        r = sieve("Bash", {"command": "git push -u origin main"})
+        self.assertEqual(decision(r), "deny")
 
     def test_terraform(self):
         r = sieve("Bash", {"command": "terraform plan"})
