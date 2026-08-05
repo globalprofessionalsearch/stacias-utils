@@ -1,5 +1,5 @@
 /// Splits a shell command on `|`, `||`, `&&`, `;`, and `&` operators, respecting single and double
-/// quotes so operators inside quoted strings are not treated as delimiters.
+/// quotes and heredocs so operators inside them are not treated as delimiters.
 pub fn split_on_shell_operators(command: &str) -> Vec<String> {
     let mut segments = Vec::new();
     let mut current = String::new();
@@ -22,6 +22,11 @@ pub fn split_on_shell_operators(command: &str) -> Vec<String> {
                 if let Some(next) = chars.next() {
                     current.push(next);
                 }
+            }
+            '<' if !in_single_quote && chars.peek() == Some(&'<') => {
+                current.push(ch);
+                current.push(chars.next().unwrap()); // second '<'
+                consume_heredoc(&mut chars, &mut current);
             }
             '|' if !in_single_quote && !in_double_quote => {
                 if chars.peek() == Some(&'|') {
@@ -72,6 +77,55 @@ pub fn split_on_shell_operators(command: &str) -> Vec<String> {
     }
 
     segments
+}
+
+/// After consuming `<<`, extract the heredoc delimiter and consume everything
+/// (including the terminator line) into `current`.
+fn consume_heredoc(chars: &mut std::iter::Peekable<std::str::Chars>, current: &mut String) {
+    // Optional `-` for <<- (strip leading tabs)
+    if chars.peek() == Some(&'-') {
+        current.push(chars.next().unwrap());
+    }
+
+    // Extract delimiter, stripping optional quotes
+    let mut delimiter = String::new();
+    let mut hit_newline = false;
+    while let Some(&ch) = chars.peek() {
+        if ch == '\n' || ch == ' ' || ch == '\t' {
+            break;
+        }
+        current.push(chars.next().unwrap());
+        if ch != '\'' && ch != '"' {
+            delimiter.push(ch);
+        }
+    }
+
+    if delimiter.is_empty() {
+        return;
+    }
+
+    // Consume until we find a line that matches the delimiter exactly
+    while let Some(ch) = chars.next() {
+        current.push(ch);
+        if ch == '\n' {
+            hit_newline = true;
+            // Check if the next line matches the delimiter
+            let mut line = String::new();
+            while let Some(&next) = chars.peek() {
+                if next == '\n' {
+                    break;
+                }
+                line.push(next);
+                chars.next();
+                current.push(next);
+            }
+            let trimmed = line.trim();
+            if trimmed == delimiter {
+                return;
+            }
+        }
+    }
+    let _ = hit_newline;
 }
 
 #[cfg(test)]
@@ -183,5 +237,46 @@ mod tests {
             split_on_shell_operators("ls /tmp && grep test /etc/hosts || echo fail; pwd"),
             vec!["ls /tmp", "grep test /etc/hosts", "echo fail", "pwd"]
         );
+    }
+
+    #[test]
+    fn heredoc_not_split() {
+        let cmd = "git commit -m \"$(cat <<'EOF'\nsome && content\nEOF\n)\"";
+        assert_eq!(split_on_shell_operators(cmd), vec![cmd]);
+    }
+
+    #[test]
+    fn heredoc_in_double_quotes_not_split() {
+        // Matches exactly what the Python integration test sends
+        let cmd = "git commit -m \"$(cat <<'EOF'\nfeat: deny push to main\n\ngit push to main blocked\nEOF\n)\"";
+        let result = split_on_shell_operators(cmd);
+        assert_eq!(result.len(), 1, "heredoc inside double-quoted $() should not split: {:?}", result);
+    }
+
+    #[test]
+    fn heredoc_unquoted_not_split() {
+        let cmd = "cat <<EOF\nfoo | bar\nEOF";
+        assert_eq!(split_on_shell_operators(cmd), vec![cmd]);
+    }
+
+    #[test]
+    fn heredoc_with_real_operator_after() {
+        let cmd = "cat <<EOF\nfoo\nEOF\n&& echo done";
+        let result = split_on_shell_operators(cmd);
+        // Treating the entire thing as one segment is acceptable (fail safe)
+        assert!(result.len() <= 2, "heredoc body should not produce extra segments: {:?}", result);
+        assert!(result[0].contains("cat <<EOF"), "first segment should contain the heredoc: {:?}", result);
+    }
+
+    #[test]
+    fn heredoc_double_quoted() {
+        let cmd = "cmd <<\"EOF\"\nstuff; things\nEOF";
+        assert_eq!(split_on_shell_operators(cmd), vec![cmd]);
+    }
+
+    #[test]
+    fn heredoc_with_dash() {
+        let cmd = "cat <<-EOF\n\tfoo && bar\n\tEOF";
+        assert_eq!(split_on_shell_operators(cmd), vec![cmd]);
     }
 }

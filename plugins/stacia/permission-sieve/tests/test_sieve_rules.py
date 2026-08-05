@@ -323,6 +323,39 @@ class TestBashSafe(unittest.TestCase):
         r = sieve("Bash", {"command": "cargo clippy -- -D warnings"})
         self.assertEqual(decision(r), "allow")
 
+    def test_go_test(self):
+        r = sieve("Bash", {"command": "go test ./..."})
+        self.assertEqual(decision(r), "allow")
+
+    def test_go_build(self):
+        r = sieve("Bash", {"command": "go build ./..."})
+        self.assertEqual(decision(r), "allow")
+
+    def test_which(self):
+        r = sieve("Bash", {"command": "which python3"})
+        self.assertEqual(decision(r), "allow")
+
+    def test_docker_compose_ps(self):
+        r = sieve("Bash", {"command": "docker compose ps"})
+        self.assertEqual(decision(r), "allow")
+
+    def test_docker_compose_logs(self):
+        r = sieve("Bash", {"command": "docker compose logs app"})
+        self.assertEqual(decision(r), "allow")
+
+    def test_docker_compose_up(self):
+        r = sieve("Bash", {"command": "docker compose up -d"})
+        self.assertEqual(decision(r), "allow")
+
+    def test_docker_ps(self):
+        r = sieve("Bash", {"command": "docker ps"})
+        self.assertEqual(decision(r), "allow")
+
+    def test_docker_exec_prompts(self):
+        """docker exec can run arbitrary commands — should prompt."""
+        r = sieve("Bash", {"command": "docker exec my-container bash -c 'rm -rf /'"})
+        self.assertEqual(decision(r), "ask")
+
 
 # ── Bash — python (scoped) ───────────────────────────────────
 
@@ -392,6 +425,22 @@ class TestBashPython(unittest.TestCase):
         r = sieve("Bash", {"command": "uv run"})
         self.assertEqual(decision(r), "ask")
 
+    def test_uv_run_pytest_piped_tail(self):
+        r = sieve("Bash", {"command": "uv run pytest 2>&1 | tail -20"})
+        self.assertEqual(decision(r), "allow")
+
+    def test_uv_run_pytest_piped_head(self):
+        r = sieve("Bash", {"command": "uv run pytest --collect-only 2>&1 | head -50"})
+        self.assertEqual(decision(r), "allow")
+
+    def test_uv_run_ruff_piped_grep(self):
+        r = sieve("Bash", {"command": "uv run ruff check . 2>&1 | grep error"})
+        self.assertEqual(decision(r), "allow")
+
+    def test_cd_then_uv_run_pytest(self):
+        r = sieve("Bash", {"command": "cd /tmp/project && uv run pytest"})
+        self.assertEqual(decision(r), "allow")
+
 
 # ── Bash — kubernetes / cloud read-only ──────────────────────
 
@@ -447,11 +496,16 @@ class TestBashCarveouts(unittest.TestCase):
         self.assertEqual(decision(r), "ask")
 
     def test_git_push(self):
-        r = sieve("Bash", {"command": "git push origin main"})
+        """git push to a non-protected branch should prompt (carveout), not deny."""
+        r = sieve("Bash", {"command": "git push origin feat/my-branch"})
         self.assertEqual(decision(r), "ask")
 
     def test_summon_ctx_prod(self):
         r = sieve("Bash", {"command": "summon ctx prod"})
+        self.assertEqual(decision(r), "ask")
+
+    def test_gh_pr_create(self):
+        r = sieve("Bash", {"command": "gh pr create --title 'feat' --body 'desc'"})
         self.assertEqual(decision(r), "ask")
 
     def test_unknown_command(self):
@@ -472,9 +526,27 @@ class TestBashDenied(unittest.TestCase):
         self.assertEqual(decision(r), "deny")
 
     def test_force_with_lease_allowed(self):
-        """--force-with-lease should NOT be denied."""
-        r = sieve("Bash", {"command": "git push --force-with-lease origin main"})
+        """--force-with-lease should NOT be denied (but push to main still is)."""
+        r = sieve("Bash", {"command": "git push --force-with-lease origin feature-branch"})
         self.assertNotEqual(decision(r), "deny")
+
+    def test_push_to_main_denied(self):
+        r = sieve("Bash", {"command": "git push origin main"})
+        self.assertEqual(decision(r), "deny")
+        self.assertIn("feature branch", reason(r).lower())
+
+    def test_push_to_master_denied(self):
+        r = sieve("Bash", {"command": "git push origin master"})
+        self.assertEqual(decision(r), "deny")
+
+    def test_push_to_feature_branch_allowed(self):
+        """Pushing to a feature branch should NOT be denied."""
+        r = sieve("Bash", {"command": "git push origin feat/my-feature"})
+        self.assertNotEqual(decision(r), "deny")
+
+    def test_push_u_to_main_denied(self):
+        r = sieve("Bash", {"command": "git push -u origin main"})
+        self.assertEqual(decision(r), "deny")
 
     def test_terraform(self):
         r = sieve("Bash", {"command": "terraform plan"})
@@ -492,6 +564,12 @@ class TestBashDenied(unittest.TestCase):
     def test_gh_pr_merge(self):
         r = sieve("Bash", {"command": "gh pr merge 123"})
         self.assertEqual(decision(r), "deny")
+
+    def test_commit_with_heredoc_not_denied(self):
+        """Heredoc content mentioning 'push' and 'main' should not trigger deny."""
+        cmd = "git commit -m \"$(cat <<'EOF'\nfeat: deny push to main\n\ngit push to main blocked\nEOF\n)\""
+        r = sieve("Bash", {"command": cmd})
+        self.assertNotEqual(decision(r), "deny")
 
 
 # ── Bash — sensitive paths in commands ───────────────────────
@@ -617,6 +695,14 @@ class TestSafeTools(unittest.TestCase):
         r = sieve("Monitor", {"command": "tail -f log"})
         self.assertEqual(decision(r), "allow")
 
+    def test_enter_worktree(self):
+        r = sieve("EnterWorktree", {"name": "my-feature"})
+        self.assertEqual(decision(r), "allow")
+
+    def test_exit_worktree(self):
+        r = sieve("ExitWorktree", {"action": "keep"})
+        self.assertEqual(decision(r), "allow")
+
 
 # ── Unknown tools (should prompt) ────────────────────────────
 
@@ -687,6 +773,18 @@ class TestSubagentModel(unittest.TestCase):
         r = sieve("Agent", {"description": "task", "prompt": "do it"})
         self.assertEqual(decision(r), "deny")
         self.assertIn("sonnet", reason(r).lower())
+
+    def test_fork_denied(self):
+        r = sieve("Agent", {"description": "task", "prompt": "do it", "subagent_type": "fork"})
+        self.assertEqual(decision(r), "deny")
+
+    def test_fork_with_sonnet_still_denied(self):
+        r = sieve("Agent", {"description": "task", "prompt": "do it", "subagent_type": "fork", "model": "sonnet"})
+        self.assertEqual(decision(r), "deny")
+
+    def test_non_fork_subagent_type_not_denied(self):
+        r = sieve("Agent", {"description": "task", "prompt": "do it", "subagent_type": "general-purpose", "model": "sonnet"})
+        self.assertNotEqual(decision(r), "deny")
 
     def test_workflow_always_prompts(self):
         r = sieve("Workflow", {"script": "export const meta = {name: 'test'};"})

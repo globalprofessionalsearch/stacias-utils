@@ -8,6 +8,12 @@ end
 
 if request.tool_name ~= "Agent" then return "skip" end
 
+if request.tool_input.subagent_type == "fork" then
+  return "denied",
+    "Forks inherit the parent model and bypass model restrictions",
+    "Use a fresh agent (omit subagent_type or use a named type) with model set to \"sonnet\". Include all necessary context in the prompt rather than relying on inherited conversation context."
+end
+
 local model = request.tool_input.model
 
 if model == nil then

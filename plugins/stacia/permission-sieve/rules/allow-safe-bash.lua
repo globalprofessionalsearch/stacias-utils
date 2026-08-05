@@ -15,7 +15,7 @@ end
 local simple_cmds = {
   "cd", "pwd", "echo", "cat", "ls", "find", "grep", "head", "tail",
   "wc", "sleep", "mkdir", "mv", "cp", "rm", "sed", "awk", "touch",
-  "git", "gh", "summon", "make", "cargo", "oapi-codegen",
+  "git", "gh", "summon", "make", "cargo", "go", "which", "oapi-codegen",
 }
 
 local scoped_prefixes = {
@@ -47,6 +47,12 @@ local compound_prefixes = {
   "tofu plan", "tofu show", "tofu state list", "tofu state show",
   "tofu output", "tofu validate", "tofu version", "tofu providers",
   "tofu graph", "tofu fmt -check",
+  "docker compose up", "docker compose down", "docker compose ps",
+  "docker compose logs", "docker compose build", "docker compose pull",
+  "docker compose restart", "docker compose stop", "docker compose start",
+  "docker compose config", "docker compose top", "docker compose version",
+  "docker ps", "docker logs", "docker images", "docker inspect",
+  "docker volume ls", "docker network ls", "docker info", "docker version",
 }
 
 local wildcard_patterns = {
