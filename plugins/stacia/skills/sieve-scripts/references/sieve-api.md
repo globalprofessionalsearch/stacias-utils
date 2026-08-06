@@ -1,24 +1,28 @@
 # Sieve Script Patterns and Configuration
 
-## Config Format (sieve.yaml)
+## Config and Rule Discovery
 
-The config file lives at `~/.cache/stacia-permission-sieve/sieve.yaml`. Read
-`config.rs` for the canonical schema. Each script entry supports:
+The hook invokes the dispatcher with `${CLAUDE_PLUGIN_ROOT}/permission-sieve`
+as the config directory. All `.lua` files in the `rules/` subdirectory are
+auto-discovered by `discover_rules()` in `config.rs` — no registration
+needed. Rules are sorted by filename for deterministic ordering, but the
+resolution algebra is commutative so order does not affect correctness.
+
+The config file `sieve.yaml` in the config directory controls the
+summarizer (model, prompt, timeout). Read `config.rs` for the canonical
+schema:
 
 ```yaml
-scripts:
-  - path: scripts/my-script.lua    # relative to config directory
-    description: What it does       # human-readable label
-    enabled: true                   # optional, default true
-    timeout: 10                     # optional, max seconds per script
-
-summarizer_model: claude-haiku-4-5-20251001   # optional override
+summarizer:
+  model: claude-haiku-4-5-20251001
+  prompt: "Describe what this tool call is attempting..."
+  max_tokens: 150
+  timeout_seconds: 15
 ```
 
-Paths are relative to the config directory
-(`~/.cache/stacia-permission-sieve/`). Script order does not affect the
-outcome — the resolution algebra is commutative. Deny/error short-circuit
-for performance but the final result would be the same in any order.
+The fallback config directory is `~/.cache/stacia-permission-sieve/`, used
+only when no CLI argument is provided. In normal operation the hook always
+passes the plugin root, so rules and config live in the repo.
 
 ## Script Design Patterns
 
@@ -106,7 +110,7 @@ Trigger a tool call that the script should intercept, then inspect the audit
 log:
 
 ```bash
-tail -1 ~/.cache/stacia-permission-sieve/decisions.jsonl | jq .
+tail -1 permission-sieve/decisions.jsonl | jq .
 ```
 
 The log records `resolution`, `scripts_run` (with per-script outcomes), and
@@ -136,11 +140,12 @@ lua -e '
 
 ## Script Lifecycle
 
-1. **Create** — write the `.lua` file in `~/.cache/stacia-permission-sieve/scripts/`
-2. **Register** — add the entry to `sieve.yaml`
-3. **Activate** — it takes effect on the next tool call (no restart needed)
-4. **Disable** — set `enabled: false` in the yaml entry (keeps the file)
-5. **Remove** — delete the yaml entry and optionally the file
+1. **Create** — write the `.lua` file in `permission-sieve/rules/` in the
+   stacias-utils repo
+2. **Activate** — it takes effect on the next tool call (auto-discovered,
+   no registration needed, no restart required)
+3. **Disable** — remove or rename the file (e.g., `.lua.disabled`)
+4. **Remove** — delete the file from `rules/`
 
 ## Evolving the Binary API
 

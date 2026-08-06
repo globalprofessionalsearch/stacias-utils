@@ -508,6 +508,19 @@ class TestBashCarveouts(unittest.TestCase):
         r = sieve("Bash", {"command": "gh pr create --title 'feat' --body 'desc'"})
         self.assertEqual(decision(r), "ask")
 
+    def test_bare_variable_assignment(self):
+        r = sieve("Bash", {"command": "WT=/some/path/to/worktree"})
+        self.assertEqual(decision(r), "allow")
+
+    def test_bare_variable_assignment_empty_value(self):
+        r = sieve("Bash", {"command": "FOO="})
+        self.assertEqual(decision(r), "allow")
+
+    def test_variable_assignment_with_command_prompts(self):
+        """VAR=value command — the command could be anything, must prompt."""
+        r = sieve("Bash", {"command": "PATH=/evil/bin some-command"})
+        self.assertEqual(decision(r), "ask")
+
     def test_unknown_command(self):
         r = sieve("Bash", {"command": "some-unknown-tool --flag"})
         self.assertEqual(decision(r), "ask")

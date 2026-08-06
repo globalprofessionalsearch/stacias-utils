@@ -20,7 +20,7 @@ modifying a script, read these files to confirm the current contract:
 | Lua sandbox setup, return-value parsing | `permission-sieve/src/sieve.rs` — `create_lua()`, `parse_return()`, `resolve()` |
 | Request table injection | `permission-sieve/src/sieve.rs` — `set_request()` |
 | Path extraction logic | `permission-sieve/src/paths.rs` — `extract_paths()` |
-| Config schema | `permission-sieve/src/config.rs` — `SieveConfig`, `ScriptEntry` |
+| Config schema + rule discovery | `permission-sieve/src/config.rs` — `SieveConfig`, `RuleEntry`, `discover_rules()` |
 | Hook response shapes | `permission-sieve/src/response.rs` |
 | Rule files | `permission-sieve/rules/*.lua` |
 | Test suite + checksums | `permission-sieve/tests/` |
@@ -88,7 +88,7 @@ would force a prompt even though Write is not its domain.
 
 ### Deny Scripts
 
-Return `"denied"` to block a tool call. Place first in `sieve.yaml` so they
+Return `"denied"` to block a tool call. Deny and error outcomes
 short-circuit before other scripts run.
 
 ```lua

@@ -83,6 +83,9 @@ local function is_safe(segment)
   return false
 end
 
+-- Bare variable assignment (no command following) — e.g. WT=/some/path
+if cmd:match("^[A-Za-z_][A-Za-z0-9_]*=[^%s]*$") then return "approved" end
+
 if is_safe(cmd) then return "approved" end
 
 return "uncertain"

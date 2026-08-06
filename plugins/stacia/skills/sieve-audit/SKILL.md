@@ -18,8 +18,9 @@ names before writing queries.
 | What | Where |
 |------|-------|
 | Log record schema | `permission-sieve/src/log.rs` — `DecisionRecord`, `ScriptRun` |
-| Log file | `~/.cache/stacia-permission-sieve/decisions.jsonl` |
-| Script config | `~/.cache/stacia-permission-sieve/sieve.yaml` |
+| Log file | `permission-sieve/decisions.jsonl` |
+| Summarizer config | `permission-sieve/sieve.yaml` |
+| Rule files | `permission-sieve/rules/*.lua` (auto-discovered) |
 
 ## Workflow
 
@@ -51,7 +52,7 @@ missing allow-script entries.
 
 ### Dead Scripts
 
-Scripts registered in `sieve.yaml` that never return "approved" or "denied"
+Scripts in `permission-sieve/rules/` that never return "approved" or "denied"
 — only "skip". These may be misconfigured, obsolete, or redundant.
 
 ### Error Rates
