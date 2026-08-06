@@ -1,0 +1,50 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+self=$(basename "$(cd "$(dirname "$0")" && pwd)")
+
+case "${1:-}" in
+  -h|--help|help)
+    cat <<EOF
+$self - extract lines from stdin and copy to clipboard
+
+Usage: $self <n>[-<m>] < file
+       command | $self <n>[-<m>]
+
+Arguments:
+  <n>       single line number
+  <n>-<m>   inclusive range of lines
+
+Extracted lines are copied to the clipboard (pbcopy) and echoed to stdout.
+EOF
+    exit 0
+    ;;
+esac
+
+if [[ $# -lt 1 ]]; then
+  echo "Usage: line <n>[-<m>] < file" >&2
+  exit 1
+fi
+
+spec="$1"
+
+if [[ "$spec" =~ ^([0-9]+)-([0-9]+)$ ]]; then
+  start="${BASH_REMATCH[1]}"
+  end="${BASH_REMATCH[2]}"
+elif [[ "$spec" =~ ^([0-9]+)$ ]]; then
+  start="${BASH_REMATCH[1]}"
+  end="$start"
+else
+  echo "error: invalid line spec '$spec' — expected <n> or <n>-<m>" >&2
+  exit 1
+fi
+
+output=$(sed -n "${start},${end}p")
+
+if [[ -z "$output" ]]; then
+  echo "no output for lines ${start}-${end}" >&2
+  exit 1
+fi
+
+printf '%s\n' "$output" | pbcopy
+printf '%s\n' "$output"
