@@ -154,7 +154,7 @@ permission interactions):
 4. Wait for the user to report the result.
 5. Check the decision log:
    ```bash
-   tail -1 ~/.cache/stacia-permission-sieve/decisions.jsonl | \
+   tail -1 plugins/stacia/permission-sieve/decisions.jsonl | \
      jq '{tool: .tool_name, resolution: .resolution, summarizer: .summarizer_output, scripts: [.scripts_run[]? | {name, outcome}]}'
    ```
 6. Report pass or fail, then move to the next test.

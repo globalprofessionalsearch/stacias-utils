@@ -29,10 +29,10 @@
     "followUpThreshold": 4
   },
   "models": {
-    "orienteer": "claude-opus-4-6",
+    "orienteer": "claude-sonnet-4-6",
     "reconciler": "claude-sonnet-4-6",
     "reviewer": "claude-sonnet-4-6",
-    "synthesizer": "claude-opus-4-6",
+    "synthesizer": "claude-sonnet-4-6",
     "verifier": "claude-sonnet-4-6"
   }
 }

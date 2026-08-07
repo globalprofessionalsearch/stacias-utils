@@ -1,0 +1,399 @@
+#!/usr/bin/env python3
+
+"""Analyze Claude API cost exports for Stacia's keys."""
+
+import argparse
+import csv
+import re
+import sys
+from collections import defaultdict
+
+OWNER_PATTERNS = ("colasurdo", "stacia")
+
+USE_COLOR = sys.stdout.isatty()
+ANSI_RE = re.compile(r"\033\[[0-9;]*m")
+
+
+def visible_len(text):
+    return len(ANSI_RE.sub("", text))
+
+
+def s(*codes):
+    def apply(text):
+        if not USE_COLOR:
+            return text
+        return f"\033[{';'.join(str(c) for c in codes)}m{text}\033[0m"
+    return apply
+
+
+bold = s(1)
+dim = s(2)
+cyan = s(1, 36)
+yellow = s(1, 33)
+green = s(32)
+red = s(31)
+
+
+def heat(text, t):
+    if not USE_COLOR or t < 0:
+        return text
+    t = min(t, 1.0)
+    r = int(t * 255)
+    g = int(t * 220 + 35)
+    b = int(255 - t * 255)
+    return f"\033[38;2;{r};{g};{b}m{text}\033[0m"
+
+
+def is_mine(api_key):
+    lower = api_key.lower()
+    return any(p in lower for p in OWNER_PATTERNS)
+
+
+def load(path):
+    rows = []
+    with open(path, newline="") as f:
+        for row in csv.DictReader(f):
+            if is_mine(row["api_key"]):
+                row["cost_usd"] = float(row["cost_usd"])
+                rows.append(row)
+    return rows
+
+
+def table(headers, rows, alignments=None):
+    if not rows:
+        print("  (no data)")
+        return
+    widths = [len(h) for h in headers]
+    str_rows = []
+    for row in rows:
+        cells = [str(c) for c in row]
+        str_rows.append(cells)
+        for i, c in enumerate(cells):
+            widths[i] = max(widths[i], visible_len(c))
+    if alignments is None:
+        alignments = ["l"] + ["r"] * (len(headers) - 1)
+    def fmt_cell(val, w, align):
+        pad = w - visible_len(val)
+        if align == "l":
+            return val + " " * pad
+        return " " * pad + val
+    header_line = "  ".join(fmt_cell(h, widths[i], alignments[i]) for i, h in enumerate(headers))
+    print(bold(header_line))
+    print(dim("─" * visible_len(header_line)))
+    for cells in str_rows:
+        print("  ".join(fmt_cell(cells[i], widths[i], alignments[i]) for i in range(len(headers))))
+
+
+def usd(val):
+    return f"${val:,.2f}"
+
+
+def pct(val):
+    return f"{val:.1f}%"
+
+
+def bar(value, max_value, width=40, color_t=None):
+    if max_value <= 0:
+        return ""
+    filled = value / max_value * width
+    whole = int(filled)
+    frac = filled - whole
+    eighths = " ▏▎▍▌▋▊▉█"
+    line = "█" * whole
+    if whole < width:
+        idx = int(frac * 8)
+        if idx > 0:
+            line += eighths[idx]
+    if color_t is not None and color_t >= 0:
+        return heat(line, color_t)
+    return line
+
+
+def report_cost_over_time(rows):
+    by_date = defaultdict(float)
+    for r in rows:
+        by_date[r["usage_date_utc"]] += r["cost_usd"]
+    dates = sorted(by_date)
+    if not dates:
+        return
+    total = sum(by_date.values())
+    avg = total / len(dates)
+    peak = max(by_date.values())
+    cost_vals = [by_date[d] for d in dates]
+    c_lo, c_hi = heat_scale(cost_vals)
+    print(cyan("\n── Cost Over Time ──────────────────────────────────────\n"))
+    for d in dates:
+        c = by_date[d]
+        ct = heat_t(c, c_lo, c_hi)
+        cost_str = heat(usd(c).rjust(9), ct)
+        b = bar(c, peak, color_t=ct)
+        marker = "  ◀ peak" if c == peak else ""
+        print(f"  {dim(d)}  {cost_str}  {b}{yellow(marker)}")
+    print()
+    print(f"  {'TOTAL':>10}  {bold(usd(total).rjust(9))}")
+    print(f"  {'AVG/DAY':>10}  {dim(usd(avg).rjust(9))}")
+
+    print(cyan("\n── Cost Over Time (7-day rolling sum) ──────────────────\n"))
+    window_size = 7
+    values = [by_date[d] for d in dates]
+    rolling = []
+    for i in range(window_size - 1, len(values)):
+        window = values[i - window_size + 1:i + 1]
+        rolling.append((dates[i - window_size + 1], dates[i], sum(window)))
+    if rolling:
+        peak_r = max(r[2] for r in rolling)
+        r_vals = [r[2] for r in rolling]
+        r_lo, r_hi = heat_scale(r_vals)
+        for start, end, r in rolling:
+            label = f"{start} → {end}"
+            rt = heat_t(r, r_lo, r_hi)
+            cost_str = heat(usd(r).rjust(9), rt)
+            b = bar(r, peak_r, color_t=rt)
+            print(f"  {dim(label)}  {cost_str}  {b}")
+
+
+def short_model(name):
+    return name.replace("Claude ", "").replace("other", "Other")
+
+
+# $/MTok rates for back-calculating token counts from cost
+MODEL_RATES = {
+    "Claude Sonnet 4.6": (3.0, 15.0),
+    "Claude Sonnet 4.5": (3.0, 15.0),
+    "Claude Sonnet 4":   (3.0, 15.0),
+    "Claude Opus 4.8":   (5.0, 25.0),
+    "Claude Opus 4.7":   (5.0, 25.0),
+    "Claude Opus 4.6":   (5.0, 25.0),
+    "Claude Opus 4.5":   (15.0, 75.0),
+    "Claude Haiku 4.5":  (1.0, 5.0),
+}
+# cache_read = 0.1× input, cache_write_5m = 1.25× input
+
+
+def cost_to_tokens(model, token_type, cost):
+    rates = MODEL_RATES.get(model)
+    if not rates or cost <= 0:
+        return 0
+    inp, out = rates
+    if "cache_read" in token_type:
+        rate = inp * 0.1
+    elif "cache_write" in token_type:
+        rate = inp * 1.25
+    elif "no_cache" in token_type:
+        rate = inp
+    elif "output" in token_type:
+        rate = out
+    else:
+        return 0
+    return int(cost / rate * 1_000_000)
+
+
+def fmt_tokens(n):
+    if n >= 1_000_000:
+        return f"{n / 1_000_000:.1f}M"
+    if n >= 1_000:
+        return f"{n / 1_000:.0f}k"
+    return str(n)
+
+
+def heat_scale(values):
+    nonzero = [v for v in values if v > 0]
+    if not nonzero:
+        return 0, 1
+    return min(nonzero), max(nonzero)
+
+
+def heat_t(val, lo, hi):
+    if val <= 0:
+        return -1
+    if hi <= lo:
+        return 0.5
+    return (val - lo) / (hi - lo)
+
+
+def report_model_cost(rows):
+    by_date_model = defaultdict(lambda: defaultdict(float))
+    models = set()
+    for r in rows:
+        m = r["model"]
+        if m == "--":
+            m = "other"
+        by_date_model[r["usage_date_utc"]][m] += r["cost_usd"]
+        models.add(m)
+    dates = sorted(by_date_model)
+    models_ranked = sorted(models, key=lambda m: -sum(by_date_model[d].get(m, 0) for d in dates))
+    short_names = [short_model(m) for m in models_ranked]
+    all_vals = [by_date_model[d].get(m, 0) for d in dates for m in models_ranked]
+    lo, hi = heat_scale(all_vals)
+    print(cyan("\n── Model Cost Over Time ───────────────────────────────\n"))
+    headers = ["Date"] + short_names + ["Total"]
+    tbl = []
+    model_totals = defaultdict(float)
+    for d in dates:
+        row = [d]
+        day_total = 0
+        for m in models_ranked:
+            c = by_date_model[d].get(m, 0)
+            model_totals[m] += c
+            day_total += c
+            row.append(heat(usd(c), heat_t(c, lo, hi)) if c > 0 else dim("—"))
+        row.append(usd(day_total))
+        tbl.append(row)
+    tbl.append([""] * len(headers))
+    total_row = ["TOTAL"]
+    grand = 0
+    for m in models_ranked:
+        total_row.append(usd(model_totals[m]))
+        grand += model_totals[m]
+    total_row.append(usd(grand))
+    tbl.append(total_row)
+    share_row = ["SHARE"]
+    for m in models_ranked:
+        share_row.append(pct(model_totals[m] / grand * 100) if grand else "—")
+    share_row.append("")
+    tbl.append(share_row)
+    table(headers, tbl)
+
+
+def report_model_token_usage(rows):
+    by_date_model = defaultdict(lambda: defaultdict(int))
+    models = set()
+    for r in rows:
+        m = r["model"]
+        if m == "--":
+            continue
+        tokens = cost_to_tokens(m, r["token_type"], r["cost_usd"])
+        by_date_model[r["usage_date_utc"]][m] += tokens
+        models.add(m)
+    dates = sorted(by_date_model)
+    models_ranked = sorted(models, key=lambda m: -sum(by_date_model[d].get(m, 0) for d in dates))
+    short_names = [short_model(m) for m in models_ranked]
+    all_vals = [by_date_model[d].get(m, 0) for d in dates for m in models_ranked]
+    lo, hi = heat_scale(all_vals)
+    print(cyan("\n── Model Usage Over Time (estimated tokens) ───────────\n"))
+    headers = ["Date"] + short_names + ["Total"]
+    tbl = []
+    model_totals = defaultdict(int)
+    for d in dates:
+        row = [d]
+        day_total = 0
+        for m in models_ranked:
+            tk = by_date_model[d].get(m, 0)
+            model_totals[m] += tk
+            day_total += tk
+            row.append(heat(fmt_tokens(tk), heat_t(tk, lo, hi)) if tk > 0 else dim("—"))
+        row.append(fmt_tokens(day_total))
+        tbl.append(row)
+    tbl.append([""] * len(headers))
+    total_row = ["TOTAL"]
+    grand = 0
+    for m in models_ranked:
+        total_row.append(fmt_tokens(model_totals[m]))
+        grand += model_totals[m]
+    total_row.append(fmt_tokens(grand))
+    tbl.append(total_row)
+    table(headers, tbl)
+
+
+def report_cache_efficiency(rows):
+    by_date = defaultdict(lambda: defaultdict(float))
+    for r in rows:
+        tt = r["token_type"]
+        if tt == "--":
+            continue
+        bucket = "output"
+        if "cache_read" in tt:
+            bucket = "cache_read"
+        elif "cache_write" in tt:
+            bucket = "cache_write"
+        elif "no_cache" in tt:
+            bucket = "uncached"
+        elif "output" in tt:
+            bucket = "output"
+        by_date[r["usage_date_utc"]][bucket] += r["cost_usd"]
+    dates = sorted(by_date)
+    print(cyan("\n── Cache Efficiency Over Time ──────────────────────────\n"))
+    headers = ["Date", "Input$", "CacheRd$", "CacheWr$", "Uncached$", "Output$", "HitRate"]
+    day_rows = []
+    totals = defaultdict(float)
+    for d in dates:
+        b = by_date[d]
+        cr = b.get("cache_read", 0)
+        cw = b.get("cache_write", 0)
+        uc = b.get("uncached", 0)
+        out = b.get("output", 0)
+        inp = cr + cw + uc
+        hit_rate = (cr / inp * 100) if inp > 0 else 0
+        totals["cache_read"] += cr
+        totals["cache_write"] += cw
+        totals["uncached"] += uc
+        totals["output"] += out
+        day_rows.append((d, inp, cr, cw, uc, out, hit_rate))
+    ti = totals["cache_read"] + totals["cache_write"] + totals["uncached"]
+    thr = (totals["cache_read"] / ti * 100) if ti > 0 else 0
+    hit_rates = [r[6] for r in day_rows if r[6] > 0]
+    hr_lo, hr_hi = heat_scale(hit_rates)
+    tbl = []
+    for d, inp, cr, cw, uc, out, hr in day_rows:
+        tbl.append((d, usd(inp), usd(cr), usd(cw), usd(uc), usd(out),
+                     heat(pct(hr), heat_t(hr, hr_lo, hr_hi))))
+    tbl.append(("",) * 7)
+    tbl.append((
+        "TOTAL", usd(ti), usd(totals["cache_read"]), usd(totals["cache_write"]),
+        usd(totals["uncached"]), usd(totals["output"]),
+        heat(pct(thr), heat_t(thr, hr_lo, hr_hi)),
+    ))
+    table(headers, tbl)
+
+    window_size = 7
+    if len(day_rows) >= window_size:
+        print(cyan("\n── Cache Efficiency (7-day rolling hit rate) ───────────\n"))
+        rolling = []
+        for i in range(window_size - 1, len(day_rows)):
+            window = day_rows[i - window_size + 1:i + 1]
+            w_cr = sum(r[2] for r in window)
+            w_inp = sum(r[1] for r in window)
+            w_hr = (w_cr / w_inp * 100) if w_inp > 0 else 0
+            rolling.append((day_rows[i - window_size + 1][0], day_rows[i][0], w_hr))
+        r_rates = [r[2] for r in rolling if r[2] > 0]
+        r_lo, r_hi = heat_scale(r_rates)
+        peak_hr = max(r[2] for r in rolling)
+        for start, end, hr in rolling:
+            label = f"{start} → {end}"
+            ht = heat_t(hr, r_lo, r_hi)
+            hr_str = heat(pct(hr).rjust(6), ht)
+            b = bar(hr, peak_hr, color_t=ht)
+            print(f"  {dim(label)}  {hr_str}  {b}")
+
+
+def main():
+    if "-h" in sys.argv or "--help" in sys.argv:
+        print("usage - analyze Claude API cost exports for my keys")
+        print()
+        print("Usage: usage <csv-file>")
+        print()
+        print("  csv-file   path to the Claude API cost CSV export")
+        sys.exit(0)
+    parser = argparse.ArgumentParser(prog="usage")
+    parser.add_argument("file", help="Path to the Claude API cost CSV export")
+    args = parser.parse_args()
+
+    rows = load(args.file)
+    if not rows:
+        print("No rows found matching owner patterns.", file=sys.stderr)
+        sys.exit(1)
+
+    keys = sorted({r["api_key"] for r in rows})
+    print(dim(f"\nMatched {len(rows)} rows across {len(keys)} keys:"))
+    for k in keys:
+        print(dim(f"  • {k}"))
+
+    report_cost_over_time(rows)
+    report_model_cost(rows)
+    report_model_token_usage(rows)
+    report_cache_efficiency(rows)
+    print()
+
+
+if __name__ == "__main__":
+    main()

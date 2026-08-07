@@ -1,7 +1,8 @@
 # Sieve Audit Queries
 
 Ready-to-run commands for analyzing the permission-sieve decision log.
-The log path is `~/.cache/stacia-permission-sieve/decisions.jsonl`.
+The log path is `permission-sieve/decisions.jsonl` (relative to
+`plugins/stacia/` in the stacias-utils repo).
 
 Confirm field names against `DecisionRecord` and `ScriptRun` in
 `permission-sieve/src/log.rs` before adapting these queries.
@@ -9,14 +10,14 @@ Confirm field names against `DecisionRecord` and `ScriptRun` in
 ## Resolution Distribution
 
 ```bash
-jq -r '.resolution' ~/.cache/stacia-permission-sieve/decisions.jsonl \
+jq -r '.resolution' permission-sieve/decisions.jsonl \
   | sort | uniq -c | sort -rn
 ```
 
 ## Per-Script Outcome Breakdown
 
 ```bash
-cat ~/.cache/stacia-permission-sieve/decisions.jsonl | python3 -c "
+cat permission-sieve/decisions.jsonl | python3 -c "
 import json, sys
 from collections import Counter, defaultdict
 per_script = defaultdict(Counter)
@@ -36,7 +37,7 @@ cases where another script approved but the overall resolution was forced
 to uncertain.
 
 ```bash
-cat ~/.cache/stacia-permission-sieve/decisions.jsonl | python3 -c "
+cat permission-sieve/decisions.jsonl | python3 -c "
 import json, sys
 from collections import Counter, defaultdict
 poisoning = defaultdict(Counter)
@@ -62,7 +63,7 @@ else:
 ## Frequent Uncertain Tools (Auto-Approve Candidates)
 
 ```bash
-cat ~/.cache/stacia-permission-sieve/decisions.jsonl | python3 -c "
+cat permission-sieve/decisions.jsonl | python3 -c "
 import json, sys
 from collections import Counter
 tools = Counter()
@@ -80,7 +81,7 @@ for tool, cnt in tools.most_common(10):
 Scripts that never return "approved" or "denied" — only skip or uncertain.
 
 ```bash
-cat ~/.cache/stacia-permission-sieve/decisions.jsonl | python3 -c "
+cat permission-sieve/decisions.jsonl | python3 -c "
 import json, sys
 from collections import Counter, defaultdict
 per_script = defaultdict(Counter)
@@ -98,13 +99,13 @@ for script, counts in sorted(per_script.items()):
 
 ```bash
 jq -r 'select(.resolution == "error") | [.ts, .tool_name, .error_detail] | @tsv' \
-  ~/.cache/stacia-permission-sieve/decisions.jsonl | head -20
+  permission-sieve/decisions.jsonl | head -20
 ```
 
 ## Recent Decisions
 
 ```bash
-tail -10 ~/.cache/stacia-permission-sieve/decisions.jsonl | \
+tail -10 permission-sieve/decisions.jsonl | \
   jq '[.ts, .tool_name, .resolution] | @tsv' -r
 ```
 
@@ -113,7 +114,7 @@ tail -10 ~/.cache/stacia-permission-sieve/decisions.jsonl | \
 Inspect the last decision with per-script outcomes:
 
 ```bash
-tail -1 ~/.cache/stacia-permission-sieve/decisions.jsonl | \
+tail -1 permission-sieve/decisions.jsonl | \
   jq '{tool: .tool_name, resolution: .resolution, scripts: [.scripts_run[]? | {name, outcome}]}'
 ```
 
@@ -124,7 +125,7 @@ and evaluates each segment independently. The `segments` field in the
 decision record shows per-segment results:
 
 ```bash
-tail -1 ~/.cache/stacia-permission-sieve/decisions.jsonl | \
+tail -1 permission-sieve/decisions.jsonl | \
   jq '{tool: .tool_name, resolution: .resolution, segments: [.segments[]? | {command, resolution}]}'
 ```
 
@@ -134,7 +135,7 @@ Aggregate view of how individual segments resolve across all compound
 commands:
 
 ```bash
-cat ~/.cache/stacia-permission-sieve/decisions.jsonl | python3 -c "
+cat permission-sieve/decisions.jsonl | python3 -c "
 import json, sys
 from collections import Counter
 seg_res = Counter()

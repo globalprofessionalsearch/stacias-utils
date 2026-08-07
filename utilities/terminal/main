@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+case "${1:-}" in
+  -h|--help)
+    cat <<'EOF'
+terminal - open a new iTerm2 window at a directory
+
+Usage: terminal [path]
+
+  path  Directory to open in. Defaults to the current working directory.
+
+Examples:
+  terminal                   Open iTerm2 in $PWD
+  terminal ~/projects/api    Open iTerm2 in ~/projects/api
+EOF
+    exit 0
+    ;;
+esac
+
+dir="${1:-$PWD}"
+dir=$(cd "$dir" && pwd)
+
+osascript <<EOF
+tell application "iTerm2"
+  create window with default profile
+  tell current session of current window
+    write text "cd \"$dir\""
+  end tell
+end tell
+EOF
